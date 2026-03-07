@@ -35,6 +35,11 @@ jobs:
         rm -rf backend/static
         cp -r frontend/dist backend/static
 
+    - name: Install Python dependencies into package
+      working-directory: backend
+      run: |
+        python3 -m pip install --target=.python_packages/lib/site-packages -r requirements.txt
+
     - name: Create deployment package
       working-directory: backend
       run: |
@@ -42,7 +47,7 @@ jobs:
           main.py app.py sf_client.py ops.py db.py \
           cache.py scorer.py scheduler.py simulator.py \
           gunicorn.conf.py startup.sh requirements.txt \
-          static/
+          static/ .python_packages/
 
     - name: Deploy to Azure via Kudu ZIP Deploy
       env:
@@ -50,7 +55,6 @@ jobs:
         DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
       run: |
         echo "Deploying to ${{ env.AZURE_WEBAPP_NAME }}..."
-        # Write netrc to avoid shell escaping issues with $ in username
         echo "machine ${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net" > /tmp/.netrc
         echo "login ${DEPLOY_USER}" >> /tmp/.netrc
         echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
@@ -71,7 +75,7 @@ jobs:
 
         echo "HTTP Status: $HTTP_CODE"
         if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-          echo "Deployment accepted! Azure is building and deploying..."
+          echo "Deployment accepted!"
         else
           echo "Deployment failed!"
           echo "$BODY"
@@ -80,13 +84,12 @@ jobs:
 
     - name: Verify deployment
       run: |
-        echo "Waiting 60 seconds for Azure to build and start..."
-        sleep 60
+        echo "Waiting 120 seconds for Azure to start the app..."
+        sleep 120
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
           --max-time 15 \
           "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/")
         echo "Health check: HTTP $STATUS"
-        # 200 = app works, 401/302 = app running but auth required (still success)
         if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "302" ]; then
           echo "App is live! (HTTP $STATUS)"
         else
