@@ -35,10 +35,19 @@ jobs:
         rm -rf backend/static
         cp -r frontend/dist backend/static
 
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
     - name: Install Python dependencies into package
       working-directory: backend
       run: |
+        python3 --version
+        python3 -m pip install --upgrade pip
         python3 -m pip install --target=.python_packages/lib/site-packages -r requirements.txt
+        echo "Checking compiled extensions match Python 3.13:"
+        find .python_packages -name "*.so" | head -5
 
     - name: Create deployment package
       working-directory: backend
