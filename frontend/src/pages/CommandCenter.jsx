@@ -106,7 +106,7 @@ const WINDOWS = [
   { label: '48h', hours: 48 }, { label: '7d',  hours: 168 },
 ]
 
-const DARK_TILES = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png'
+const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 const REFRESH_MS = 5 * 60 * 1000
 
 function fmtPhone(p) {

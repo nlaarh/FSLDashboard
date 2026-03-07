@@ -4,7 +4,7 @@ import L from 'leaflet'
 import { Layers, Loader2 } from 'lucide-react'
 import { fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchCommandCenter } from '../api'
 
-const DARK_TILES = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png'
+const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 
 const SA_COLORS = {
   Dispatched: '#3b82f6',
@@ -162,7 +162,7 @@ export default function MapPage() {
         style={{ width: '100%', height: '100%', borderRadius: 0 }}
         zoomControl={true}
       >
-        <TileLayer url={DARK_TILES} attribution="© Stadia Maps © OpenMapTiles © OpenStreetMap" />
+        <TileLayer url={DARK_TILES} attribution="&copy; CARTO &copy; OpenStreetMap" />
 
         {/* ── Grid layer ── */}
         {layers.grid && grids && grids.features.length > 0 && (

@@ -278,7 +278,7 @@ export default function MapView({ data }) {
           <div className="glass rounded-xl overflow-hidden relative" style={{ height: 440 }}>
             <MapContainer key={`${selected.sa_lat}-${selected.sa_lon}`} center={center} zoom={11}
               style={{ height: '100%', width: '100%' }} scrollWheelZoom={true}>
-              <TileLayer attribution='&copy; CARTO' url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png" />
+              <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
 
               {/* Customer */}
               <Marker position={[selected.sa_lat, selected.sa_lon]} icon={CUSTOMER_ICON} zIndexOffset={1000}>
