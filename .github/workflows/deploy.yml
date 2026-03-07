@@ -52,16 +52,37 @@ jobs:
     - name: Create deployment package
       working-directory: backend
       run: |
-        # Include only what's needed for runtime
         zip -r ../deploy.zip \
           main.py app.py sf_client.py ops.py db.py \
           cache.py scorer.py scheduler.py simulator.py \
           gunicorn.conf.py startup.sh requirements.txt \
           static/
 
-    - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: ${{ env.AZURE_WEBAPP_NAME }}
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: deploy.zip
+    - name: Deploy to Azure via Kudu ZIP Deploy
+      env:
+        DEPLOY_CREDS: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+      run: |
+        # Extract username and password from publish profile XML
+        USERNAME=$(echo "$DEPLOY_CREDS" | grep -oP 'userName="\K[^"]+' | head -1)
+        PASSWORD=$(echo "$DEPLOY_CREDS" | grep -oP 'userPWD="\K[^"]+' | head -1)
+
+        echo "Deploying to ${{ env.AZURE_WEBAPP_NAME }}..."
+        RESPONSE=$(curl -s -w "\n%{http_code}" \
+          -X POST \
+          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy" \
+          -u "$USERNAME:$PASSWORD" \
+          --data-binary @deploy.zip \
+          -H "Content-Type: application/octet-stream" \
+          --max-time 300)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+
+        echo "HTTP Status: $HTTP_CODE"
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+          echo "Deployment successful!"
+        else
+          echo "Deployment failed!"
+          echo "$BODY"
+          exit 1
+        fi
