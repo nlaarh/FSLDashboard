@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages } from '../api'
 import {
   Loader2, RefreshCw, Radio, CheckCircle2, AlertTriangle,
   ChevronRight, Search, MapPin, Clock, FileText,
@@ -20,16 +20,18 @@ const WMO_EMOJI = {
   95:'⛈️',96:'⛈️',99:'⛈️',
 }
 
-function makeLayerTruckIcon(driverType) {
+function makeDriverCarIcon(driverType) {
   const color = (driverType || '').toLowerCase().includes('tow') ? '#f59e0b' : '#818cf8'
   return L.divIcon({
     className: '',
-    iconSize: [22, 18], iconAnchor: [11, 18], popupAnchor: [0, -18],
-    html: `<svg width="22" height="18" viewBox="0 0 22 18">
-      <rect x="1" y="4" width="20" height="11" rx="2.5" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
-      <rect x="14" y="1.5" width="8" height="8" rx="1.5" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
-      <circle cx="6"  cy="17" r="2" fill="#0f172a" stroke="${color}" stroke-width="1.2"/>
-      <circle cx="16" cy="17" r="2" fill="#0f172a" stroke="${color}" stroke-width="1.2"/>
+    iconSize: [24, 20], iconAnchor: [12, 10], popupAnchor: [0, -12],
+    html: `<svg width="24" height="20" viewBox="0 0 24 20" fill="none">
+      <path d="M3 12h18v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4z" fill="${color}" stroke="#0f172a" stroke-width="1"/>
+      <path d="M5 12l2-6h10l2 6" fill="${color}" stroke="#0f172a" stroke-width="1"/>
+      <rect x="6" y="7" width="4" height="3" rx="0.5" fill="#0f172a" opacity="0.5"/>
+      <rect x="14" y="7" width="4" height="3" rx="0.5" fill="#0f172a" opacity="0.5"/>
+      <circle cx="7" cy="18" r="2" fill="#0f172a" stroke="${color}" stroke-width="1"/>
+      <circle cx="17" cy="18" r="2" fill="#0f172a" stroke="${color}" stroke-width="1"/>
     </svg>`,
   })
 }
@@ -46,6 +48,18 @@ function makeWeatherMarkerIcon(s) {
       <div style="font-size:13px;font-weight:700">${emoji} ${s.temp_f}°F</div>
       <div style="font-size:10px;color:#94a3b8;margin-top:1px">${s.name}</div>
     </div>`,
+  })
+}
+
+function makeGarageIcon(isPrimary) {
+  const color = isPrimary ? '#22c55e' : '#f59e0b'
+  return L.divIcon({
+    className: '',
+    iconSize: [20, 20], iconAnchor: [10, 10], popupAnchor: [0, -12],
+    html: `<div style="width:18px;height:18px;border-radius:3px;border:2px solid ${color};
+      background:${color}22;display:flex;align-items:center;justify-content:center;
+      font-size:10px;font-weight:800;color:${color};font-family:monospace">
+      ${isPrimary ? 'P' : 'S'}</div>`,
   })
 }
 
@@ -94,6 +108,13 @@ const WINDOWS = [
 
 const DARK_TILES = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png'
 const REFRESH_MS = 5 * 60 * 1000
+
+function fmtPhone(p) {
+  if (!p) return null
+  const d = p.replace(/\D/g, '')
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`
+  return p
+}
 
 function fmtWait(min) {
   if (!min || min <= 0) return '—'
@@ -158,11 +179,12 @@ export default function CommandCenter() {
   const [saError, setSaError] = useState(null)
 
   // Map layers state
-  const [layers, setLayers] = useState({ grid: false, drivers: false, weather: false })
+  const [layers, setLayers] = useState({ grid: false, drivers: false, weather: false, activeSAs: false, garages: false })
   const [grids, setGrids] = useState(null)
   const [allDrivers, setAllDrivers] = useState([])
   const [mapWeather, setMapWeather] = useState([])
-  const [layerLoading, setLayerLoading] = useState({ grid: false, drivers: false, weather: false })
+  const [allGarages, setAllGarages] = useState([])
+  const [layerLoading, setLayerLoading] = useState({ grid: false, drivers: false, weather: false, activeSAs: false, garages: false })
 
   const load = useCallback(() => {
     setLoading(true)
@@ -206,6 +228,14 @@ export default function CommandCenter() {
       .then(d => { setMapWeather(d); setLayerLoading(l => ({ ...l, weather: false })) })
       .catch(() => setLayerLoading(l => ({ ...l, weather: false })))
   }, [layers.weather])
+
+  useEffect(() => {
+    if (!layers.garages || allGarages.length > 0) return
+    setLayerLoading(l => ({ ...l, garages: true }))
+    fetchOpsGarages()
+      .then(d => { setAllGarages(d); setLayerLoading(l => ({ ...l, garages: false })) })
+      .catch(() => setLayerLoading(l => ({ ...l, garages: false })))
+  }, [layers.garages])
 
   const searchSA = () => {
     if (!saQuery.trim()) return
@@ -434,11 +464,21 @@ export default function CommandCenter() {
 
           {/* ── All-drivers layer (hidden during SA lookup to avoid confusion) ── */}
           {layers.drivers && !saResult && allDrivers.map(d => (
-            <Marker key={d.id} position={[d.lat, d.lon]} icon={makeLayerTruckIcon(d.driver_type)}>
+            <Marker key={d.id} position={[d.lat, d.lon]} icon={makeDriverCarIcon(d.driver_type)}>
+              <Tooltip direction="top" offset={[0, -14]} sticky>
+                <div style={{ fontSize: 11, lineHeight: 1.6, minWidth: 150 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 2 }}>{d.name}</div>
+                  {d.phone && <div>{fmtPhone(d.phone)}</div>}
+                  {d.driver_type && <div style={{ color: '#94a3b8' }}>{d.driver_type}</div>}
+                  <div style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>GPS: {d.gps_time}</div>
+                </div>
+              </Tooltip>
               <Popup>
-                <div style={{ fontSize: 12, color: '#e2e8f0' }}>
+                <div style={{ fontSize: 12, color: '#e2e8f0', minWidth: 160 }}>
                   <strong>{d.name}</strong><br />
+                  {d.phone && <><a href={`tel:${d.phone}`} style={{ color: '#3b82f6' }}>{fmtPhone(d.phone)}</a><br /></>}
                   {d.driver_type && <>{d.driver_type}<br /></>}
+                  {d.tech_id && <>ID: {d.tech_id}<br /></>}
                   GPS: {d.gps_time}
                 </div>
               </Popup>
@@ -460,6 +500,56 @@ export default function CommandCenter() {
               </Marker>
             )
           ))}
+
+          {/* ── Garages layer ── */}
+          {layers.garages && allGarages.map(g => {
+            if (!g.lat || !g.lon) return null
+            const isPrimary = g.primary_zones > 0
+            return (
+              <Marker key={`garage-${g.id}`} position={[g.lat, g.lon]} icon={makeGarageIcon(isPrimary)}>
+                <Popup>
+                  <div style={{ minWidth: 200, fontFamily: '-apple-system, sans-serif' }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{g.name}</div>
+                    {g.phone && <div style={{ fontSize: 12, marginBottom: 2 }}>
+                      <a href={`tel:${g.phone}`} style={{ color: '#3b82f6' }}>{fmtPhone(g.phone)}</a>
+                    </div>}
+                    {g.facility_name && <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{g.facility_name}</div>}
+                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{g.address}</div>
+                    <div style={{ fontSize: 11, marginTop: 4, borderTop: '1px solid #334155', paddingTop: 4 }}>
+                      <span style={{ color: '#22c55e', fontWeight: 600 }}>Primary: {g.primary_zones} zones</span>
+                      {' · '}
+                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>Secondary: {g.secondary_zones} zones</span>
+                    </div>
+                  </div>
+                </Popup>
+                <Tooltip direction="top" offset={[0, -12]}>
+                  <span style={{ fontSize: 11 }}>
+                    {g.name}{g.phone ? ` · ${fmtPhone(g.phone)}` : ''}
+                  </span>
+                </Tooltip>
+              </Marker>
+            )
+          })}
+
+          {/* ── Active SAs layer ── */}
+          {layers.activeSAs && data && data.territories.flatMap(t =>
+            (t.sa_points || []).map((pt, i) => {
+              if (!pt.lat || !pt.lon) return null
+              const isOpen = ['Dispatched', 'Assigned'].includes(pt.status)
+              const color = isOpen ? '#3b82f6' : pt.status === 'Completed' ? '#10b981' : '#ef4444'
+              return (
+                <CircleMarker key={`sa-${t.id}-${i}`} center={[pt.lat, pt.lon]}
+                  radius={isOpen ? 5 : 3} pathOptions={{ color, fillColor: color, fillOpacity: isOpen ? 0.9 : 0.5, weight: 1 }}>
+                  <Tooltip direction="top" offset={[0, -5]}>
+                    <span style={{ fontSize: 11 }}>
+                      {pt.work_type || 'SA'} — {pt.status}<br />
+                      {pt.time || ''} · {t.name}
+                    </span>
+                  </Tooltip>
+                </CircleMarker>
+              )
+            })
+          )}
         </MapContainer>
 
         {/* ── Stats bar (top) ──────────────────────────────────── */}
@@ -800,6 +890,8 @@ export default function CommandCenter() {
             </div>
             <div className="px-3 py-2.5 space-y-2">
               {[
+                { key: 'activeSAs', emoji: '📍', label: 'Active SAs', color: 'text-blue-400' },
+                { key: 'garages',  emoji: '🏢', label: 'Priority Matrix',  color: 'text-emerald-400' },
                 { key: 'grid',    emoji: '🗺️', label: 'Grid',    color: 'text-indigo-400' },
                 { key: 'drivers', emoji: '🚛', label: 'Drivers', color: 'text-amber-400' },
                 { key: 'weather', emoji: '🌡️', label: 'Weather', color: 'text-cyan-400' },

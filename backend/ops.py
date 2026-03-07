@@ -1,0 +1,494 @@
+"""Daily Operations endpoints — TODAY only, live SOQL, correct PTA/ATA metrics.
+
+Key insight: Towbook SAs update ActualStartTime in bulk at midnight.
+- Field Services: ATA = ActualStartTime - CreatedDate (reliable, real-time)
+- Towbook: ATA is NOT calculable. Use PTA (ERS_PTA__c) as the promised time.
+- ERS_Dispatch_Method__c = 'Field Services' or 'Towbook'
+"""
+
+from datetime import datetime, date, timedelta, timezone
+from collections import defaultdict
+from sf_client import sf_query_all, sf_parallel
+import cache
+
+
+def _parse_dt(s):
+    if not s:
+        return None
+    try:
+        s = s.replace('+0000', '+00:00').replace('Z', '+00:00')
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _minutes_since(dt_str, now_utc):
+    dt = _parse_dt(dt_str)
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return round((now_utc - dt).total_seconds() / 60)
+
+
+def _calc_ata(sa):
+    """Calculate ATA in minutes.
+    - Field Services: always reliable
+    - Towbook: filter out midnight-sync artifacts (ATA > 240 min)
+    """
+    created = _parse_dt(sa.get('CreatedDate'))
+    actual_start = _parse_dt(sa.get('ActualStartTime'))
+
+    if not created or not actual_start:
+        return None
+
+    diff = (actual_start - created).total_seconds() / 60
+    if diff <= 0 or diff >= 1440:
+        return None
+
+    dispatch_method = sa.get('ERS_Dispatch_Method__c', '')
+    if dispatch_method == 'Field Services':
+        return round(diff)
+
+    # Towbook: only trust if ATA is reasonable (< 4 hours)
+    # Midnight bulk sync creates 300+ min artifacts
+    if diff < 240:
+        return round(diff)
+
+    return None
+
+
+def _get_priority_matrix():
+    """Load the full territory priority matrix. Cached 10 min (rarely changes)."""
+    def _fetch():
+        rows = sf_query_all("""
+            SELECT ERS_Parent_Service_Territory__c,
+                   ERS_Spotted_Territory__c, ERS_Spotted_Territory__r.Name,
+                   ERS_Priority__c, ERS_Worktype__c
+            FROM ERS_Territory_Priority_Matrix__c
+            ORDER BY ERS_Parent_Service_Territory__c, ERS_Priority__c
+        """)
+        # Build lookup: (parent_territory_id, spotted_territory_id) -> priority number
+        # Also build: spotted_territory_id -> list of {parent_id, priority, work_types}
+        by_pair = {}
+        by_garage = defaultdict(list)
+        for r in rows:
+            parent_id = r.get('ERS_Parent_Service_Territory__c')
+            spotted_id = r.get('ERS_Spotted_Territory__c')
+            pri = r.get('ERS_Priority__c')
+            wt = r.get('ERS_Worktype__c', '')
+            if parent_id and spotted_id:
+                by_pair[(parent_id, spotted_id)] = pri
+                by_garage[spotted_id].append({
+                    'parent_id': parent_id,
+                    'priority': pri,
+                    'work_types': wt,
+                })
+        # For each (parent, work_type_group), rank garages by priority number
+        # Rank 1 = lowest priority number for that parent zone
+        by_parent = defaultdict(list)
+        for r in rows:
+            parent_id = r.get('ERS_Parent_Service_Territory__c')
+            spotted_id = r.get('ERS_Spotted_Territory__c')
+            pri = r.get('ERS_Priority__c')
+            if parent_id and spotted_id and pri is not None:
+                by_parent[parent_id].append((pri, spotted_id))
+        # For each parent, sort by priority and assign rank
+        rank_lookup = {}  # (parent_id, spotted_id) -> rank (1=first call, 2=second call, etc.)
+        for parent_id, entries in by_parent.items():
+            entries.sort(key=lambda x: x[0])
+            seen = set()
+            rank = 0
+            for pri, spotted_id in entries:
+                if spotted_id not in seen:
+                    seen.add(spotted_id)
+                    rank += 1
+                    rank_lookup[(parent_id, spotted_id)] = rank
+        return {'by_pair': by_pair, 'by_garage': dict(by_garage), 'rank_lookup': rank_lookup}
+    return cache.cached_query('priority_matrix', _fetch, ttl=600)
+
+
+def get_ops_garages():
+    """All garage territories with location, phone, and zone count for map layer."""
+    def _fetch():
+        rows = sf_query_all("""
+            SELECT Id, Name, Latitude, Longitude,
+                   ERS_Facility_Account__r.Name, ERS_Facility_Account__r.Phone,
+                   Street, City, State
+            FROM ServiceTerritory
+            WHERE Id IN (SELECT ERS_Spotted_Territory__c FROM ERS_Territory_Priority_Matrix__c)
+              AND IsActive = true
+              AND Latitude != null AND Longitude != null
+        """)
+        matrix = _get_priority_matrix()
+        garages = []
+        for r in rows:
+            tid = r.get('Id')
+            acct = r.get('ERS_Facility_Account__r') or {}
+            zone_entries = matrix['by_garage'].get(tid, [])
+            # Count how many zones this garage is primary (rank 1) vs secondary (rank 2+)
+            primary_zones = 0
+            secondary_zones = 0
+            for entry in zone_entries:
+                rank = matrix['rank_lookup'].get((entry['parent_id'], tid))
+                if rank == 1:
+                    primary_zones += 1
+                elif rank and rank >= 2:
+                    secondary_zones += 1
+            garages.append({
+                'id': tid,
+                'name': r.get('Name', ''),
+                'lat': r.get('Latitude'),
+                'lon': r.get('Longitude'),
+                'phone': acct.get('Phone') or None,
+                'facility_name': acct.get('Name') or None,
+                'address': f"{r.get('Street') or ''}, {r.get('City') or ''} {r.get('State') or ''}".strip(', '),
+                'primary_zones': primary_zones,
+                'secondary_zones': secondary_zones,
+                'total_zones': len(zone_entries),
+            })
+        garages.sort(key=lambda g: g['name'])
+        return garages
+    return cache.cached_query('ops_garages', _fetch, ttl=600)
+
+
+def get_ops_territories():
+    """All territories with today's KPIs — correct PTA/ATA."""
+    now_utc = datetime.now(timezone.utc)
+    # Today = midnight ET to now (ET = UTC-5, or UTC-4 during DST)
+    # Use simple approach: last 24 hours from midnight UTC today
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    def _fetch():
+        sas = sf_query_all(f"""
+            SELECT Id, AppointmentNumber, Status, CreatedDate,
+                   ActualStartTime, ActualEndTime, SchedStartTime,
+                   ERS_PTA__c, ERS_PTA_Due__c, ERS_Dispatch_Method__c,
+                   ERS_Parent_Territory__c,
+                   ServiceTerritoryId, ServiceTerritory.Name,
+                   ServiceTerritory.Latitude, ServiceTerritory.Longitude,
+                   WorkType.Name, Latitude, Longitude
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {cutoff}
+              AND ServiceTerritoryId != null
+              AND Status IN ('Dispatched','Completed','Canceled',
+                             'Cancel Call - Service Not En Route',
+                             'Cancel Call - Service En Route',
+                             'Unable to Complete','Assigned','No-Show')
+            ORDER BY CreatedDate ASC
+        """)
+
+        by_territory = defaultdict(list)
+        for sa in sas:
+            tid = sa.get('ServiceTerritoryId')
+            if tid:
+                by_territory[tid].append(sa)
+
+        matrix = _get_priority_matrix()
+        rank_lookup = matrix['rank_lookup']
+
+        territories = []
+        for tid, sa_list in by_territory.items():
+            st = sa_list[0]
+            t_name = (st.get('ServiceTerritory') or {}).get('Name') or '?'
+            t_lat = (st.get('ServiceTerritory') or {}).get('Latitude')
+            t_lon = (st.get('ServiceTerritory') or {}).get('Longitude')
+            if not t_lat or not t_lon:
+                continue
+
+            total = len(sa_list)
+            open_list = [s for s in sa_list if s.get('Status') in ('Dispatched', 'Assigned')]
+            completed = [s for s in sa_list if s.get('Status') == 'Completed']
+            canceled = [s for s in sa_list if s.get('Status') not in ('Dispatched', 'Assigned', 'Completed')]
+
+            # PTA stats (all SAs with PTA)
+            pta_values = []
+            for s in sa_list:
+                pta = s.get('ERS_PTA__c')
+                if pta is not None and 0 < float(pta) < 999:
+                    pta_values.append(float(pta))
+
+            avg_pta = round(sum(pta_values) / len(pta_values)) if pta_values else None
+            pta_under_60 = sum(1 for p in pta_values if p <= 60)
+            pta_under_60_pct = round(100 * pta_under_60 / max(len(pta_values), 1)) if pta_values else None
+
+            # ATA stats (Fleet only — Towbook timestamps unreliable)
+            ata_values = []
+            fleet_pta_values = []
+            for s in completed:
+                wt = (s.get('WorkType') or {}).get('Name', '')
+                if 'drop' in wt.lower():
+                    continue
+                if s.get('ERS_Dispatch_Method__c') != 'Field Services':
+                    continue
+                ata = _calc_ata(s)
+                if ata is not None:
+                    ata_values.append(ata)
+                pta = s.get('ERS_PTA__c')
+                if pta is not None and 0 < float(pta) < 999:
+                    fleet_pta_values.append(float(pta))
+
+            avg_ata = round(sum(ata_values) / len(ata_values)) if ata_values else None
+            ata_under_45 = sum(1 for a in ata_values if a <= 45)
+            ata_under_45_pct = round(100 * ata_under_45 / max(len(ata_values), 1)) if ata_values else None
+
+            # Open call wait times
+            open_waits = []
+            for s in open_list:
+                wait = _minutes_since(s.get('CreatedDate'), now_utc)
+                if wait and 0 < wait < 1440:
+                    open_waits.append(wait)
+            avg_wait = round(sum(open_waits) / len(open_waits)) if open_waits else 0
+            max_wait = max(open_waits) if open_waits else 0
+
+            completion_rate = round(100 * len(completed) / max(total, 1))
+
+            # Health status
+            if total < 3:
+                status = 'good'
+            elif max_wait > 90 or (avg_pta and avg_pta > 120):
+                status = 'critical'
+            elif max_wait > 45 or completion_rate < 55:
+                status = 'behind'
+            else:
+                status = 'good'
+
+            # Response time: ATA if available, else PTA as estimate
+            resp_time = avg_ata if avg_ata is not None else avg_pta
+            resp_source = 'ata' if avg_ata is not None else ('pta' if avg_pta is not None else None)
+
+            # Priority-based stats: primary (rank 1) vs secondary (rank 2+)
+            primary_total = 0
+            primary_completed = 0
+            secondary_total = 0
+            secondary_completed = 0
+            for s in sa_list:
+                wt = (s.get('WorkType') or {}).get('Name', '')
+                if 'drop' in wt.lower():
+                    continue  # Exclude Tow Drop-Off (paired SAs)
+                parent_id = s.get('ERS_Parent_Territory__c')
+                rank = rank_lookup.get((parent_id, tid)) if parent_id else None
+                if rank == 1:
+                    primary_total += 1
+                    if s.get('Status') == 'Completed':
+                        primary_completed += 1
+                elif rank and rank >= 2:
+                    secondary_total += 1
+                    if s.get('Status') == 'Completed':
+                        secondary_completed += 1
+            pct_primary_completion = round(100 * primary_completed / primary_total) if primary_total else None
+            pct_secondary_completion = round(100 * secondary_completed / secondary_total) if secondary_total else None
+
+            territories.append({
+                'id': tid,
+                'name': t_name,
+                'lat': t_lat,
+                'lon': t_lon,
+                'total': total,
+                'open': len(open_list),
+                'completed': len(completed),
+                'canceled': len(canceled),
+                'completion_rate': completion_rate,
+                'primary_total': primary_total,
+                'primary_completed': primary_completed,
+                'pct_primary_completion': pct_primary_completion,
+                'secondary_total': secondary_total,
+                'secondary_completed': secondary_completed,
+                'pct_secondary_completion': pct_secondary_completion,
+                'avg_pta': avg_pta,
+                'pta_under_60_pct': pta_under_60_pct,
+                'avg_ata': avg_ata,
+                'ata_under_45_pct': ata_under_45_pct,
+                'ata_sample_size': len(ata_values),
+                'resp_time': resp_time,
+                'resp_source': resp_source,
+                'avg_wait': avg_wait,
+                'max_wait': max_wait,
+                'status': status,
+            })
+
+        territories.sort(key=lambda t: t['total'], reverse=True)
+
+        # Summary
+        total_open = sum(t['open'] for t in territories)
+        total_completed = sum(t['completed'] for t in territories)
+        total_sas = sum(t['total'] for t in territories)
+        all_pta = [t['avg_pta'] for t in territories if t['avg_pta'] is not None]
+
+        return {
+            'territories': territories,
+            'summary': {
+                'total_territories': len(territories),
+                'total_open': total_open,
+                'total_completed': total_completed,
+                'total_sas': total_sas,
+                'fleet_avg_pta': round(sum(all_pta) / len(all_pta)) if all_pta else None,
+                'critical': sum(1 for t in territories if t['status'] == 'critical'),
+                'behind': sum(1 for t in territories if t['status'] == 'behind'),
+            },
+        }
+
+    return cache.cached_query('ops_territories', _fetch, ttl=120)
+
+
+def get_ops_territory_detail(territory_id: str):
+    """Single territory today — SA list with PTA/ATA per call."""
+    now_utc = datetime.now(timezone.utc)
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    def _fetch():
+        sas = sf_query_all(f"""
+            SELECT Id, AppointmentNumber, Status, CreatedDate,
+                   ActualStartTime, ActualEndTime, SchedStartTime,
+                   ERS_PTA__c, ERS_PTA_Due__c, ERS_Dispatch_Method__c,
+                   ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name,
+                   ERS_Cancellation_Reason__c, ERS_Facility_Decline_Reason__c,
+                   WorkType.Name, Street, City, PostalCode,
+                   Latitude, Longitude
+            FROM ServiceAppointment
+            WHERE ServiceTerritoryId = '{territory_id}'
+              AND CreatedDate >= {cutoff}
+              AND Status IN ('Dispatched','Completed','Canceled',
+                             'Cancel Call - Service Not En Route',
+                             'Cancel Call - Service En Route',
+                             'Unable to Complete','Assigned','No-Show')
+            ORDER BY CreatedDate DESC
+        """)
+
+        # Load priority matrix for rank lookup
+        matrix = _get_priority_matrix()
+
+        sa_rows = []
+        pta_values = []
+        ata_values = []
+        status_counts = defaultdict(int)
+        wt_counts = defaultdict(int)
+        # Track completion by priority rank
+        rank_stats = defaultdict(lambda: {'total': 0, 'completed': 0, 'canceled': 0})
+
+        for sa in sas:
+            wt = (sa.get('WorkType') or {}).get('Name', 'Unknown')
+            status = sa.get('Status', 'Unknown')
+            dispatch = sa.get('ERS_Dispatch_Method__c', '')
+            pta = sa.get('ERS_PTA__c')
+            created = sa.get('CreatedDate')
+            is_dropoff = 'drop' in wt.lower()
+
+            # Determine priority rank from matrix
+            parent_tid = sa.get('ERS_Parent_Territory__c')
+            priority_rank = matrix['rank_lookup'].get((parent_tid, territory_id)) if parent_tid else None
+
+            status_counts[status] += 1
+            if not is_dropoff:
+                wt_counts[wt] += 1
+                # Track completion by rank (exclude drop-offs)
+                if priority_rank is not None:
+                    rank_stats[priority_rank]['total'] += 1
+                    if status == 'Completed':
+                        rank_stats[priority_rank]['completed'] += 1
+                    elif status not in ('Dispatched', 'Assigned'):
+                        rank_stats[priority_rank]['canceled'] += 1
+
+            # PTA
+            pta_min = None
+            if pta is not None and 0 < float(pta) < 999:
+                pta_min = round(float(pta))
+                if not is_dropoff:
+                    pta_values.append(pta_min)
+
+            # ATA (only Field Services, exclude drop-offs)
+            ata_min = None
+            if not is_dropoff:
+                ata_min = _calc_ata(sa)
+                if ata_min is not None:
+                    ata_values.append(ata_min)
+
+            # Wait time for open calls
+            wait = None
+            if status in ('Dispatched', 'Assigned'):
+                wait = _minutes_since(created, now_utc)
+
+            # On-site duration
+            onsite = None
+            actual_start = _parse_dt(sa.get('ActualStartTime'))
+            actual_end = _parse_dt(sa.get('ActualEndTime'))
+            if actual_start and actual_end:
+                onsite = round((actual_end - actual_start).total_seconds() / 60)
+                if onsite < 0 or onsite > 1440:
+                    onsite = None
+
+            sa_rows.append({
+                'id': sa.get('Id'),
+                'number': sa.get('AppointmentNumber'),
+                'work_type': wt,
+                'status': status,
+                'dispatch_method': dispatch,
+                'pta_min': pta_min,
+                'ata_min': ata_min,
+                'wait_min': wait,
+                'onsite_min': onsite,
+                'created': created,
+                'address': sa.get('Street') or sa.get('City') or '',
+                'lat': sa.get('Latitude'),
+                'lon': sa.get('Longitude'),
+                'cancel_reason': sa.get('ERS_Cancellation_Reason__c'),
+                'decline_reason': sa.get('ERS_Facility_Decline_Reason__c'),
+                'is_dropoff': is_dropoff,
+                'priority_rank': priority_rank,
+                'parent_zone': (sa.get('ERS_Parent_Territory__r') or {}).get('Name'),
+            })
+
+        # Summary KPIs
+        total = len(sa_rows)
+        completed = sum(1 for s in sa_rows if s['status'] == 'Completed')
+        open_count = sum(1 for s in sa_rows if s['status'] in ('Dispatched', 'Assigned'))
+        avg_pta = round(sum(pta_values) / len(pta_values)) if pta_values else None
+        avg_ata = round(sum(ata_values) / len(ata_values)) if ata_values else None
+        median_ata = round(sorted(ata_values)[len(ata_values) // 2]) if ata_values else None
+        ata_under_45 = sum(1 for a in ata_values if a <= 45)
+
+        # PTA-ATA delta
+        pta_ata_delta = None
+        if avg_pta is not None and avg_ata is not None:
+            pta_ata_delta = round(avg_ata - avg_pta)  # positive = behind, negative = ahead
+
+        # Build completion-by-rank summary
+        completion_by_rank = []
+        for rank in sorted(rank_stats.keys()):
+            rs = rank_stats[rank]
+            label = {1: '1st call', 2: '2nd call', 3: '3rd call'}.get(rank, f'{rank}th call')
+            completion_by_rank.append({
+                'rank': rank,
+                'label': label,
+                'total': rs['total'],
+                'completed': rs['completed'],
+                'canceled': rs['canceled'],
+                'completion_pct': round(100 * rs['completed'] / max(rs['total'], 1), 1),
+            })
+
+        return {
+            'territory_id': territory_id,
+            'period': 'today',
+            'total': total,
+            'completed': completed,
+            'open': open_count,
+            'completion_pct': round(100 * completed / max(total, 1), 1),
+            'kpi': {
+                'avg_pta': avg_pta,
+                'avg_ata': avg_ata,
+                'median_ata': median_ata,
+                'pta_ata_delta': pta_ata_delta,
+                'ata_under_45': ata_under_45,
+                'ata_under_45_pct': round(100 * ata_under_45 / max(len(ata_values), 1), 1) if ata_values else None,
+                'ata_sample_size': len(ata_values),
+                'ata_note': 'ATA only available for Field Services dispatches. Towbook timestamps are unreliable.',
+            },
+            'completion_by_rank': completion_by_rank,
+            'status_counts': dict(status_counts),
+            'work_type_counts': dict(wt_counts),
+            'service_appointments': sa_rows,
+        }
+
+    return cache.cached_query(f'ops_territory_{territory_id}', _fetch, ttl=120)

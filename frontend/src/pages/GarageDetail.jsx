@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { fetchSchedule, fetchScorecard, fetchSimulation } from '../api'
 import ScheduleGrid from '../components/ScheduleGrid'
 import Scorecard from '../components/Scorecard'
 import MapView from '../components/MapView'
-import { ArrowLeft, Calendar, BarChart3, Map, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import Performance from '../components/Performance'
+import { ArrowLeft, Calendar, BarChart3, Map, Loader2, ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react'
 
 const TABS = [
-  { key: 'schedule', label: 'Schedule', icon: Calendar },
-  { key: 'scorecard', label: 'Scorecard', icon: BarChart3 },
-  { key: 'dispatch', label: 'Dispatch Map', icon: Map },
+  { key: 'schedule',    label: 'Schedule',    icon: Calendar },
+  { key: 'scorecard',  label: 'Scorecard',   icon: BarChart3 },
+  { key: 'performance', label: 'Performance', icon: TrendingUp },
+  { key: 'dispatch',   label: 'Dispatch Map', icon: Map },
 ]
 
 function getWeekDates(offset = 0) {
@@ -32,7 +34,9 @@ function getWeekDates(offset = 0) {
 
 export default function GarageDetail() {
   const { id } = useParams()
-  const [tab, setTab] = useState('schedule')
+  const [searchParams] = useSearchParams()
+  const initialTab = TABS.find(t => t.key === searchParams.get('tab'))?.key ?? 'schedule'
+  const [tab, setTab] = useState(initialTab)
   const [schedule, setSchedule] = useState(null)
   const [scorecard, setScorecard] = useState(null)
   const [simulation, setSimulation] = useState(null)
@@ -165,6 +169,11 @@ export default function GarageDetail() {
           {error.scorecard && <ErrorState msg={error.scorecard} />}
           {scorecard && <Scorecard data={scorecard} garageId={id} />}
         </>
+      )}
+
+      {/* Performance tab */}
+      {tab === 'performance' && (
+        <Performance garageId={id} garageName={garageName} />
       )}
 
       {/* Dispatch tab */}

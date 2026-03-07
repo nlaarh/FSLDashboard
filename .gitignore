@@ -15,10 +15,10 @@ env/
 .env
 *.env.local
 *.env.*.local
+backend/.deployment_env.sh
 
 # Node.js / Frontend
 frontend/node_modules/
-frontend/dist/
 frontend/.vite/
 frontend/coverage/
 
@@ -41,3 +41,6 @@ yarn-error.log*
 
 # Cache
 .cache/
+
+# Deploy artifacts (built locally)
+backend/deploy.zip

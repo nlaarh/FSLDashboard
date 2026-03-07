@@ -1,18 +1,18 @@
-"""Dynamic schedule generation — queries SF for real SA volumes per garage."""
+"""Dynamic schedule generation — uses aggregate SOQL for speed (~0.6s)."""
 
 import math
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 from collections import defaultdict
-from sf_client import sf_query_all
+from sf_client import sf_query_all, sf_parallel
 
 # Cycle times (minutes) — verified from 10K+ SA timestamps
 TOW_CYCLE = 115
-BATT_CYCLE = 38
-LIGHT_CYCLE = 33
+BATT_CYCLE = 38    # battery
+LIGHT_CYCLE = 33   # light service (tire, lockout, fuel, etc.)
+BATT_LIGHT_COMBINED_LABEL = 'Battery/Light'
 BLOCK_MIN = 120  # 2-hour blocks
 
 # Work type classification
-# Tow Pick-Up = 1 tow call. Tow Drop-Off = skip (same job, don't double-count).
 SKIP_TYPES = {'tow drop-off', 'personal lines - service', 'personal lines - sales',
               'commercial - sales', 'commercial - service', 'life - sales',
               'medicare drop-in', 'medicare', 'travel', 'insurance',
@@ -43,21 +43,10 @@ def _classify_work_type(wt_name: str | None) -> str | None:
     if lower in SKIP_TYPES:
         return None
     if lower == 'tow pick-up' or lower == 'tow':
-        return 'tow'  # Each pick-up = 1 tow call
+        return 'tow'
     if lower in BATT_TYPES:
         return 'battery'
-    # Tire, Lockout, Locksmith, Winch Out, Fuel/Misc, PVS = light service
     return 'light'
-
-
-def _parse_eastern(dt_str: str | None) -> datetime | None:
-    if not dt_str:
-        return None
-    try:
-        dt = datetime.fromisoformat(dt_str.replace('+0000', '+00:00').replace('Z', '+00:00'))
-        return dt - timedelta(hours=5)  # UTC → Eastern
-    except Exception:
-        return None
 
 
 def _ceil(a: float, b: float) -> int:
@@ -69,59 +58,86 @@ def _ceil(a: float, b: float) -> int:
 def generate_schedule(territory_id: str, weeks: int = 4,
                       start_date: str | None = None,
                       end_date: str | None = None) -> dict:
-    """Query SF for real SA data and compute the schedule dynamically.
+    """Single aggregate SOQL query → schedule in ~0.6s (was 22s with individual records)."""
 
-    If start_date/end_date are provided, queries that exact window.
-    Otherwise falls back to LAST_N_DAYS from today.
-    """
-
-    # 1. Query SAs for this territory
     if start_date and end_date:
-        date_filter = f"CreatedDate >= {start_date}T00:00:00Z AND CreatedDate <= {end_date}T23:59:59Z"
+        since = f"{start_date}T00:00:00Z"
+        until = f"{end_date}T23:59:59Z"
     else:
-        date_filter = f"CreatedDate = LAST_N_DAYS:{weeks * 7}"
+        d = date.today() - timedelta(days=weeks * 7)
+        since = f"{d.isoformat()}T00:00:00Z"
+        until = f"{date.today().isoformat()}T23:59:59Z"
 
-    sas = sf_query_all(f"""
-        SELECT Id, CreatedDate, WorkType.Name
-        FROM ServiceAppointment
-        WHERE ServiceTerritoryId = '{territory_id}'
-          AND {date_filter}
-          AND Status IN ('Dispatched', 'Completed', 'Canceled', 'Assigned')
-        ORDER BY CreatedDate ASC
-    """)
+    # Two aggregate queries in parallel — both sub-second
+    data = sf_parallel(
+        counts=lambda: sf_query_all(f"""
+            SELECT DAY_IN_WEEK(CreatedDate) dow,
+                   HOUR_IN_DAY(CreatedDate) hr,
+                   WorkType.Name wt,
+                   COUNT(Id) cnt
+            FROM ServiceAppointment
+            WHERE ServiceTerritoryId = '{territory_id}'
+              AND CreatedDate >= {since}
+              AND CreatedDate <= {until}
+              AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+            GROUP BY DAY_IN_WEEK(CreatedDate), HOUR_IN_DAY(CreatedDate), WorkType.Name
+        """),
+        weeks=lambda: sf_query_all(f"""
+            SELECT WEEK_IN_YEAR(CreatedDate) w, CALENDAR_YEAR(CreatedDate) y
+            FROM ServiceAppointment
+            WHERE ServiceTerritoryId = '{territory_id}'
+              AND CreatedDate >= {since}
+              AND CreatedDate <= {until}
+              AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+            GROUP BY WEEK_IN_YEAR(CreatedDate), CALENDAR_YEAR(CreatedDate)
+        """),
+    )
 
-    if not sas:
+    rows = data['counts']
+    if not rows:
         return {'error': 'No SAs found for this territory', 'schedule': {}, 'summary': {}}
 
-    # 2. Classify each SA by DOW + hour + work type
-    # Structure: dow_hour_type[dow_index][hour] = {'tow': n, 'battery': n, 'light': n}
+    n_weeks = max(len(data['weeks']), 1)
+
+    # Build counts from aggregate data
+    # SOQL DAY_IN_WEEK: 1=Sun, 2=Mon ... 7=Sat → our DOW: 0=Mon
+    # SOQL HOUR_IN_DAY: UTC → shift to Eastern (UTC-5)
     dow_hour_counts = defaultdict(lambda: defaultdict(lambda: {'tow': 0, 'battery': 0, 'light': 0}))
     dow_counts = defaultdict(int)
-    weeks_seen = set()
     total_by_type = {'tow': 0, 'battery': 0, 'light': 0}
+    total_sas = 0
 
-    for sa in sas:
-        et = _parse_eastern(sa.get('CreatedDate'))
-        if not et:
+    for row in rows:
+        soql_dow = row.get('dow')
+        utc_hour = row.get('hr')
+        wt_name = row.get('wt') or ''
+        count = row.get('cnt', 0)
+
+        if soql_dow is None or utc_hour is None:
             continue
-        wt = _classify_work_type((sa.get('WorkType') or {}).get('Name'))
+
+        wt = _classify_work_type(wt_name)
         if wt is None:
             continue
 
-        dow = et.weekday()  # 0=Mon
-        hour = et.hour
-        week_key = et.isocalendar()[:2]
-        weeks_seen.add(week_key)
+        soql_dow = int(soql_dow)
+        utc_hour = int(utc_hour)
 
-        # For tow, each tow = 2 SAs (pick-up + drop-off), but we already excluded
-        # pick-up/drop-off above, so the remaining "Tow" SAs are the actual calls
-        dow_hour_counts[dow][hour][wt] += 1
-        dow_counts[dow] += 1
-        total_by_type[wt] += 1
+        # Convert UTC to Eastern (UTC-5)
+        eastern_hour = (utc_hour - 5) % 24
+        if utc_hour < 5:
+            soql_dow = soql_dow - 1
+            if soql_dow < 1:
+                soql_dow = 7
 
-    n_weeks = max(len(weeks_seen), 1)
+        our_dow = (soql_dow - 2) % 7
 
-    # 3. Compute averages per DOW per 2-hour block
+        dow_hour_counts[our_dow][eastern_hour][wt] += count
+        dow_counts[our_dow] += count
+        total_by_type[wt] += count
+        total_sas += count
+
+    # Compute averages per DOW per 2-hour block
     schedule = {}
     daily_totals = {}
 
@@ -134,30 +150,26 @@ def generate_schedule(territory_id: str, weeks: int = 4,
         peak_tow = peak_batt = peak_light = 0
 
         for h1, h2, label in BLOCKS:
-            tow_sum = sum(dow_hour_counts[dow][h][('tow')] for h in range(h1, h2))
-            batt_sum = sum(dow_hour_counts[dow][h][('battery')] for h in range(h1, h2))
-            light_sum = sum(dow_hour_counts[dow][h][('light')] for h in range(h1, h2))
+            tow_sum = sum(dow_hour_counts[dow][h]['tow'] for h in range(h1, h2))
+            batt_sum = sum(dow_hour_counts[dow][h]['battery'] for h in range(h1, h2))
+            light_sum = sum(dow_hour_counts[dow][h]['light'] for h in range(h1, h2))
 
-            # Average over weeks
             tow_calls = round(tow_sum / n_weeks) if tow_sum > 0 else 0
             batt_calls = round(batt_sum / n_weeks) if batt_sum > 0 else 0
             light_calls = round(light_sum / n_weeks) if light_sum > 0 else 0
 
-            # Driver calculation: drivers = ceil(calls × cycle / block_min)
             tow_drv = _ceil(tow_calls * TOW_CYCLE, BLOCK_MIN)
             batt_drv = _ceil(batt_calls * BATT_CYCLE, BLOCK_MIN)
             light_drv = _ceil(light_calls * LIGHT_CYCLE, BLOCK_MIN)
             total_drv = tow_drv + batt_drv + light_drv
 
             schedule[dow_name][label] = {
-                'tow_calls': tow_calls,
-                'batt_calls': batt_calls,
-                'light_calls': light_calls,
-                'tow_drivers': tow_drv,
-                'batt_drivers': batt_drv,
-                'light_drivers': light_drv,
-                'total_drivers': total_drv,
-                'is_peak': 12 <= h1 < 18,
+                'tow_calls':        tow_calls,
+                'batt_light_calls': batt_calls + light_calls,
+                'tow_drivers':        tow_drv,
+                'batt_light_drivers': batt_drv + light_drv,
+                'total_drivers':      total_drv,
+                'is_peak':            12 <= h1 < 18,
             }
 
             if total_drv > max_total_drivers:
@@ -168,15 +180,13 @@ def generate_schedule(territory_id: str, weeks: int = 4,
                 peak_light = light_drv
 
         daily_totals[dow_name] = {
-            'total_sas': daily_sa_total,
-            'peak_total_drivers': max_total_drivers,
-            'peak_tow_drivers': peak_tow,
-            'peak_batt_drivers': peak_batt,
-            'peak_light_drivers': peak_light,
-            'peak_block': max_block_label,
+            'total_sas':              daily_sa_total,
+            'peak_total_drivers':     max_total_drivers,
+            'peak_tow_drivers':       peak_tow,
+            'peak_batt_light_drivers': peak_batt + peak_light,
+            'peak_block':             max_block_label,
         }
 
-    total_sas = len(sas)
     weekly_avg = round(total_sas / n_weeks)
 
     return {
@@ -192,14 +202,12 @@ def generate_schedule(territory_id: str, weeks: int = 4,
             'weekly_average': weekly_avg,
             'daily_average': round(weekly_avg / 7),
             'type_split': {
-                'tow_pct': round(100 * total_by_type['tow'] / max(total_sas, 1), 1),
-                'battery_pct': round(100 * total_by_type['battery'] / max(total_sas, 1), 1),
-                'light_pct': round(100 * total_by_type['light'] / max(total_sas, 1), 1),
+                'tow_pct':       round(100 * total_by_type['tow'] / max(total_sas, 1), 1),
+                'batt_light_pct': round(100 * (total_by_type['battery'] + total_by_type['light']) / max(total_sas, 1), 1),
             },
             'cycle_times': {
-                'tow': TOW_CYCLE,
-                'battery': BATT_CYCLE,
-                'light': LIGHT_CYCLE,
+                'tow':        TOW_CYCLE,
+                'batt_light': '33–38',
             },
         },
     }

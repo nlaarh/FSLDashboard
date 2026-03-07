@@ -1,12 +1,12 @@
 """Garage Performance Scoring Engine.
 
 8 dimensions weighted to a composite 0-100 score.
-All data from Salesforce — no assumptions.
+All data live from Salesforce (parallel SOQL).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from collections import defaultdict
-from sf_client import sf_query_all, sf_query
+from sf_client import sf_query_all, sf_parallel
 from cache import cached_query
 
 # ── Dimension weights ────────────────────────────────────────────────────────
@@ -22,254 +22,262 @@ DIMENSIONS = {
 }
 
 
-def _parse_dt(dt_str):
-    if not dt_str:
-        return None
-    try:
-        return datetime.fromisoformat(
-            dt_str.replace('+0000', '+00:00').replace('Z', '+00:00'))
-    except Exception:
-        return None
-
-
-def _to_eastern(dt_str):
-    dt = _parse_dt(dt_str)
-    return (dt - timedelta(hours=5)) if dt else None
-
-
 def _score_dimension(actual, target, higher_better):
-    """Score a dimension 0-100."""
     if actual is None:
         return None
     if higher_better:
-        # e.g., SLA hit rate: actual=0.6, target=1.0 → score = 60
         return min(100, round((actual / max(target, 0.001)) * 100, 1))
     else:
-        # e.g., median response: actual=60, target=45 → over by 15, score = 100 - (15/45)*100 = 66.7
         if actual <= target:
             return 100
         return max(0, round(100 * (1 - (actual - target) / max(target, 0.001)), 1))
 
 
+def _parse_dt(dt_str):
+    if not dt_str:
+        return None
+    if isinstance(dt_str, datetime):
+        return dt_str
+    try:
+        return datetime.fromisoformat(
+            str(dt_str).replace('+0000', '+00:00').replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+
 def compute_score(territory_id: str, weeks: int = 4) -> dict:
-    """Compute all 8 scoring dimensions for a garage."""
+    """Compute all 8 scoring dimensions. Parallel SOQL queries."""
     days = weeks * 7
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    since = f"{cutoff}T00:00:00Z"
 
-    # ── 1. SAs with timing data ──────────────────────────────────────────
-    cache_key = f"scorer_sas_{territory_id}_{days}"
-    sas = cached_query(cache_key, lambda: sf_query_all(f"""
-        SELECT Id, CreatedDate, Status, WorkType.Name,
-               ActualStartTime, SchedStartTime, ERS_PTA__c,
-               ERS_Cancellation_Reason__c
-        FROM ServiceAppointment
-        WHERE ServiceTerritoryId = '{territory_id}'
-          AND CreatedDate = LAST_N_DAYS:{days}
-          AND Status IN ('Dispatched', 'Completed', 'Canceled',
-                         'Cancel Call - Service Not En Route', 'Cancel Call - Service En Route',
-                         'Unable to Complete', 'Assigned', 'No-Show')
-        ORDER BY CreatedDate ASC
-    """), ttl=300)
+    cache_key = f"scorer_{territory_id}_{days}"
 
-    if not sas:
-        return {'error': 'No SAs found', 'dimensions': {}, 'composite': None}
+    def _compute():
+        # All parallel: aggregates for counts, individual only for completed SAs
+        data = sf_parallel(
+            # Aggregate: total by status
+            status_counts=lambda: sf_query_all(f"""
+                SELECT Status, COUNT(Id) cnt
+                FROM ServiceAppointment
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                  AND Status IN ('Dispatched','Completed','Canceled',
+                                 'Cancel Call - Service Not En Route',
+                                 'Cancel Call - Service En Route',
+                                 'Unable to Complete','Assigned','No-Show')
+                GROUP BY Status
+            """),
+            # Individual: only completed with ActualStartTime (for response/PTA)
+            completed=lambda: sf_query_all(f"""
+                SELECT CreatedDate, SchedStartTime, ActualStartTime, ERS_PTA__c
+                FROM ServiceAppointment
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                  AND Status = 'Completed'
+                  AND ActualStartTime != null
+            """),
+            # Aggregate: could not wait count
+            cnw=lambda: sf_query_all(f"""
+                SELECT COUNT(Id) cnt
+                FROM ServiceAppointment
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                  AND ERS_Cancellation_Reason__c LIKE 'Member Could Not Wait%'
+            """),
+            # Aggregate: decline count
+            declines=lambda: sf_query_all(f"""
+                SELECT COUNT(Id) cnt
+                FROM ServiceAppointment
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                  AND ERS_Facility_Decline_Reason__c != null
+            """),
+            # WO numbers for surveys (limited to 1000 most recent)
+            wo_nums=lambda: sf_query_all(f"""
+                SELECT WorkOrderNumber FROM WorkOrder
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                ORDER BY CreatedDate DESC
+                LIMIT 1000
+            """),
+        )
 
-    total = len(sas)
-    completed = [s for s in sas if s.get('Status') == 'Completed']
-    canceled = [s for s in sas if 'Cancel' in (s.get('Status') or '')]
 
-    # ── 2. SLA Hit Rate (actual response ≤ 45 min) ──────────────────────
-    response_times = []
-    for s in completed:
-        created = _to_eastern(s.get('CreatedDate'))
-        started = _to_eastern(s.get('ActualStartTime'))
-        if created and started:
-            diff = (started - created).total_seconds() / 60
-            if 0 < diff < 1440:
-                response_times.append(diff)
 
-    under_45 = sum(1 for r in response_times if r <= 45)
-    sla_hit_rate = under_45 / max(len(response_times), 1)
-    median_response = sorted(response_times)[len(response_times) // 2] if response_times else None
+        # Total from aggregate
+        total = sum(r.get('cnt', 0) for r in data['status_counts'])
+        if total == 0:
+            return {'error': 'No SAs found', 'dimensions': {}, 'composite': None}
 
-    # ── 3. Completion Rate ───────────────────────────────────────────────
-    completion_rate = len(completed) / max(total, 1)
+        completed_count = sum(r.get('cnt', 0) for r in data['status_counts']
+                              if r.get('Status') == 'Completed')
+        completed_sas = data['completed']
 
-    # ── 4. PTA Accuracy (promised ≤45 AND delivered ≤45) ─────────────────
-    pta_values = []
-    pta_accurate = 0
-    for s in sas:
-        pta = s.get('ERS_PTA__c')
-        if pta is not None:
-            pv = float(pta)
-            pta_values.append(pv)
-
-    # For PTA accuracy, need SAs where PTA ≤45 AND actual response ≤45
-    for s in completed:
-        pta = s.get('ERS_PTA__c')
-        if pta is not None and float(pta) <= 45:
-            created = _to_eastern(s.get('CreatedDate'))
-            started = _to_eastern(s.get('ActualStartTime'))
+        # SLA Hit Rate + Median Response (from individual completed SAs)
+        response_times = []
+        for s in completed_sas:
+            created = _parse_dt(s.get('CreatedDate'))
+            started = _parse_dt(s.get('ActualStartTime'))
             if created and started:
                 diff = (started - created).total_seconds() / 60
-                if 0 < diff <= 45:
-                    pta_accurate += 1
+                if 0 < diff < 1440:
+                    response_times.append(diff)
 
-    pta_promised_under_45 = sum(1 for v in pta_values if v <= 45)
-    pta_accuracy = pta_accurate / max(pta_promised_under_45, 1) if pta_promised_under_45 > 0 else None
+        under_45 = sum(1 for r in response_times if r <= 45)
+        sla_hit_rate = under_45 / max(len(response_times), 1)
+        median_response = sorted(response_times)[len(response_times) // 2] if response_times else None
 
-    # ── 5. "Could Not Wait" Cancellation Rate ────────────────────────────
-    could_not_wait = sum(1 for s in sas
-                         if (s.get('ERS_Cancellation_Reason__c') or '').lower().startswith('member could not wait'))
-    cnw_rate = could_not_wait / max(total, 1)
+        # Completion Rate
+        completion_rate = completed_count / max(total, 1)
 
-    # ── 6. Dispatch Speed (CreatedDate → SchedStartTime) ─────────────────
-    dispatch_times = []
-    for s in sas:
-        created = _to_eastern(s.get('CreatedDate'))
-        sched = _to_eastern(s.get('SchedStartTime'))
-        if created and sched:
-            diff = (sched - created).total_seconds() / 60
-            if 0 <= diff < 1440:
-                dispatch_times.append(diff)
-    median_dispatch = sorted(dispatch_times)[len(dispatch_times) // 2] if dispatch_times else None
+        # PTA Accuracy (from individual completed SAs)
+        pta_values = []
+        pta_accurate = 0
+        for s in completed_sas:
+            pta = s.get('ERS_PTA__c')
+            if pta is not None:
+                pv = float(pta)
+                pta_values.append(pv)
+                if pv <= 45:
+                    created = _parse_dt(s.get('CreatedDate'))
+                    started = _parse_dt(s.get('ActualStartTime'))
+                    if created and started:
+                        diff = (started - created).total_seconds() / 60
+                        if 0 < diff <= 45:
+                            pta_accurate += 1
 
-    # ── 7. Facility Decline Rate ─────────────────────────────────────────
-    cache_key_decl = f"scorer_decl_{territory_id}_{days}"
-    decline_count = cached_query(cache_key_decl, lambda: sf_query(f"""
-        SELECT COUNT(Id) cnt FROM ServiceAppointment
-        WHERE ServiceTerritoryId = '{territory_id}'
-          AND CreatedDate = LAST_N_DAYS:{days}
-          AND ERS_Facility_Decline_Reason__c != null
-    """), ttl=300)['records'][0]['cnt']
-    decline_rate = decline_count / max(total, 1)
+        pta_promised_under_45 = sum(1 for v in pta_values if v <= 45)
+        pta_accuracy = pta_accurate / max(pta_promised_under_45, 1) if pta_promised_under_45 > 0 else None
 
-    # ── 8. Customer Satisfaction (via WorkOrder linkage) ──────────────────
-    cache_key_sat = f"scorer_sat_{territory_id}_{days}"
+        # Could Not Wait Rate (from aggregate)
+        cnw_count = data['cnw'][0].get('cnt', 0) if data['cnw'] else 0
+        cnw_rate = cnw_count / max(total, 1)
 
-    def _get_satisfaction():
-        # Get WO numbers directly from WorkOrder table for this territory
-        wo_recs = sf_query_all(f"""
-            SELECT WorkOrderNumber
-            FROM WorkOrder
-            WHERE ServiceTerritoryId = '{territory_id}'
-              AND CreatedDate = LAST_N_DAYS:{days}
-              AND WorkOrderNumber != null
-        """)
-        wo_nums = list(set(
-            r.get('WorkOrderNumber', '')
-            for r in wo_recs if r.get('WorkOrderNumber')
-        ))
-        if not wo_nums:
-            return None
+        # Dispatch Speed (from individual completed SAs)
+        dispatch_times = []
+        for s in completed_sas:
+            created = _parse_dt(s.get('CreatedDate'))
+            sched = _parse_dt(s.get('SchedStartTime'))
+            if created and sched:
+                diff = (sched - created).total_seconds() / 60
+                if 0 <= diff < 1440:
+                    dispatch_times.append(diff)
+        median_dispatch = sorted(dispatch_times)[len(dispatch_times) // 2] if dispatch_times else None
 
-        total_sat = 0
+        # Decline Rate (from aggregate)
+        decline_count = data['declines'][0].get('cnt', 0) if data['declines'] else 0
+        decline_rate = decline_count / max(total, 1)
+
+        # Satisfaction — use WO numbers from parallel query
+        satisfaction_rate = None
+        total_surveys = 0
         totally_satisfied = 0
-        # Batch query surveys
-        for i in range(0, len(wo_nums), 100):
-            batch = wo_nums[i:i+100]
-            wo_list = ",".join(f"'{w}'" for w in batch)
-            surveys = sf_query_all(f"""
-                SELECT ERS_Overall_Satisfaction__c
-                FROM Survey_Result__c
-                WHERE ERS_Work_Order_Number__c IN ({wo_list})
-                  AND ERS_Overall_Satisfaction__c != null
-            """)
-            for sv in surveys:
-                sat = sv.get('ERS_Overall_Satisfaction__c', '')
-                total_sat += 1
-                if sat.lower() == 'totally satisfied':
-                    totally_satisfied += 1
-        if total_sat == 0:
-            return None
-        return {'total_surveys': total_sat, 'totally_satisfied': totally_satisfied,
-                'rate': totally_satisfied / total_sat}
+        wo_nums = [r.get('WorkOrderNumber') for r in data.get('wo_nums', []) if r.get('WorkOrderNumber')]
+        if wo_nums:
+            # Aggregate survey query by WO numbers (batch 500 at a time)
+            all_surveys = []
+            for i in range(0, len(wo_nums), 500):
+                batch = wo_nums[i:i+500]
+                num_list = ",".join(f"'{w}'" for w in batch)
+                svs = sf_query_all(f"""
+                    SELECT ERS_Overall_Satisfaction__c, COUNT(Id) cnt
+                    FROM Survey_Result__c
+                    WHERE ERS_Work_Order_Number__c IN ({num_list})
+                    GROUP BY ERS_Overall_Satisfaction__c
+                """)
+                all_surveys.extend(svs)
+            for sv in all_surveys:
+                sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower()
+                cnt = sv.get('cnt', 1)
+                total_surveys += cnt
+                if sat == 'totally satisfied':
+                    totally_satisfied += cnt
+            if total_surveys > 0:
+                satisfaction_rate = totally_satisfied / total_surveys
 
-    sat_data = cached_query(cache_key_sat, _get_satisfaction, ttl=600)
-    satisfaction_rate = sat_data['rate'] if sat_data else None
-
-    # ── Score each dimension ─────────────────────────────────────────────
-    actuals = {
-        'sla_hit_rate': sla_hit_rate,
-        'completion_rate': completion_rate,
-        'satisfaction': satisfaction_rate,
-        'median_response': median_response,
-        'pta_accuracy': pta_accuracy,
-        'could_not_wait': cnw_rate,
-        'dispatch_speed': median_dispatch,
-        'decline_rate': decline_rate,
-    }
-
-    dimensions = {}
-    weighted_total = 0
-    weight_sum = 0
-
-    for key, cfg in DIMENSIONS.items():
-        actual = actuals.get(key)
-        score = _score_dimension(actual, cfg['target'], cfg['higher_better'])
-
-        # Format actual for display
-        if actual is None:
-            display = 'N/A'
-        elif key in ('sla_hit_rate', 'completion_rate', 'satisfaction', 'pta_accuracy', 'could_not_wait', 'decline_rate'):
-            display = f"{round(actual * 100, 1)}%"
-        elif key in ('median_response', 'dispatch_speed'):
-            display = f"{round(actual)} min"
-        else:
-            display = str(round(actual, 2))
-
-        # Format target
-        if key in ('sla_hit_rate', 'completion_rate', 'satisfaction', 'pta_accuracy'):
-            target_display = f"{round(cfg['target'] * 100)}%"
-        elif key in ('could_not_wait', 'decline_rate'):
-            target_display = f"< {round(cfg['target'] * 100)}%"
-        elif key in ('median_response', 'dispatch_speed'):
-            target_display = f"≤ {cfg['target']} min"
-        else:
-            target_display = str(cfg['target'])
-
-        dimensions[key] = {
-            'label': cfg['label'],
-            'weight': cfg['weight'],
-            'weight_pct': f"{round(cfg['weight'] * 100)}%",
-            'actual': actual,
-            'actual_display': display,
-            'target': cfg['target'],
-            'target_display': target_display,
-            'score': score,
-            'met': score is not None and score >= 80,
+        # Score each dimension
+        actuals = {
+            'sla_hit_rate': sla_hit_rate,
+            'completion_rate': completion_rate,
+            'satisfaction': satisfaction_rate,
+            'median_response': median_response,
+            'pta_accuracy': pta_accuracy,
+            'could_not_wait': cnw_rate,
+            'dispatch_speed': median_dispatch,
+            'decline_rate': decline_rate,
         }
 
-        if score is not None:
-            weighted_total += score * cfg['weight']
-            weight_sum += cfg['weight']
+        dimensions = {}
+        weighted_total = 0
+        weight_sum = 0
 
-    composite = round(weighted_total / max(weight_sum, 0.01), 1) if weight_sum > 0 else None
+        for key, cfg in DIMENSIONS.items():
+            actual = actuals.get(key)
+            score = _score_dimension(actual, cfg['target'], cfg['higher_better'])
 
-    # Letter grade
-    if composite is None:
-        grade = '?'
-    elif composite >= 90:
-        grade = 'A'
-    elif composite >= 80:
-        grade = 'B'
-    elif composite >= 70:
-        grade = 'C'
-    elif composite >= 60:
-        grade = 'D'
-    else:
-        grade = 'F'
+            if actual is None:
+                display = 'N/A'
+            elif key in ('sla_hit_rate', 'completion_rate', 'satisfaction', 'pta_accuracy', 'could_not_wait', 'decline_rate'):
+                display = f"{round(actual * 100, 1)}%"
+            elif key in ('median_response', 'dispatch_speed'):
+                display = f"{round(actual)} min"
+            else:
+                display = str(round(actual, 2))
 
-    return {
-        'composite': composite,
-        'grade': grade,
-        'dimensions': dimensions,
-        'sample_sizes': {
-            'total_sas': total,
-            'completed': len(completed),
-            'with_response_time': len(response_times),
-            'with_pta': len(pta_values),
-            'with_dispatch_time': len(dispatch_times),
-            'surveys': sat_data['total_surveys'] if sat_data else 0,
-            'declines': decline_count,
-        },
-    }
+            if key in ('sla_hit_rate', 'completion_rate', 'satisfaction', 'pta_accuracy'):
+                target_display = f"{round(cfg['target'] * 100)}%"
+            elif key in ('could_not_wait', 'decline_rate'):
+                target_display = f"< {round(cfg['target'] * 100)}%"
+            elif key in ('median_response', 'dispatch_speed'):
+                target_display = f"≤ {cfg['target']} min"
+            else:
+                target_display = str(cfg['target'])
+
+            dimensions[key] = {
+                'label': cfg['label'],
+                'weight': cfg['weight'],
+                'weight_pct': f"{round(cfg['weight'] * 100)}%",
+                'actual': actual,
+                'actual_display': display,
+                'target': cfg['target'],
+                'target_display': target_display,
+                'score': score,
+                'met': score is not None and score >= 80,
+            }
+
+            if score is not None:
+                weighted_total += score * cfg['weight']
+                weight_sum += cfg['weight']
+
+        composite = round(weighted_total / max(weight_sum, 0.01), 1) if weight_sum > 0 else None
+
+        if composite is None:
+            grade = '?'
+        elif composite >= 90:
+            grade = 'A'
+        elif composite >= 80:
+            grade = 'B'
+        elif composite >= 70:
+            grade = 'C'
+        elif composite >= 60:
+            grade = 'D'
+        else:
+            grade = 'F'
+
+        return {
+            'composite': composite,
+            'grade': grade,
+            'dimensions': dimensions,
+            'sample_sizes': {
+                'total_sas': total,
+                'completed': completed_count,
+                'with_response_time': len(response_times),
+                'with_pta': len(pta_values),
+                'with_dispatch_time': len(dispatch_times),
+                'surveys': total_surveys,
+                'declines': decline_count,
+            },
+        }
+
+    return cached_query(cache_key, _compute, ttl=300)
