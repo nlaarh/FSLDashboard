@@ -35,28 +35,17 @@ jobs:
         rm -rf backend/static
         cp -r frontend/dist backend/static
 
-    - name: Set up Python 3.13
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.13'
-
-    - name: Install Python dependencies into package
-      working-directory: backend
-      run: |
-        python3 --version
-        python3 -m pip install --upgrade pip
-        python3 -m pip install --target=.python_packages/lib/site-packages -r requirements.txt
-        echo "Checking compiled extensions match Python 3.13:"
-        find .python_packages -name "*.so" | head -5
-
     - name: Create deployment package
       working-directory: backend
       run: |
+        # Only source code + requirements.txt + static assets
+        # Azure Oryx will pip install from requirements.txt server-side
         zip -r ../deploy.zip \
           main.py app.py sf_client.py ops.py db.py \
           cache.py scorer.py scheduler.py simulator.py \
           gunicorn.conf.py startup.sh requirements.txt \
-          static/ .python_packages/
+          static/
+        echo "Package size: $(du -h ../deploy.zip | cut -f1)"
 
     - name: Deploy to Azure via Kudu ZIP Deploy
       env:
@@ -84,42 +73,23 @@ jobs:
 
         echo "HTTP Status: $HTTP_CODE"
         if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-          echo "Deployment accepted!"
+          echo "Deployment accepted! Oryx will build on server."
         else
           echo "Deployment failed!"
           echo "$BODY"
           exit 1
         fi
 
-    - name: Clean up stale Oryx artifacts
-      env:
-        DEPLOY_USER: ${{ secrets.AZURE_DEPLOY_USER }}
-        DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
+    - name: Wait for Oryx build and verify
       run: |
-        echo "machine ${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net" > /tmp/.netrc
-        echo "login ${DEPLOY_USER}" >> /tmp/.netrc
-        echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
-        chmod 600 /tmp/.netrc
-        # Delete leftover Oryx build artifact that prevents container startup
-        curl -s -X DELETE --netrc-file /tmp/.netrc \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/vfs/site/wwwroot/output.tar.zst" \
-          -H "If-Match: *" --max-time 30 || true
-        curl -s -X DELETE --netrc-file /tmp/.netrc \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/vfs/site/wwwroot/oryx-manifest.toml" \
-          -H "If-Match: *" --max-time 30 || true
-        rm -f /tmp/.netrc
-        echo "Cleanup done"
-
-    - name: Verify deployment
-      run: |
-        echo "Waiting 120 seconds for Azure to start the app..."
-        sleep 120
+        echo "Waiting 180 seconds for Oryx build + app startup..."
+        sleep 180
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
           --max-time 15 \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/")
+          "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health")
         echo "Health check: HTTP $STATUS"
         if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "302" ]; then
           echo "App is live! (HTTP $STATUS)"
         else
-          echo "Warning: App returned $STATUS (may still be starting)"
+          echo "Warning: App returned $STATUS (Oryx build may still be running)"
         fi
