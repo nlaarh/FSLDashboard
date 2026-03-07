@@ -82,6 +82,25 @@ jobs:
           exit 1
         fi
 
+    - name: Clean up stale Oryx artifacts
+      env:
+        DEPLOY_USER: ${{ secrets.AZURE_DEPLOY_USER }}
+        DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
+      run: |
+        echo "machine ${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net" > /tmp/.netrc
+        echo "login ${DEPLOY_USER}" >> /tmp/.netrc
+        echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
+        chmod 600 /tmp/.netrc
+        # Delete leftover Oryx build artifact that prevents container startup
+        curl -s -X DELETE --netrc-file /tmp/.netrc \
+          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/vfs/site/wwwroot/output.tar.zst" \
+          -H "If-Match: *" --max-time 30 || true
+        curl -s -X DELETE --netrc-file /tmp/.netrc \
+          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/vfs/site/wwwroot/oryx-manifest.toml" \
+          -H "If-Match: *" --max-time 30 || true
+        rm -f /tmp/.netrc
+        echo "Cleanup done"
+
     - name: Verify deployment
       run: |
         echo "Waiting 120 seconds for Azure to start the app..."
