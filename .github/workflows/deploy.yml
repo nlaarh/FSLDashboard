@@ -7,7 +7,6 @@ on:
 
 env:
   AZURE_WEBAPP_NAME: fslapp-nyaaa
-  PYTHON_VERSION: '3.13'
   NODE_VERSION: '20'
 
 jobs:
@@ -46,15 +45,26 @@ jobs:
           static/
 
     - name: Deploy to Azure via Kudu ZIP Deploy
+      env:
+        DEPLOY_USER: ${{ secrets.AZURE_DEPLOY_USER }}
+        DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
       run: |
         echo "Deploying to ${{ env.AZURE_WEBAPP_NAME }}..."
+        # Write netrc to avoid shell escaping issues with $ in username
+        echo "machine ${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net" > /tmp/.netrc
+        echo "login ${DEPLOY_USER}" >> /tmp/.netrc
+        echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
+        chmod 600 /tmp/.netrc
+
         RESPONSE=$(curl -s -w "\n%{http_code}" \
           -X POST \
           "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy?isAsync=true" \
-          -u "${{ secrets.AZURE_DEPLOY_USER }}:${{ secrets.AZURE_DEPLOY_PASS }}" \
+          --netrc-file /tmp/.netrc \
           --data-binary @deploy.zip \
           -H "Content-Type: application/octet-stream" \
           --max-time 300)
+
+        rm -f /tmp/.netrc
 
         HTTP_CODE=$(echo "$RESPONSE" | tail -1)
         BODY=$(echo "$RESPONSE" | sed '$d')
