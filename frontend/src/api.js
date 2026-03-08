@@ -2,6 +2,17 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api', timeout: 60000 })
 
+// Redirect to login on 401 (expired session or not logged in)
+api.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  }
+)
+
 export const fetchGarages = () => api.get('/garages').then(r => r.data)
 export const fetchSchedule = (id, { weeks = 4, startDate, endDate } = {}) => {
   const params = new URLSearchParams({ weeks })
