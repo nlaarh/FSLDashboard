@@ -2051,7 +2051,9 @@ _start_time = time.time()
 _static_dir = Path(__file__).resolve().parent / "static"
 
 if _static_dir.is_dir():
-    app.mount("/assets", StaticFiles(directory=_static_dir / "assets"), name="assets")
+    _assets_dir = _static_dir / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

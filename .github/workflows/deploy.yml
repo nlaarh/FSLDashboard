@@ -81,19 +81,6 @@ jobs:
           exit 1
         fi
 
-    - name: Delete stale Oryx cache before deploy
-      env:
-        DEPLOY_USER: ${{ secrets.AZURE_DEPLOY_USER }}
-        DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
-      run: |
-        # Delete old static assets and Oryx tar cache so fresh files take effect
-        echo "Cleaning old static assets..."
-        curl -s -X DELETE \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/vfs/site/wwwroot/static/assets/?recursive=true" \
-          -u "${DEPLOY_USER}:${DEPLOY_PASS}" \
-          -H "If-Match: *" --max-time 15 || true
-        echo "Done."
-
     - name: Wait for Oryx build and verify
       run: |
         echo "Waiting 180 seconds for Oryx build + app startup..."
