@@ -33,9 +33,10 @@ print('All imports passed.')
 
 echo "Starting gunicorn on port $PORT..."
 exec gunicorn main:app \
-    --workers 2 \
+    --workers 1 \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind "0.0.0.0:$PORT" \
     --timeout 120 \
+    --preload \
     --access-logfile - \
     --error-logfile -
