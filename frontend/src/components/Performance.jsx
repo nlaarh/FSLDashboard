@@ -9,7 +9,7 @@ import {
   AlertTriangle, Target, Activity, Users, ArrowRight, ChevronLeft, ChevronRight,
   Calendar, Minus,
 } from 'lucide-react'
-import { fetchPerformance } from '../api'
+import { fetchPerformance, fetchDecomposition } from '../api'
 
 // ── Period helpers ────────────────────────────────────────────────────────────
 
@@ -176,6 +176,221 @@ function buildInsights(data, garageName) {
   }
 
   return { insights, actions }
+}
+
+// ── Decomposition Panel ──────────────────────────────────────────────────────
+
+function DecompositionPanel({ garageId, start, end }) {
+  const [data, setData]       = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState(null)
+  const [open, setOpen]       = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setLoading(true)
+    setError(null)
+    fetchDecomposition(garageId, start, end)
+      .then(setData)
+      .catch(e => setError(e.response?.data?.detail || e.message))
+      .finally(() => setLoading(false))
+  }, [garageId, start, end, open])
+
+  const decomp = data?.response_decomposition
+  const leaderboard = data?.driver_leaderboard || []
+  const declines = data?.decline_analysis
+  const cancels = data?.cancel_analysis
+
+  return (
+    <div className="glass rounded-xl overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full p-5 flex items-center justify-between hover:bg-slate-800/30 transition-colors">
+        <h3 className="font-semibold text-slate-200 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-brand-400" />
+          Enhanced Analytics
+          <span className="text-xs font-normal text-slate-500 ml-2">
+            Response decomposition, driver leaderboard, decline analysis
+          </span>
+        </h3>
+        <ChevronRight className={clsx('w-4 h-4 text-slate-500 transition-transform', open && 'rotate-90')} />
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-5 border-t border-slate-800/50">
+          {loading && (
+            <div className="flex items-center gap-2 py-6 justify-center text-sm text-slate-400">
+              <div className="w-4 h-4 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
+              Loading enhanced analytics...
+            </div>
+          )}
+          {error && <div className="text-red-400 text-sm py-2">{error}</div>}
+
+          {decomp && (
+            <>
+              {/* Waterfall chart */}
+              <div className="pt-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                  Response Time Decomposition ({decomp.sample_size.toLocaleString()} calls)
+                </h4>
+                <div className="flex items-end gap-1 h-32">
+                  {[
+                    { label: 'Dispatch', value: decomp.avg_dispatch_min, color: 'bg-red-500', median: decomp.median_dispatch_min },
+                    { label: 'Travel', value: decomp.avg_travel_min, color: 'bg-amber-500', median: decomp.median_travel_min },
+                    { label: 'On-Site', value: decomp.avg_onsite_min, color: 'bg-emerald-500', median: decomp.median_onsite_min },
+                  ].map(seg => {
+                    const maxVal = Math.max(decomp.avg_dispatch_min || 1, decomp.avg_travel_min || 1, decomp.avg_onsite_min || 1)
+                    const pct = maxVal > 0 ? ((seg.value || 0) / maxVal) * 100 : 0
+                    return (
+                      <div key={seg.label} className="flex-1 flex flex-col items-center">
+                        <div className="text-xs font-bold text-white mb-1">{seg.value ?? 0}m</div>
+                        <div className={clsx('w-full rounded-t-md transition-all', seg.color)}
+                          style={{ height: `${Math.max(pct, 5)}%` }} />
+                        <div className="text-[10px] text-slate-400 mt-1">{seg.label}</div>
+                        <div className="text-[10px] text-slate-600">med: {seg.median ?? 0}m</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* By work type */}
+              {Object.keys(decomp.by_work_type).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">By Work Type</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-800">
+                          <th className="text-left py-1.5 px-2">Type</th>
+                          <th className="text-right py-1.5 px-2">Dispatch</th>
+                          <th className="text-right py-1.5 px-2">Travel</th>
+                          <th className="text-right py-1.5 px-2">On-Site</th>
+                          <th className="text-right py-1.5 px-2">Total</th>
+                          <th className="text-right py-1.5 px-2">Count</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(decomp.by_work_type)
+                          .sort((a, b) => b[1].count - a[1].count)
+                          .map(([wt, d]) => (
+                          <tr key={wt} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                            <td className="py-1.5 px-2 text-slate-300 font-medium">{wt}</td>
+                            <td className="py-1.5 px-2 text-right text-red-400">{d.dispatch}m</td>
+                            <td className="py-1.5 px-2 text-right text-amber-400">{d.travel}m</td>
+                            <td className="py-1.5 px-2 text-right text-emerald-400">{d.onsite}m</td>
+                            <td className="py-1.5 px-2 text-right text-white font-bold">{d.total}m</td>
+                            <td className="py-1.5 px-2 text-right text-slate-500">{d.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Driver leaderboard */}
+              {leaderboard.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    Driver Leaderboard (by avg response time)
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-800">
+                          <th className="text-left py-1.5 px-2">#</th>
+                          <th className="text-left py-1.5 px-2">Driver</th>
+                          <th className="text-right py-1.5 px-2">Calls</th>
+                          <th className="text-right py-1.5 px-2">Avg Resp</th>
+                          <th className="text-right py-1.5 px-2">Med Resp</th>
+                          <th className="text-right py-1.5 px-2">Avg On-Site</th>
+                          <th className="text-right py-1.5 px-2">Declines</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaderboard.map((d, i) => (
+                          <tr key={d.id} className={clsx(
+                            'border-b border-slate-800/50 hover:bg-slate-800/30',
+                            i < 3 && 'bg-emerald-950/10'
+                          )}>
+                            <td className="py-1.5 px-2">
+                              <span className={clsx('w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold',
+                                i === 0 ? 'bg-amber-500 text-black' :
+                                i === 1 ? 'bg-slate-400 text-black' :
+                                i === 2 ? 'bg-amber-700 text-white' :
+                                'bg-slate-800 text-slate-400')}>
+                                {i + 1}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-2 text-white font-medium">{d.name}</td>
+                            <td className="py-1.5 px-2 text-right text-slate-400">{d.total_calls}</td>
+                            <td className={clsx('py-1.5 px-2 text-right font-bold',
+                              d.avg_response_min && d.avg_response_min <= 45 ? 'text-emerald-400' :
+                              d.avg_response_min && d.avg_response_min <= 90 ? 'text-amber-400' : 'text-red-400')}>
+                              {d.avg_response_min ?? '—'}m
+                            </td>
+                            <td className="py-1.5 px-2 text-right text-slate-300">{d.median_response_min ?? '—'}m</td>
+                            <td className="py-1.5 px-2 text-right text-slate-400">{d.avg_onsite_min ?? '—'}m</td>
+                            <td className={clsx('py-1.5 px-2 text-right',
+                              d.declines > 0 ? 'text-red-400' : 'text-slate-600')}>
+                              {d.declines} ({d.decline_rate}%)
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Decline & Cancel analysis side by side */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Declines */}
+                {declines && declines.total_declines > 0 && (
+                  <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/30">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                      Facility Declines ({declines.total_declines} · {declines.decline_rate}% rate)
+                    </h4>
+                    <div className="space-y-1.5">
+                      {declines.by_reason.map(r => (
+                        <div key={r.reason} className="flex items-center gap-2">
+                          <div className="flex-1 text-xs text-slate-300">{r.reason}</div>
+                          <div className="w-24 h-2 bg-slate-900 rounded-full overflow-hidden">
+                            <div className="h-full bg-red-500 rounded-full" style={{ width: `${r.pct}%` }} />
+                          </div>
+                          <div className="text-xs text-slate-500 w-16 text-right">{r.count} ({r.pct}%)</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Cancellations */}
+                {cancels && cancels.total_cancellations > 0 && (
+                  <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/30">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                      Cancellations ({cancels.total_cancellations})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {cancels.by_reason.map(r => (
+                        <div key={r.reason} className="flex items-center gap-2">
+                          <div className="flex-1 text-xs text-slate-300">{r.reason}</div>
+                          <div className="w-24 h-2 bg-slate-900 rounded-full overflow-hidden">
+                            <div className="h-full bg-amber-500 rounded-full" style={{ width: `${r.pct}%` }} />
+                          </div>
+                          <div className="text-xs text-slate-500 w-16 text-right">{r.count} ({r.pct}%)</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -548,6 +763,9 @@ export default function Performance({ garageId, garageName }) {
               )}
             </div>
           </div>
+
+          {/* ── Enhanced Decomposition ──────────────────────────────── */}
+          <DecompositionPanel garageId={garageId} start={start} end={end} />
 
           {/* ── Supervisor Analysis ──────────────────────────────────── */}
           <div className="glass rounded-xl p-5">

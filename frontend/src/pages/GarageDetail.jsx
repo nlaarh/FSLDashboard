@@ -1,17 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
-import { fetchSchedule, fetchScorecard, fetchSimulation } from '../api'
+import { fetchSchedule, fetchSimulation } from '../api'
 import ScheduleGrid from '../components/ScheduleGrid'
-import Scorecard from '../components/Scorecard'
 import MapView from '../components/MapView'
-import Performance from '../components/Performance'
-import { ArrowLeft, Calendar, BarChart3, Map, Loader2, ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react'
+import GarageDashboard from '../components/GarageDashboard'
+import { ArrowLeft, Calendar, BarChart3, Map, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const TABS = [
-  { key: 'schedule',    label: 'Schedule',    icon: Calendar },
-  { key: 'scorecard',  label: 'Scorecard',   icon: BarChart3 },
-  { key: 'performance', label: 'Performance', icon: TrendingUp },
-  { key: 'dispatch',   label: 'Dispatch Map', icon: Map },
+  { key: 'schedule',  label: 'Schedule',    icon: Calendar },
+  { key: 'dashboard', label: 'Dashboard',   icon: BarChart3 },
+  { key: 'dispatch',  label: 'Dispatch Map', icon: Map },
 ]
 
 function getWeekDates(offset = 0) {
@@ -35,34 +33,29 @@ function getWeekDates(offset = 0) {
 export default function GarageDetail() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
-  const initialTab = TABS.find(t => t.key === searchParams.get('tab'))?.key ?? 'schedule'
+  // Map old tab names to new
+  const rawTab = searchParams.get('tab')
+  const mappedTab = rawTab === 'scorecard' || rawTab === 'performance' ? 'dashboard' : rawTab
+  const initialTab = TABS.find(t => t.key === mappedTab)?.key ?? 'schedule'
   const [tab, setTab] = useState(initialTab)
   const [schedule, setSchedule] = useState(null)
-  const [scorecard, setScorecard] = useState(null)
   const [simulation, setSimulation] = useState(null)
   const [loading, setLoading] = useState({})
   const [error, setError] = useState({})
   const [weekOffset, setWeekOffset] = useState(0)
-  const [simDate, setSimDate] = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 1)
-    return d.toISOString().split('T')[0]
-  })
-  const [garageName, setGarageName] = useState('')
+  const [simDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [garageName, setGarageName] = useState(searchParams.get('name') || '')
 
   const week = getWeekDates(weekOffset)
 
-  // Load schedule — recalculates whenever week changes
   const loadSchedule = useCallback(() => {
     setLoading(p => ({ ...p, schedule: true }))
     setError(p => ({ ...p, schedule: null }))
     setSchedule(null)
-    // Pass a 4-week window ending on the selected week's Sunday
     const endDate = week.end
-    // Calculate start: 4 weeks before the end date
     const end = new Date(endDate + 'T00:00:00')
     const start = new Date(end)
-    start.setDate(start.getDate() - 27) // 4 weeks = 28 days, start is 27 days before end
+    start.setDate(start.getDate() - 27)
     const startDate = start.toISOString().split('T')[0]
     fetchSchedule(id, { weeks: 4, startDate, endDate })
       .then(data => setSchedule(data))
@@ -72,19 +65,7 @@ export default function GarageDetail() {
 
   useEffect(() => { loadSchedule() }, [loadSchedule])
 
-  // Load scorecard when tab switches
-  useEffect(() => {
-    if (tab === 'scorecard' && !scorecard && !loading.scorecard) {
-      setLoading(p => ({ ...p, scorecard: true }))
-      setError(p => ({ ...p, scorecard: null }))
-      fetchScorecard(id)
-        .then(setScorecard)
-        .catch(e => setError(p => ({ ...p, scorecard: e.message })))
-        .finally(() => setLoading(p => ({ ...p, scorecard: false })))
-    }
-  }, [tab, id, scorecard, loading.scorecard])
-
-  const loadSimulation = () => {
+  const loadSimulation = useCallback(() => {
     setLoading(p => ({ ...p, simulation: true }))
     setError(p => ({ ...p, simulation: null }))
     setSimulation(null)
@@ -92,13 +73,20 @@ export default function GarageDetail() {
       .then(setSimulation)
       .catch(e => setError(p => ({ ...p, simulation: e.response?.data?.detail || e.message })))
       .finally(() => setLoading(p => ({ ...p, simulation: false })))
-  }
+  }, [id, simDate])
+
+  // Auto-load dispatch map when tab is selected
+  useEffect(() => {
+    if (tab === 'dispatch' && !simulation && !loading.simulation) {
+      loadSimulation()
+    }
+  }, [tab])
 
   return (
     <div>
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Link to="/" className="p-2 rounded-lg hover:bg-slate-800 transition-colors">
+        <Link to="/garages" className="p-2 rounded-lg hover:bg-slate-800 transition-colors">
           <ArrowLeft className="w-5 h-5 text-slate-400" />
         </Link>
         <div>
@@ -128,12 +116,9 @@ export default function GarageDetail() {
       {/* Schedule tab */}
       {tab === 'schedule' && (
         <>
-          {/* Week navigation */}
           <div className="flex items-center gap-3 mb-5">
-            <button
-              onClick={() => setWeekOffset(w => w - 1)}
-              className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-            >
+            <button onClick={() => setWeekOffset(w => w - 1)}
+              className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
               <ChevronLeft className="w-5 h-5 text-slate-400" />
             </button>
             <div className="text-center min-w-[260px]">
@@ -142,63 +127,30 @@ export default function GarageDetail() {
               </div>
               <div className="text-xs text-slate-400">{week.label}</div>
             </div>
-            <button
-              onClick={() => setWeekOffset(w => w + 1)}
-              className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-            >
+            <button onClick={() => setWeekOffset(w => w + 1)}
+              className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
               <ChevronRight className="w-5 h-5 text-slate-400" />
             </button>
-            <button
-              onClick={() => setWeekOffset(0)}
-              className="px-3 py-1 text-xs text-slate-400 hover:text-white bg-slate-800 rounded-lg ml-2"
-            >
+            <button onClick={() => setWeekOffset(0)}
+              className="px-3 py-1 text-xs text-slate-400 hover:text-white bg-slate-800 rounded-lg ml-2">
               Today
             </button>
           </div>
-
           {loading.schedule && <LoadingState text="Generating schedule from Salesforce data..." />}
           {error.schedule && <ErrorState msg={error.schedule} />}
           {schedule && <ScheduleGrid data={schedule} week={week} onGarageName={setGarageName} />}
         </>
       )}
 
-      {/* Scorecard tab */}
-      {tab === 'scorecard' && (
-        <>
-          {loading.scorecard && <LoadingState text="Computing performance metrics..." />}
-          {error.scorecard && <ErrorState msg={error.scorecard} />}
-          {scorecard && <Scorecard data={scorecard} garageId={id} />}
-        </>
-      )}
-
-      {/* Performance tab */}
-      {tab === 'performance' && (
-        <Performance garageId={id} garageName={garageName} />
+      {/* Dashboard tab (merged scorecard + performance) */}
+      {tab === 'dashboard' && (
+        <GarageDashboard garageId={id} garageName={garageName} />
       )}
 
       {/* Dispatch tab */}
       {tab === 'dispatch' && (
         <div>
-          <div className="flex items-center gap-3 mb-4">
-            <input
-              type="date"
-              value={simDate}
-              onChange={e => setSimDate(e.target.value)}
-              className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm
-                         focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-            />
-            <button
-              onClick={loadSimulation}
-              disabled={loading.simulation}
-              className="px-4 py-2 bg-brand-600 hover:bg-brand-500 rounded-lg text-sm font-medium
-                         transition-colors disabled:opacity-50 flex items-center gap-2"
-            >
-              {loading.simulation && <Loader2 className="w-4 h-4 animate-spin" />}
-              {loading.simulation ? 'Loading...' : 'Get SAs'}
-            </button>
-            <span className="text-xs text-slate-500">Pick a date with SA data (try a weekday)</span>
-          </div>
-          {loading.simulation && <LoadingState text="Querying drivers, skills, and positions from Salesforce..." />}
+          {loading.simulation && <LoadingState text="Loading today's service appointments from Salesforce..." />}
           {error.simulation && <ErrorState msg={error.simulation} />}
           {simulation && <MapView data={simulation} />}
         </div>

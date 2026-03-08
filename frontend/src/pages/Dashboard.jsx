@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fetchGarages, fetchOpsTerritories } from '../api'
 import { clsx } from 'clsx'
 import {
-  Search, Calendar, BarChart3, TrendingUp, Map,
+  Search, Calendar, BarChart3, Map,
   AlertTriangle, Clock, CheckCircle2, ChevronUp, ChevronDown,
   Activity, Flame, RefreshCw, ChevronRight, X,
   Phone, MapPin, Zap, Circle,
@@ -63,18 +63,17 @@ function Th({ label, col, sort, onSort, right = false }) {
 }
 
 // ── Quick-action row ──────────────────────────────────────────────────────────
-function QuickActions({ id, onNav }) {
+function QuickActions({ id, name, onNav }) {
   const btns = [
     { icon: Calendar,   label: 'Schedule',    tab: 'schedule'    },
-    { icon: BarChart3,  label: 'Scorecard',   tab: 'scorecard'   },
-    { icon: TrendingUp, label: 'Performance', tab: 'performance' },
+    { icon: BarChart3,  label: 'Dashboard',   tab: 'dashboard'   },
     { icon: Map,        label: 'Map',         tab: 'dispatch'    },
   ]
   return (
     <div className="flex gap-1 justify-end flex-wrap">
       {btns.map(b => (
         <button key={b.tab}
-          onClick={e => { e.stopPropagation(); onNav(id, b.tab) }}
+          onClick={e => { e.stopPropagation(); onNav(id, b.tab, name) }}
           className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium
                      text-slate-400 hover:text-white hover:bg-brand-600/30 hover:border-brand-500/40
                      border border-transparent transition-all whitespace-nowrap">
@@ -132,12 +131,11 @@ function ExpandedRow({ row, onNav, onClose }) {
           <div className="flex flex-col gap-1.5 min-w-[130px]">
             {[
               { icon: Calendar,   label: 'View Schedule',    tab: 'schedule'     },
-              { icon: BarChart3,  label: 'View Scorecard',   tab: 'scorecard'    },
-              { icon: TrendingUp, label: 'Performance',       tab: 'performance'  },
+              { icon: BarChart3,  label: 'Dashboard',         tab: 'dashboard'    },
               { icon: Map,        label: 'Dispatch Map',      tab: 'dispatch'     },
             ].map(b => (
               <button key={b.tab}
-                onClick={e => { e.stopPropagation(); onNav(row.id, b.tab) }}
+                onClick={e => { e.stopPropagation(); onNav(row.id, b.tab, row.name) }}
                 className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium
                            text-slate-400 hover:text-white hover:bg-slate-700 transition-all text-left">
                 <b.icon className="w-3.5 h-3.5 shrink-0" />{b.label}
@@ -188,7 +186,7 @@ function AlertStrip({ rows, onNav }) {
                 ? 'bg-red-950/30 border-red-800/40'
                 : 'bg-amber-950/20 border-amber-800/30'
             )}
-            onClick={() => onNav(r.id, 'performance')}>
+            onClick={() => onNav(r.id, 'dashboard', r.name)}>
             <span className={clsx('w-2 h-2 rounded-full shrink-0',
               r.status === 'critical' ? 'bg-red-500' : 'bg-amber-400')} />
             <span className="font-semibold text-white max-w-[160px] truncate">{r.name}</span>
@@ -324,7 +322,7 @@ export default function Dashboard() {
     )
   }
 
-  const onNav = (id, tab) => navigate(`/garage/${id}?tab=${tab}`)
+  const onNav = (id, tab, name) => navigate(`/garage/${id}?tab=${tab}${name ? '&name=' + encodeURIComponent(name) : ''}`)
 
   // ── Summary ───────────────────────────────────────────────────────────────────
   const active   = rows.filter(r => r.hasLive)
@@ -568,7 +566,7 @@ export default function Dashboard() {
 
                       {/* Quick actions */}
                       <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                        <QuickActions id={r.id} onNav={onNav} />
+                        <QuickActions id={r.id} name={r.name} onNav={onNav} />
                       </td>
                     </tr>
 

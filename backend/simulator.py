@@ -103,6 +103,26 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
                if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
     driver_ids = list(set(m['ServiceResourceId'] for m in members))
 
+    # Query AssignedResource to find actual driver for each SA
+    sa_ids = [sa['Id'] for sa in sas]
+    ar_map = {}  # sa_id -> {resource_id, resource_name}
+    for i in range(0, len(sa_ids), 200):
+        batch = sa_ids[i:i+200]
+        id_list = ",".join(f"'{s}'" for s in batch)
+        ars = sf_query_all(f"""
+            SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name
+            FROM AssignedResource
+            WHERE ServiceAppointmentId IN ({id_list})
+        """)
+        for ar in ars:
+            sa_ref = ar.get('ServiceAppointmentId')
+            sr = ar.get('ServiceResource') or {}
+            if sa_ref:
+                ar_map[sa_ref] = {
+                    'resource_id': ar.get('ServiceResourceId'),
+                    'resource_name': sr.get('Name', '?'),
+                }
+
     # 2. Driver skills + work type skills — parallel, cached 1hr
     def _get_skills():
         if not driver_ids:
@@ -164,9 +184,16 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
         required_skills = set(wt_skills.get(wt_name, []))
 
         truck_id = sa.get('Off_Platform_Truck_Id__c') or ''
-        truck_label = f"Truck {truck_id.split('-')[-1]}" if truck_id else 'No Truck ID'
-        actual_driver_id = None
-        actual_driver_name = truck_label
+        ar_info = ar_map.get(sa['Id'])
+        if ar_info:
+            actual_driver_id = ar_info['resource_id']
+            actual_driver_name = ar_info['resource_name']
+        elif truck_id:
+            actual_driver_id = None
+            actual_driver_name = f"Truck {truck_id.split('-')[-1]}"
+        else:
+            actual_driver_id = None
+            actual_driver_name = 'Unassigned'
 
         evaluations = []
         for member in members:

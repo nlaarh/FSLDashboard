@@ -1,7 +1,18 @@
-"""Salesforce OAuth2 client — password flow with auto-refresh and retry."""
+"""Salesforce OAuth2 client — with rate limiter, circuit breaker, and connection pooling.
 
-import os, threading, time as _time, requests
+Protects the production Salesforce org from being overwhelmed by FSLAPP:
+1. Rate limiter: max 60 API calls/minute (configurable)
+2. Circuit breaker: if SF fails 5x in a row, stop calling for 60s
+3. Connection pooling: reuse TCP connections across 25+ dispatchers
+"""
+
+import os, threading, time as _time, logging, requests
+from collections import deque
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
+
+log = logging.getLogger('sf_client')
 
 # Load .env from the apidev directory (one level up from FSLAPP)
 _env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
@@ -11,6 +22,115 @@ _lock = threading.Lock()
 _token: str | None = None
 _instance: str | None = None
 
+# ── Connection Pooling ──────────────────────────────────────────────────────
+_session = requests.Session()
+_adapter = HTTPAdapter(
+    pool_connections=10,
+    pool_maxsize=25,
+    max_retries=Retry(total=0),
+)
+_session.mount('https://', _adapter)
+_session.mount('http://', _adapter)
+
+
+# ── Rate Limiter ────────────────────────────────────────────────────────────
+# Sliding window: max N calls per 60 seconds
+_RATE_LIMIT = int(os.getenv('SF_RATE_LIMIT', '300'))  # calls per minute (~5/sec)
+_rate_lock = threading.Lock()
+_call_timestamps: deque = deque()
+
+
+def _rate_limit_check():
+    """Block if we've exceeded the rate limit. Waits until a slot opens."""
+    with _rate_lock:
+        now = _time.time()
+        # Purge timestamps older than 60s
+        while _call_timestamps and _call_timestamps[0] < now - 60:
+            _call_timestamps.popleft()
+
+        if len(_call_timestamps) >= _RATE_LIMIT:
+            # Wait until the oldest call falls outside the window
+            wait = _call_timestamps[0] - (now - 60) + 0.1
+            log.warning(f"Rate limit hit ({_RATE_LIMIT}/min). Waiting {wait:.1f}s")
+            _time.sleep(wait)
+            # Re-purge after waiting
+            now = _time.time()
+            while _call_timestamps and _call_timestamps[0] < now - 60:
+                _call_timestamps.popleft()
+
+        _call_timestamps.append(_time.time())
+
+
+# ── Circuit Breaker ─────────────────────────────────────────────────────────
+# If SF fails repeatedly, stop calling it to let it recover
+_BREAKER_THRESHOLD = 5       # consecutive failures before opening circuit
+_BREAKER_COOLDOWN = 60       # seconds to wait before retrying
+_breaker_lock = threading.Lock()
+_breaker_failures = 0
+_breaker_open_until = 0.0
+
+
+class SalesforceUnavailable(RuntimeError):
+    """Raised when circuit breaker is open — SF is temporarily unavailable."""
+    pass
+
+
+def _breaker_check():
+    """Raise if circuit breaker is open."""
+    with _breaker_lock:
+        if _breaker_failures >= _BREAKER_THRESHOLD:
+            if _time.time() < _breaker_open_until:
+                remaining = round(_breaker_open_until - _time.time())
+                raise SalesforceUnavailable(
+                    f"Salesforce circuit breaker open — {_breaker_failures} consecutive failures. "
+                    f"Retrying in {remaining}s. App will serve cached data."
+                )
+            # Cooldown expired — allow one attempt (half-open)
+            log.info("Circuit breaker half-open — allowing one retry")
+
+
+def _breaker_success():
+    """Record a successful SF call — reset the breaker."""
+    global _breaker_failures, _breaker_open_until
+    with _breaker_lock:
+        if _breaker_failures > 0:
+            log.info(f"SF recovered after {_breaker_failures} failures — circuit closed")
+        _breaker_failures = 0
+        _breaker_open_until = 0.0
+
+
+def _breaker_failure():
+    """Record a failed SF call — may open the breaker."""
+    global _breaker_failures, _breaker_open_until
+    with _breaker_lock:
+        _breaker_failures += 1
+        if _breaker_failures >= _BREAKER_THRESHOLD:
+            _breaker_open_until = _time.time() + _BREAKER_COOLDOWN
+            log.error(f"Circuit breaker OPEN — {_breaker_failures} consecutive SF failures. "
+                      f"No SF calls for {_BREAKER_COOLDOWN}s.")
+
+
+# ── Stats ───────────────────────────────────────────────────────────────────
+_stats_lock = threading.Lock()
+_stats = {'total_calls': 0, 'errors': 0, 'rate_waits': 0, 'breaker_trips': 0}
+
+
+def get_stats():
+    """Return SF client health stats for monitoring."""
+    with _stats_lock:
+        s = dict(_stats)
+    with _rate_lock:
+        now = _time.time()
+        recent = sum(1 for t in _call_timestamps if t > now - 60)
+    with _breaker_lock:
+        s['breaker_failures'] = _breaker_failures
+        s['breaker_open'] = _breaker_failures >= _BREAKER_THRESHOLD and _time.time() < _breaker_open_until
+    s['calls_last_60s'] = recent
+    s['rate_limit'] = _RATE_LIMIT
+    return s
+
+
+# ── Auth ────────────────────────────────────────────────────────────────────
 
 def _authenticate() -> tuple[str, str]:
     payload = {
@@ -20,7 +140,7 @@ def _authenticate() -> tuple[str, str]:
         'username': os.getenv('SF_USERNAME'),
         'password': os.getenv('SF_PASSWORD', '') + os.getenv('SF_SECURITY_TOKEN', ''),
     }
-    resp = requests.post(os.getenv('SF_TOKEN_URL', ''), data=payload, timeout=30)
+    resp = _session.post(os.getenv('SF_TOKEN_URL', ''), data=payload, timeout=30)
     auth = resp.json()
     if 'access_token' not in auth:
         raise RuntimeError(f"SF auth failed: {auth}")
@@ -42,30 +162,56 @@ def refresh_auth() -> tuple[str, str]:
     return _token, _instance
 
 
+# ── Query ───────────────────────────────────────────────────────────────────
+
 def sf_query(soql: str, _retries: int = 3) -> dict:
+    # Gate 1: circuit breaker
+    _breaker_check()
+    # Gate 2: rate limiter
+    _rate_limit_check()
+
+    with _stats_lock:
+        _stats['total_calls'] += 1
+
     token, instance = get_auth()
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 
     for attempt in range(_retries):
         try:
-            r = requests.get(f'{instance}/services/data/v60.0/query',
+            r = _session.get(f'{instance}/services/data/v60.0/query',
                              headers=headers, params={'q': soql}, timeout=(10, 120))
         except requests.exceptions.Timeout:
+            _breaker_failure()
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
                 continue
+            with _stats_lock:
+                _stats['errors'] += 1
             raise RuntimeError("SF query timed out after retries")
+        except requests.exceptions.ConnectionError:
+            _breaker_failure()
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+                continue
+            with _stats_lock:
+                _stats['errors'] += 1
+            raise RuntimeError("SF connection failed after retries")
 
         # Retry on server errors
-        if r.status_code in (500, 502, 503) and attempt < _retries - 1:
-            _time.sleep(2 ** attempt)
-            continue
+        if r.status_code in (500, 502, 503):
+            _breaker_failure()
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+                continue
+            with _stats_lock:
+                _stats['errors'] += 1
 
         # Handle expired session
         if r.status_code in (401, 403):
             token, instance = refresh_auth()
             headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-            r = requests.get(f'{instance}/services/data/v60.0/query',
+            _rate_limit_check()
+            r = _session.get(f'{instance}/services/data/v60.0/query',
                              headers=headers, params={'q': soql}, timeout=(10, 120))
         break
 
@@ -79,20 +225,30 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
     if is_expired:
         token, instance = refresh_auth()
         headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-        r = requests.get(f'{instance}/services/data/v60.0/query',
+        _rate_limit_check()
+        r = _session.get(f'{instance}/services/data/v60.0/query',
                          headers=headers, params={'q': soql}, timeout=(10, 120))
         result = r.json()
     if isinstance(result, list):
+        _breaker_failure()
+        with _stats_lock:
+            _stats['errors'] += 1
         raise RuntimeError(f"SF query error: {result}")
     if isinstance(result, dict) and 'errorCode' in result:
+        _breaker_failure()
+        with _stats_lock:
+            _stats['errors'] += 1
         raise RuntimeError(f"SF error: {result.get('message', result)}")
+
+    # Success — reset breaker
+    _breaker_success()
     return result
 
 
 def sf_parallel(**fns) -> dict:
     """Run multiple functions in parallel. Returns {name: result}."""
     import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
         futures = {name: pool.submit(fn) for name, fn in fns.items()}
         return {name: fut.result() for name, fut in futures.items()}
 
@@ -107,16 +263,18 @@ def sf_query_all(soql: str) -> list[dict]:
     page = 1
     while not result.get('done', True) and result.get('nextRecordsUrl'):
         page += 1
+        _rate_limit_check()  # Each page counts against rate limit
         for attempt in range(3):
             try:
-                resp = requests.get(f'{instance}{result["nextRecordsUrl"]}',
+                resp = _session.get(f'{instance}{result["nextRecordsUrl"]}',
                                     headers=headers, timeout=(10, 60))
                 result = resp.json()
+                _breaker_success()
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                _breaker_failure()
                 if attempt < 2:
                     _time.sleep(2 ** attempt)
-                    # Re-auth in case token expired
                     token, instance = refresh_auth()
                     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
                     continue

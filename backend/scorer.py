@@ -68,7 +68,8 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                                  'Unable to Complete','Assigned','No-Show')
                 GROUP BY Status
             """),
-            # Individual: only completed with ActualStartTime (for response/PTA)
+            # Individual: only Field Services completed with ActualStartTime
+            # (Towbook ActualStartTime is bulk-updated at midnight — not real arrival)
             completed=lambda: sf_query_all(f"""
                 SELECT CreatedDate, SchedStartTime, ActualStartTime, ERS_PTA__c
                 FROM ServiceAppointment
@@ -76,6 +77,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                   AND CreatedDate >= {since}
                   AND Status = 'Completed'
                   AND ActualStartTime != null
+                  AND ERS_Dispatch_Method__c = 'Field Services'
             """),
             # Aggregate: could not wait count
             cnw=lambda: sf_query_all(f"""
@@ -132,23 +134,25 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         completion_rate = completed_count / max(total, 1)
 
         # PTA Accuracy (from individual completed SAs)
+        # Measures: did the driver arrive within the promised PTA window?
         pta_values = []
         pta_accurate = 0
+        pta_evaluated = 0
         for s in completed_sas:
             pta = s.get('ERS_PTA__c')
             if pta is not None:
                 pv = float(pta)
                 pta_values.append(pv)
-                if pv <= 45:
-                    created = _parse_dt(s.get('CreatedDate'))
-                    started = _parse_dt(s.get('ActualStartTime'))
-                    if created and started:
-                        diff = (started - created).total_seconds() / 60
-                        if 0 < diff <= 45:
+                created = _parse_dt(s.get('CreatedDate'))
+                started = _parse_dt(s.get('ActualStartTime'))
+                if created and started:
+                    diff = (started - created).total_seconds() / 60
+                    if 0 < diff < 480:
+                        pta_evaluated += 1
+                        if diff <= pv:
                             pta_accurate += 1
 
-        pta_promised_under_45 = sum(1 for v in pta_values if v <= 45)
-        pta_accuracy = pta_accurate / max(pta_promised_under_45, 1) if pta_promised_under_45 > 0 else None
+        pta_accuracy = pta_accurate / max(pta_evaluated, 1) if pta_evaluated > 0 else None
 
         # Could Not Wait Rate (from aggregate)
         cnw_count = data['cnw'][0].get('cnt', 0) if data['cnw'] else 0

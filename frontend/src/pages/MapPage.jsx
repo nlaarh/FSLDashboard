@@ -3,8 +3,7 @@ import { MapContainer, TileLayer, GeoJSON, Marker, CircleMarker, Tooltip, Popup 
 import L from 'leaflet'
 import { Layers, Loader2 } from 'lucide-react'
 import { fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchCommandCenter } from '../api'
-
-const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+import { getMapConfig } from '../mapStyles'
 
 const SA_COLORS = {
   Dispatched: '#3b82f6',
@@ -79,6 +78,13 @@ const SA_LEGEND = [
 ]
 
 export default function MapPage() {
+  const [mapConfig, setMapCfg] = useState(getMapConfig)
+  useEffect(() => {
+    const handler = () => setMapCfg(getMapConfig())
+    window.addEventListener('mapStyleChanged', handler)
+    return () => window.removeEventListener('mapStyleChanged', handler)
+  }, [])
+
   const [layers, setLayers] = useState({ grid: true, drivers: true, sas: true, weather: true })
   const [panelOpen, setPanelOpen] = useState(true)
 
@@ -130,12 +136,13 @@ export default function MapPage() {
       .catch(e => { setErrors(l => ({ ...l, weather: e.message })); setLoading(l => ({ ...l, weather: false })) })
   }, [layers.weather])
 
+  const isDark = mapConfig.dark !== false
   const gridStyle = (feature) => ({
-    color: feature.properties.color || '#818cf8',
-    weight: 1.5,
-    opacity: 0.85,
-    fillColor: feature.properties.color || '#818cf8',
-    fillOpacity: 0.1,
+    color: feature.properties.color || (isDark ? '#818cf8' : '#4f46e5'),
+    weight: isDark ? 1.5 : 2,
+    opacity: isDark ? 0.85 : 0.6,
+    fillColor: feature.properties.color || (isDark ? '#818cf8' : '#4f46e5'),
+    fillOpacity: isDark ? 0.1 : 0.08,
   })
 
   const onEachGrid = (feature, layer) => {
@@ -162,12 +169,17 @@ export default function MapPage() {
         style={{ width: '100%', height: '100%', borderRadius: 0 }}
         zoomControl={true}
       >
-        <TileLayer url={DARK_TILES} attribution="&copy; CARTO &copy; OpenStreetMap" />
+        <TileLayer key={mapConfig.url} url={mapConfig.url}
+          className={mapConfig.filter ? 'dynamic-map-tiles' : ''}
+          {...(mapConfig.noSubdomains ? { subdomains: [] } : {})} />
+        {mapConfig.filter && (
+          <style>{`.dynamic-map-tiles { filter: ${mapConfig.filter}; }`}</style>
+        )}
 
         {/* ── Grid layer ── */}
         {layers.grid && grids && grids.features.length > 0 && (
           <GeoJSON
-            key="grids"
+            key={`grids-${isDark ? 'dark' : 'light'}`}
             data={grids}
             style={gridStyle}
             onEachFeature={onEachGrid}

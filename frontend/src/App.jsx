@@ -3,14 +3,20 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import GarageDetail from './pages/GarageDetail'
 import CommandCenter from './pages/CommandCenter'
+import QueueBoard from './pages/QueueBoard'
+import Forecast from './pages/Forecast'
+import Admin from './pages/Admin'
 
 export default function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<CommandCenter />} />
+        <Route path="/garages" element={<Dashboard />} />
         <Route path="/garage/:id" element={<GarageDetail />} />
-        <Route path="/command-center" element={<CommandCenter />} />
+        <Route path="/queue" element={<QueueBoard />} />
+        <Route path="/forecast" element={<Forecast />} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

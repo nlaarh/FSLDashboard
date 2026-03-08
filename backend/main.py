@@ -60,11 +60,16 @@ def _to_eastern(dt_str):
     return (dt - timedelta(hours=5)) if dt else None
 
 
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, get_stats as sf_stats
 from scheduler import generate_schedule
 from simulator import simulate_day, haversine
 from scorer import compute_score
 from ops import get_ops_territories, get_ops_territory_detail, get_ops_garages
+import users
+from dispatch import (
+    get_live_queue, recommend_drivers, get_cascade_status,
+    get_response_decomposition, get_forecast,
+)
 import cache
 
 app = FastAPI(title="FSL App", version="1.0.0")
@@ -182,10 +187,12 @@ def login_page():
 
 @app.post("/api/auth/login")
 def admin_login(request: Request, creds: dict, response: Response):
-    if creds.get("username") == _ADMIN_USER and creds.get("password") == _ADMIN_PASS:
-        payload = f"{_ADMIN_USER}:{int(time.time())}"
+    user = users.authenticate(creds.get("username", ""), creds.get("password", ""))
+    if user:
+        token = users.create_session(user["username"], user["role"], user["name"])
+        payload = f"{user['username']}:{user['role']}:{token}"
         response.set_cookie("fslapp_auth", _sign_cookie(payload), httponly=True, samesite="lax", max_age=86400)
-        return {"ok": True, "user": _ADMIN_USER}
+        return {"ok": True, "user": user["username"], "name": user["name"], "role": user["role"]}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -194,17 +201,33 @@ def auth_me(request: Request):
     # Azure Easy Auth
     principal = request.headers.get("x-ms-client-principal-name")
     if principal:
-        return {"user": principal, "method": "sso"}
+        return {"user": principal, "method": "sso", "role": "admin", "name": principal}
     # Admin cookie
     cookie = request.cookies.get("fslapp_auth")
     payload = _verify_cookie(cookie) if cookie else None
     if payload:
-        return {"user": payload.split(":")[0], "method": "admin"}
-    return {"user": "dev", "method": "local"}
+        parts = payload.split(":")
+        username = parts[0]
+        role = parts[1] if len(parts) > 1 else "admin"
+        name = username
+        # Try to get session info for richer data
+        if len(parts) > 2:
+            sess = users.get_session(parts[2])
+            if sess:
+                name = sess.get("name", username)
+                role = sess.get("role", role)
+        return {"user": username, "name": name, "role": role, "method": "admin"}
+    return {"user": "dev", "name": "Developer", "role": "admin", "method": "local"}
 
 
 @app.post("/api/auth/logout")
-def auth_logout(response: Response):
+def auth_logout(request: Request, response: Response):
+    cookie = request.cookies.get("fslapp_auth")
+    payload = _verify_cookie(cookie) if cookie else None
+    if payload:
+        parts = payload.split(":")
+        if len(parts) > 2:
+            users.destroy_session(parts[2])
     response.delete_cookie("fslapp_auth")
     return {"ok": True}
 
@@ -213,7 +236,8 @@ def auth_logout(response: Response):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "db_seeded": True, "sync_in_progress": False}
+    return {"status": "ok", "db_seeded": True, "sync_in_progress": False,
+            "cache": cache.stats(), "salesforce": sf_stats()}
 
 
 # ── Compat endpoints (frontend expects these) ───────────────────────────────
@@ -301,7 +325,7 @@ def get_schedule(territory_id: str,
     result = cache.cached_query(
         cache_key,
         lambda: generate_schedule(territory_id, weeks, start_date=start_date, end_date=end_date),
-        ttl=600,
+        ttl=3600,
     )
     if 'error' in result and not result.get('schedule'):
         raise HTTPException(status_code=404, detail=result['error'])
@@ -340,13 +364,14 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
                 GROUP BY WorkType.Name, Status
             """),
             rt=lambda: sf_query_all(f"""
-                SELECT CreatedDate, ActualStartTime, ERS_PTA__c
+                SELECT CreatedDate, ActualStartTime, ERS_PTA__c, ERS_Dispatch_Method__c
                 FROM ServiceAppointment
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND Status = 'Completed'
                   AND ActualStartTime != null
                   AND WorkType.Name != 'Tow Drop-Off'
+                  AND ERS_Dispatch_Method__c = 'Field Services'
                 ORDER BY CreatedDate DESC
                 LIMIT 500
             """),
@@ -457,7 +482,7 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
 
             if created and started:
                 diff = (started - created).total_seconds() / 60
-                if 0 < diff < 1440:
+                if 0 < diff < 480:
                     response_times.append(diff)
 
         # PTA aggregate for total PTA stats (all SAs, not just completed)
@@ -555,7 +580,7 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
             ],
         }
 
-    return cache.cached_query(f'scorecard_{territory_id}_{weeks}', _fetch, ttl=300)
+    return cache.cached_query(f'scorecard_{territory_id}_{weeks}', _fetch, ttl=3600)
 
 
 # ── Appointments (Day View) ─────────────────────────────────────────────────
@@ -609,32 +634,38 @@ def get_appointments(territory_id: str, date_str: str = Query(..., alias='date')
 
 @app.get("/api/garages/{territory_id}/simulate")
 def run_simulation(territory_id: str, date_str: str = Query(..., alias='date')):
-    results = simulate_day(territory_id, date_str)
-    if not results:
+    def _fetch():
+        results = simulate_day(territory_id, date_str)
+        if not results:
+            return None
+
+        total = len(results)
+        known = [r for r in results if r.get('closest_picked') is not None]
+        unknown = [r for r in results if r.get('closest_picked') is None]
+        closest_picked = sum(1 for r in known if r.get('closest_picked'))
+        total_extra = sum(r.get('extra_miles', 0) or 0 for r in known if not r.get('closest_picked'))
+        has_closest = [r for r in results if r.get('closest_distance') is not None]
+
+        return {
+            'results': results,
+            'summary': {
+                'total_sas': total,
+                'closest_picked': closest_picked,
+                'closest_pct': round(100 * closest_picked / max(len(known), 1), 1) if known else None,
+                'known_assignments': len(known),
+                'unknown_assignments': len(unknown),
+                'wrong_decisions': len(known) - closest_picked if known else None,
+                'total_extra_miles': round(total_extra, 1) if known else None,
+                'avg_extra_miles': round(total_extra / max(len(known) - closest_picked, 1), 1) if known else None,
+                'avg_closest_distance': round(sum(r['closest_distance'] for r in has_closest) / max(len(has_closest), 1), 1) if has_closest else None,
+                'dispatched_via': 'Towbook' if len(unknown) > len(known) else 'Salesforce FSL',
+            },
+        }
+
+    result = cache.cached_query(f'simulate_{territory_id}_{date_str}', _fetch, ttl=120)
+    if result is None:
         raise HTTPException(status_code=404, detail="No simulatable SAs found")
-
-    total = len(results)
-    known = [r for r in results if r.get('closest_picked') is not None]
-    unknown = [r for r in results if r.get('closest_picked') is None]
-    closest_picked = sum(1 for r in known if r.get('closest_picked'))
-    total_extra = sum(r.get('extra_miles', 0) or 0 for r in known if not r.get('closest_picked'))
-    has_closest = [r for r in results if r.get('closest_distance') is not None]
-
-    return {
-        'results': results,
-        'summary': {
-            'total_sas': total,
-            'closest_picked': closest_picked,
-            'closest_pct': round(100 * closest_picked / max(len(known), 1), 1) if known else None,
-            'known_assignments': len(known),
-            'unknown_assignments': len(unknown),
-            'wrong_decisions': len(known) - closest_picked if known else None,
-            'total_extra_miles': round(total_extra, 1) if known else None,
-            'avg_extra_miles': round(total_extra / max(len(known) - closest_picked, 1), 1) if known else None,
-            'avg_closest_distance': round(sum(r['closest_distance'] for r in has_closest) / max(len(has_closest), 1), 1) if has_closest else None,
-            'dispatched_via': 'Towbook' if len(unknown) > len(known) else 'Salesforce FSL',
-        },
-    }
+    return result
 
 
 # ── Performance Score ────────────────────────────────────────────────────────
@@ -660,6 +691,8 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
         sas = sf_query_all(f"""
             SELECT Id, AppointmentNumber, Status, CreatedDate,
                    ActualStartTime, SchedStartTime,
+                   ERS_Dispatch_Method__c, ERS_PTA__c,
+                   ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name,
                    Latitude, Longitude, PostalCode, Street, City,
                    ServiceTerritoryId, ServiceTerritory.Name,
                    ServiceTerritory.Latitude, ServiceTerritory.Longitude,
@@ -700,7 +733,6 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
 
             response_times = []
             for s in completed_list:
-                # Exclude Tow Drop-Off — member response time is on Pick-Up SA only
                 wt_name = (s.get('WorkType') or {}).get('Name', '') or ''
                 if 'drop' in wt_name.lower():
                     continue
@@ -708,8 +740,14 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 a = _parse_dt(s.get('ActualStartTime'))
                 if c and a:
                     diff = (a - c).total_seconds() / 60
-                    if 0 < diff < 1440:
-                        response_times.append(diff)
+                    dispatch_method = s.get('ERS_Dispatch_Method__c', '')
+                    if dispatch_method == 'Field Services':
+                        if 0 < diff < 480:
+                            response_times.append(diff)
+                    else:
+                        # Towbook: only trust if < 4 hours (midnight sync = 300+ min)
+                        if 0 < diff < 240:
+                            response_times.append(diff)
 
             sla_pct = round(100 * sum(1 for r in response_times if r <= 45)
                             / max(len(response_times), 1)) if response_times else None
@@ -823,11 +861,421 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
     return cache.cached_query(f'command_center_{hours}', _fetch, ttl=120)
 
 
+# ── Ops Brief — Fleet Status + Coverage + Suggestions ────────────────────────
+
+import math as _math
+
+def _haversine_mi(lat1, lon1, lat2, lon2):
+    R = 3958.8  # Earth radius in miles
+    dlat = _math.radians(lat2 - lat1)
+    dlon = _math.radians(lon2 - lon1)
+    a = _math.sin(dlat/2)**2 + _math.cos(_math.radians(lat1)) * _math.cos(_math.radians(lat2)) * _math.sin(dlon/2)**2
+    return round(R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1-a)), 1)
+
+
+@app.get("/api/ops/brief")
+def ops_brief():
+    """Proactive ops brief: fleet status, coverage gaps, demand, suggestions."""
+    from ops import _get_priority_matrix
+
+    def _fetch():
+        now_utc = datetime.now(timezone.utc)
+        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+        cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        # 1) Parallel fetch: drivers, active SAs, priority matrix, hourly baseline
+        from sf_client import sf_parallel, sf_query_all as _sqa
+
+        def _get_drivers():
+            return _sqa("""
+                SELECT Id, Name, LastKnownLatitude, LastKnownLongitude,
+                       LastKnownLocationDate, ERS_Driver_Type__c, ERS_Tech_ID__c,
+                       RelatedRecord.Phone
+                FROM ServiceResource
+                WHERE IsActive = true AND ResourceType = 'T'
+                  AND LastKnownLatitude != null
+            """)
+
+        def _get_active_sas():
+            return _sqa(f"""
+                SELECT Id, AppointmentNumber, Status, CreatedDate, ActualStartTime,
+                       ERS_PTA__c, ERS_Dispatch_Method__c, ERS_Parent_Territory__c,
+                       ERS_Parent_Territory__r.Name,
+                       ServiceTerritoryId, ServiceTerritory.Name,
+                       WorkType.Name, Latitude, Longitude, Street, City, PostalCode
+                FROM ServiceAppointment
+                WHERE CreatedDate >= {cutoff}
+                  AND ServiceTerritoryId != null
+                  AND Status IN ('Dispatched','Completed','Canceled',
+                                 'Cancel Call - Service Not En Route',
+                                 'Cancel Call - Service En Route',
+                                 'Unable to Complete','Assigned','No-Show')
+                ORDER BY CreatedDate ASC
+            """)
+
+        def _get_assigned_resources():
+            return _sqa(f"""
+                SELECT ServiceResourceId, ServiceAppointmentId,
+                       ServiceResource.Name
+                FROM AssignedResource
+                WHERE ServiceAppointment.CreatedDate >= {cutoff}
+                  AND ServiceAppointment.Status IN ('Dispatched','Assigned')
+            """)
+
+        def _get_logged_in_drivers():
+            """Drivers currently logged into a vehicle (Asset.ERS_Driver__c)."""
+            return _sqa("""
+                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c, ERS_LegacyTruckID__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """)
+
+        def _get_hourly_baseline():
+            """Historical hourly volume for same DOW (last 8 weeks)."""
+            dow = now_utc.weekday()  # 0=Mon ... 6=Sun
+            # SF DAY_IN_WEEK: 1=Sun, 2=Mon, ... 7=Sat
+            sf_dow = dow + 2 if dow < 6 else 1
+            eight_weeks_ago = (now_utc - timedelta(weeks=8)).strftime('%Y-%m-%dT00:00:00Z')
+            return _sqa(f"""
+                SELECT HOUR_IN_DAY(CreatedDate) hr, COUNT(Id) cnt
+                FROM ServiceAppointment
+                WHERE CreatedDate >= {eight_weeks_ago}
+                  AND DAY_IN_WEEK(CreatedDate) = {sf_dow}
+                  AND ServiceTerritoryId != null
+                  AND Status != 'Canceled'
+                GROUP BY HOUR_IN_DAY(CreatedDate)
+                ORDER BY HOUR_IN_DAY(CreatedDate)
+            """)
+
+        data = sf_parallel(
+            drivers=_get_drivers,
+            sas=_get_active_sas,
+            assigned=_get_assigned_resources,
+            baseline=_get_hourly_baseline,
+            logged_in=_get_logged_in_drivers,
+        )
+
+        # Filter: only drivers logged into a vehicle (Asset.ERS_Driver__c)
+        logged_in_ids = set()
+        truck_info = {}  # driver_id -> truck info
+        for asset in data['logged_in']:
+            dr_id = asset.get('ERS_Driver__c')
+            if dr_id:
+                logged_in_ids.add(dr_id)
+                truck_info[dr_id] = {
+                    'truck_name': asset.get('Name', ''),
+                    'truck_capabilities': asset.get('ERS_Truck_Capabilities__c', ''),
+                    'truck_legacy_id': asset.get('ERS_LegacyTruckID__c', ''),
+                }
+        all_drivers_raw = []
+        for d in data['drivers']:
+            if d.get('Name', '').lower().startswith('towbook'):
+                continue
+            if d['Id'] not in logged_in_ids:
+                continue
+            all_drivers_raw.append(d)
+        all_sas = data['sas']
+        assigned_raw = data['assigned']
+        baseline_raw = data['baseline']
+        matrix = _get_priority_matrix()
+
+        # 2) Build assigned driver set (drivers with active/dispatched SAs)
+        busy_driver_ids = set()
+        busy_driver_sa = {}  # driver_id -> SA info
+        for ar in assigned_raw:
+            dr_id = ar.get('ServiceResourceId')
+            sa_id = ar.get('ServiceAppointmentId')
+            if dr_id:
+                busy_driver_ids.add(dr_id)
+                busy_driver_sa[dr_id] = sa_id
+
+        # 3) Classify drivers
+        idle_drivers = []
+        busy_drivers = []
+        for d in all_drivers_raw:
+            gps_date = _to_eastern(d.get('LastKnownLocationDate'))
+            truck = truck_info.get(d['Id'], {})
+            driver_info = {
+                'id': d['Id'],
+                'name': d.get('Name', '?'),
+                'lat': float(d['LastKnownLatitude']),
+                'lon': float(d['LastKnownLongitude']),
+                'gps_time': gps_date.strftime('%I:%M %p') if gps_date else '?',
+                'driver_type': d.get('ERS_Driver_Type__c', ''),
+                'phone': (d.get('RelatedRecord') or {}).get('Phone'),
+                'truck': truck.get('truck_name', ''),
+                'truck_capabilities': truck.get('truck_capabilities', ''),
+            }
+            if d['Id'] in busy_driver_ids:
+                busy_drivers.append(driver_info)
+            else:
+                idle_drivers.append(driver_info)
+
+        fleet_status = {
+            'total': len(all_drivers_raw),
+            'busy': len(busy_drivers),
+            'idle': len(idle_drivers),
+            'idle_drivers': idle_drivers,
+            'busy_drivers': busy_drivers,
+        }
+
+        # 4) Open calls (waiting for service)
+        open_sas = []
+        for sa in all_sas:
+            if sa.get('Status') not in ('Dispatched', 'Assigned'):
+                continue
+            cdt = _parse_dt(sa.get('CreatedDate'))
+            wait_min = 0
+            if cdt:
+                if cdt.tzinfo is None:
+                    cdt = cdt.replace(tzinfo=timezone.utc)
+                wait_min = round((now_utc - cdt).total_seconds() / 60)
+            lat, lon = sa.get('Latitude'), sa.get('Longitude')
+            pta = sa.get('ERS_PTA__c')
+            open_sas.append({
+                'id': sa.get('Id'),
+                'number': sa.get('AppointmentNumber', '?'),
+                'wait_min': wait_min,
+                'pta_min': round(float(pta)) if pta else None,
+                'work_type': (sa.get('WorkType') or {}).get('Name', '?'),
+                'lat': float(lat) if lat else None,
+                'lon': float(lon) if lon else None,
+                'territory': (sa.get('ServiceTerritory') or {}).get('Name', '?'),
+                'territory_id': sa.get('ServiceTerritoryId'),
+                'zone': (sa.get('ERS_Parent_Territory__r') or {}).get('Name', '?'),
+                'zone_id': sa.get('ERS_Parent_Territory__c'),
+                'address': f"{sa.get('Street') or ''} {sa.get('City') or ''}".strip(),
+                'zip': sa.get('PostalCode') or '',
+            })
+        open_sas.sort(key=lambda x: x['wait_min'], reverse=True)
+
+        # 5) At-risk calls (approaching SLA)
+        at_risk = []
+        for oc in open_sas:
+            sla_target = oc['pta_min'] or 45
+            time_left = sla_target - oc['wait_min']
+            if time_left < 15 and oc['lat'] and oc['lon']:
+                # Find nearest idle driver
+                nearest = None
+                nearest_dist = 999
+                for drv in idle_drivers:
+                    d = _haversine_mi(oc['lat'], oc['lon'], drv['lat'], drv['lon'])
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest = drv
+                at_risk.append({
+                    **oc,
+                    'time_left_min': max(time_left, 0),
+                    'sla_target': sla_target,
+                    'nearest_idle_driver': nearest['name'] if nearest else None,
+                    'nearest_idle_dist_mi': nearest_dist if nearest and nearest_dist < 999 else None,
+                })
+
+        # 6) Zone-level coverage analysis using priority matrix
+        # Group open calls by zone
+        calls_by_zone = defaultdict(list)
+        for oc in open_sas:
+            if oc['zone_id']:
+                calls_by_zone[oc['zone_id']].append(oc)
+
+        # Also count completed today by zone
+        completed_by_zone = defaultdict(int)
+        for sa in all_sas:
+            if sa.get('Status') == 'Completed':
+                zone_id = sa.get('ERS_Parent_Territory__c')
+                if zone_id:
+                    completed_by_zone[zone_id] += 1
+
+        # Build zone summaries
+        zones = []
+        zone_names = {}
+        for sa in all_sas:
+            zid = sa.get('ERS_Parent_Territory__c')
+            zname = (sa.get('ERS_Parent_Territory__r') or {}).get('Name')
+            if zid and zname:
+                zone_names[zid] = zname
+
+        for zone_id, zone_name in zone_names.items():
+            open_calls = calls_by_zone.get(zone_id, [])
+            completed = completed_by_zone.get(zone_id, 0)
+
+            # Find primary garage for this zone from matrix
+            primary_garage = None
+            for (pid, sid), rank in matrix['rank_lookup'].items():
+                if pid == zone_id and rank == 1:
+                    # Get garage name from by_garage entries
+                    for entry in matrix['by_garage'].get(sid, []):
+                        if entry['parent_id'] == zone_id:
+                            primary_garage = sid
+                            break
+                    break
+
+            # Find nearest driver to zone centroid (avg of open call positions)
+            nearest_driver = None
+            nearest_dist = 999
+            zone_lat = None
+            zone_lon = None
+            if open_calls:
+                lats = [c['lat'] for c in open_calls if c['lat']]
+                lons = [c['lon'] for c in open_calls if c['lon']]
+                if lats and lons:
+                    zone_lat = sum(lats) / len(lats)
+                    zone_lon = sum(lons) / len(lons)
+                    for drv in idle_drivers:
+                        d = _haversine_mi(zone_lat, zone_lon, drv['lat'], drv['lon'])
+                        if d < nearest_dist:
+                            nearest_dist = d
+                            nearest_driver = drv
+
+            # Zone health
+            max_wait = max((c['wait_min'] for c in open_calls), default=0)
+            status = 'clear'
+            if len(open_calls) >= 3 and max_wait > 45:
+                status = 'critical'
+            elif len(open_calls) >= 2 and max_wait > 30:
+                status = 'strained'
+            elif len(open_calls) > 0:
+                status = 'active'
+
+            zones.append({
+                'zone_id': zone_id,
+                'zone_name': zone_name,
+                'open_calls': len(open_calls),
+                'completed_today': completed,
+                'total_today': len(open_calls) + completed,
+                'max_wait_min': max_wait,
+                'status': status,
+                'nearest_idle_driver': nearest_driver['name'] if nearest_driver else None,
+                'nearest_idle_dist_mi': nearest_dist if nearest_driver and nearest_dist < 999 else None,
+                'coverage': 'covered' if nearest_driver and nearest_dist < 15 else ('thin' if nearest_driver and nearest_dist < 30 else 'gap'),
+            })
+        zones.sort(key=lambda z: (-z['open_calls'], -z['max_wait_min']))
+
+        # 7) Volume baseline comparison
+        # Current hour volume
+        current_hour = _to_eastern(now_utc.isoformat()).hour if _to_eastern(now_utc.isoformat()) else now_utc.hour
+        current_hour_calls = sum(1 for sa in all_sas
+                                 if _to_eastern(sa.get('CreatedDate'))
+                                 and _to_eastern(sa.get('CreatedDate')).hour == current_hour)
+
+        # Parse baseline
+        hourly_baseline = {}
+        for row in baseline_raw:
+            hr = row.get('hr')
+            cnt = row.get('cnt', 0)
+            if hr is not None:
+                hourly_baseline[hr] = round(cnt / 8)  # avg over 8 weeks
+
+        normal_for_hour = hourly_baseline.get(current_hour, 0)
+        pct_vs_normal = round(100 * (current_hour_calls - normal_for_hour) / max(normal_for_hour, 1)) if normal_for_hour > 0 else 0
+
+        demand = {
+            'current_hour': current_hour,
+            'current_hour_calls': current_hour_calls,
+            'normal_for_hour': normal_for_hour,
+            'pct_vs_normal': pct_vs_normal,
+            'trend': 'surge' if pct_vs_normal > 30 else ('above' if pct_vs_normal > 10 else ('normal' if pct_vs_normal > -15 else 'quiet')),
+            'hourly_baseline': hourly_baseline,
+            'today_total': len(all_sas),
+        }
+
+        # 8) Actionable suggestions
+        suggestions = []
+
+        # Reposition idle drivers toward uncovered zones
+        for z in zones:
+            if z['open_calls'] > 0 and z['coverage'] == 'gap':
+                # Find closest idle driver to this zone
+                best_drv = None
+                best_dist = 999
+                zone_calls = calls_by_zone.get(z['zone_id'], [])
+                if zone_calls:
+                    zc = zone_calls[0]
+                    if zc['lat'] and zc['lon']:
+                        for drv in idle_drivers:
+                            d = _haversine_mi(zc['lat'], zc['lon'], drv['lat'], drv['lon'])
+                            if d < best_dist:
+                                best_dist = d
+                                best_drv = drv
+                if best_drv:
+                    suggestions.append({
+                        'type': 'reposition',
+                        'priority': 'high',
+                        'driver': best_drv['name'],
+                        'driver_type': best_drv['driver_type'],
+                        'to_zone': z['zone_name'],
+                        'distance_mi': best_dist,
+                        'reason': f"{z['open_calls']} call(s) waiting, no driver within 30 mi",
+                    })
+
+        # Escalate calls at risk of missing SLA
+        for ar in at_risk:
+            suggestions.append({
+                'type': 'escalate',
+                'priority': 'critical' if ar['time_left_min'] <= 5 else 'high',
+                'call_number': ar['number'],
+                'wait_min': ar['wait_min'],
+                'sla_target': ar['sla_target'],
+                'time_left_min': ar['time_left_min'],
+                'work_type': ar['work_type'],
+                'nearest_driver': ar.get('nearest_idle_driver'),
+                'nearest_dist_mi': ar.get('nearest_idle_dist_mi'),
+                'reason': f"SA {ar['number']} at {ar['wait_min']} min — " + ('PAST SLA' if ar['time_left_min'] <= 0 else f"{ar['time_left_min']} min to SLA"),
+            })
+
+        # Surge warning
+        if demand['trend'] == 'surge':
+            suggestions.append({
+                'type': 'surge',
+                'priority': 'medium',
+                'reason': f"Volume {pct_vs_normal}% above normal for {current_hour}:00. Consider activating backup drivers.",
+            })
+
+        # Coverage thin warnings
+        thin_zones = [z for z in zones if z['coverage'] == 'thin' and z['open_calls'] > 0]
+        if thin_zones:
+            for tz in thin_zones[:3]:
+                suggestions.append({
+                    'type': 'coverage',
+                    'priority': 'medium',
+                    'zone': tz['zone_name'],
+                    'nearest_driver': tz['nearest_idle_driver'],
+                    'distance_mi': tz['nearest_idle_dist_mi'],
+                    'reason': f"{tz['zone_name']}: nearest idle driver is {tz['nearest_idle_dist_mi']} mi away",
+                })
+
+        # Sort suggestions by priority
+        pri_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+        suggestions.sort(key=lambda s: pri_order.get(s['priority'], 9))
+
+        return {
+            'fleet': fleet_status,
+            'open_calls': open_sas[:30],
+            'at_risk': at_risk,
+            'zones': zones,
+            'demand': demand,
+            'suggestions': suggestions[:15],
+            'generated_at': now_utc.isoformat(),
+        }
+
+    return cache.cached_query('ops_brief', _fetch, ttl=60)
+
+
 # ── SA Lookup — Zoom-to with Driver Positions ────────────────────────────────
 
 @app.get("/api/sa/{sa_number}")
 def lookup_sa(sa_number: str):
     """Lookup an SA by AppointmentNumber and return driver positions."""
+    def _fetch():
+        return _lookup_sa_impl(sa_number)
+    result = cache.cached_query(f'sa_lookup_{sa_number}', _fetch, ttl=30)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"SA {sa_number} not found")
+    return result
+
+
+def _lookup_sa_impl(sa_number: str):
     sa_list = sf_query_all(f"""
         SELECT Id, AppointmentNumber, Status, CreatedDate,
                ActualStartTime, ActualEndTime,
@@ -841,7 +1289,7 @@ def lookup_sa(sa_number: str):
         LIMIT 1
     """)
     if not sa_list:
-        raise HTTPException(status_code=404, detail=f"SA {sa_number} not found")
+        return None
 
     sa = sa_list[0]
     tid = sa.get('ServiceTerritoryId')
@@ -883,19 +1331,45 @@ def lookup_sa(sa_number: str):
         'drivers': [],
     }
 
-    # Live driver GPS
+    # Live driver GPS — only drivers logged into a vehicle
     if tid:
-        members = sf_query_all(f"""
-            SELECT ServiceResourceId, ServiceResource.Name,
-                   ServiceResource.LastKnownLatitude,
-                   ServiceResource.LastKnownLongitude,
-                   ServiceResource.LastKnownLocationDate,
-                   TerritoryType
-            FROM ServiceTerritoryMember
-            WHERE ServiceTerritoryId = '{tid}'
-        """)
+        from sf_client import sf_parallel as _sf_par, sf_query_all as _sqa_local
+
+        def _get_members():
+            return _sqa_local(f"""
+                SELECT ServiceResourceId, ServiceResource.Name,
+                       ServiceResource.LastKnownLatitude,
+                       ServiceResource.LastKnownLongitude,
+                       ServiceResource.LastKnownLocationDate,
+                       TerritoryType
+                FROM ServiceTerritoryMember
+                WHERE ServiceTerritoryId = '{tid}'
+            """)
+
+        def _get_vehicles():
+            return _sqa_local("""
+                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """)
+
+        fetched = _sf_par(members=_get_members, vehicles=_get_vehicles)
+        members = fetched['members']
         members = [m for m in members
                     if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
+
+        # Build vehicle login set
+        vehicle_login_ids = set()
+        vehicle_info = {}
+        for asset in fetched['vehicles']:
+            dr_id = asset.get('ERS_Driver__c')
+            if dr_id:
+                vehicle_login_ids.add(dr_id)
+                vehicle_info[dr_id] = {
+                    'truck': asset.get('Name', ''),
+                    'capabilities': asset.get('ERS_Truck_Capabilities__c', ''),
+                }
 
         sa_lat = sa.get('Latitude')
         sa_lon = sa.get('Longitude')
@@ -904,6 +1378,10 @@ def lookup_sa(sa_number: str):
 
         for m in members:
             sr = m.get('ServiceResource') or {}
+            sr_id = m.get('ServiceResourceId')
+            # Only include drivers logged into a vehicle
+            if sr_id not in vehicle_login_ids:
+                continue
             d_lat = sr.get('LastKnownLatitude')
             d_lon = sr.get('LastKnownLongitude')
             if d_lat: d_lat = float(d_lat)
@@ -911,8 +1389,9 @@ def lookup_sa(sa_number: str):
             dist = haversine(d_lat, d_lon, sa_lat, sa_lon) if d_lat and d_lon and sa_lat and sa_lon else None
 
             gps_date = _to_eastern(sr.get('LastKnownLocationDate'))
+            truck = vehicle_info.get(sr_id, {})
             result['drivers'].append({
-                'id': m['ServiceResourceId'],
+                'id': sr_id,
                 'name': sr.get('Name', '?'),
                 'phone': '',
                 'lat': d_lat,
@@ -920,6 +1399,8 @@ def lookup_sa(sa_number: str):
                 'gps_time': gps_date.strftime('%I:%M %p') if gps_date else '?',
                 'distance': dist,
                 'territory_type': m.get('TerritoryType', '?'),
+                'truck': truck.get('truck', ''),
+                'truck_capabilities': truck.get('capabilities', ''),
                 'next_job': None,
             })
 
@@ -937,7 +1418,7 @@ def get_performance(
     period_end: str = Query(...),
 ):
     cache_key = f"perf_{territory_id}_{period_start}_{period_end}"
-    return cache.cached_query(cache_key, lambda: _compute_performance(territory_id, period_start, period_end), ttl=300)
+    return cache.cached_query(cache_key, lambda: _compute_performance(territory_id, period_start, period_end), ttl=3600)
 
 
 def _compute_performance(territory_id: str, period_start: str, period_end: str) -> dict:
@@ -953,12 +1434,15 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
             SELECT Id, Status, CreatedDate, ActualStartTime, ActualEndTime,
                    SchedStartTime, ERS_Auto_Assign__c, ERS_PTA__c,
                    ERS_Facility_Decline_Reason__c, ERS_Cancellation_Reason__c,
-                   WorkType.Name
+                   ERS_Dispatch_Method__c, ERS_Spotting_Number__c, WorkType.Name
             FROM ServiceAppointment
             WHERE ServiceTerritoryId = '{territory_id}'
               AND CreatedDate >= {since}
               AND CreatedDate < {until}
-              AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+              AND Status IN ('Dispatched','Completed','Canceled','Assigned',
+                             'Cancel Call - Service Not En Route',
+                             'Cancel Call - Service En Route',
+                             'Unable to Complete','No-Show')
             ORDER BY CreatedDate ASC
         """),
         wo_ids=lambda: sf_query_all(f"""
@@ -997,6 +1481,18 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
     total = len(sas)
     completed = [s for s in sas if s.get('Status') == 'Completed']
 
+    # Dispatch method breakdown
+    fs_count = sum(1 for s in sas if (s.get('ERS_Dispatch_Method__c') or '') == 'Field Services')
+    tb_count = sum(1 for s in sas if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
+    dispatch_mix = {
+        'field_services': fs_count,
+        'towbook': tb_count,
+        'other': total - fs_count - tb_count,
+        'primary_method': 'Field Services' if fs_count >= tb_count else 'Towbook',
+        'fs_pct': round(100 * fs_count / max(total, 1), 1),
+        'tb_pct': round(100 * tb_count / max(total, 1), 1),
+    }
+
     # Acceptance
     primary = [s for s in sas if s.get('ERS_Auto_Assign__c') is True]
     not_primary = [s for s in sas if s.get('ERS_Auto_Assign__c') is not True]
@@ -1025,17 +1521,51 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'pct': round(100 * len(completed) / max(total, 1), 1),
     }
 
-    # Response times (exclude Tow Drop-Off — member response is on Pick-Up SA)
+    # 1st Call % — when this garage is primary (spotting=1), did they accept?
+    # ERS_Spotting_Number__c is a formula field — SF may return int 1, float 1.0, or None
+    first_call_sas = [s for s in sas if s.get('ERS_Spotting_Number__c') in (1, 1.0)]
+    first_call_accepted = [s for s in first_call_sas if not s.get('ERS_Facility_Decline_Reason__c')]
+    first_call_total = len(first_call_sas)
+
+    # Completion of accepted — of SAs they didn't decline, how many completed?
+    accepted_sas = [s for s in sas if not s.get('ERS_Facility_Decline_Reason__c')]
+    accepted_completed = [s for s in accepted_sas if s.get('Status') == 'Completed']
+
+    # Fallback: if no spotting data, use overall acceptance rate (accepted / total)
+    if first_call_total > 0:
+        fc_pct = round(100 * len(first_call_accepted) / first_call_total, 1)
+        fc_source = 'spotting'
+    elif total > 0:
+        fc_pct = round(100 * len(accepted_sas) / total, 1)
+        fc_source = 'acceptance'
+    else:
+        fc_pct = None
+        fc_source = None
+
+    first_call = {
+        'first_call_total': first_call_total or total,
+        'first_call_accepted': len(first_call_accepted) if first_call_total > 0 else len(accepted_sas),
+        'first_call_pct': fc_pct,
+        'first_call_source': fc_source,
+        'accepted_total': len(accepted_sas),
+        'accepted_completed': len(accepted_completed),
+        'accepted_completion_pct': round(100 * len(accepted_completed) / max(len(accepted_sas), 1), 1) if accepted_sas else None,
+    }
+
+    # Response times (exclude Tow Drop-Off + Towbook SAs)
+    # Towbook ActualStartTime is bulk-updated at midnight — not real arrival time
     response_times = []
     for s in completed:
         wt_name = (s.get('WorkType') or {}).get('Name', '') or ''
         if 'drop' in wt_name.lower():
             continue
+        if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook':
+            continue
         created = _parse_dt(s.get('CreatedDate'))
         started = _parse_dt(s.get('ActualStartTime'))
         if created and started:
             diff = (started - created).total_seconds() / 60
-            if 0 < diff < 1440:
+            if 0 < diff < 480:  # >8hr is bad data
                 response_times.append(diff)
 
     def _bucket(lo, hi):
@@ -1054,9 +1584,11 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
     for k in ('under_45', 'b45_90', 'b90_120', 'over_120'):
         rt[f'{k}_pct'] = round(100 * rt[k] / rt_n, 1)
 
-    # PTS-ATA
+    # PTS-ATA (exclude Towbook — ActualStartTime unreliable)
     pts_deltas = []
     for s in completed:
+        if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook':
+            continue
         pta = s.get('ERS_PTA__c')
         created = _parse_dt(s.get('CreatedDate'))
         started = _parse_dt(s.get('ActualStartTime'))
@@ -1169,14 +1701,27 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'completed': len(completed),
         'acceptance': acceptance,
         'completion': completion,
+        'first_call': first_call,
         'response_time': rt,
         'pts_ata': pts_ata,
         'satisfaction': satisfaction,
+        'dispatch_mix': dispatch_mix,
         'trend': trend,
         'period': {
             'start': period_start,
             'end': period_end,
             'single_day': is_single_day,
+        },
+        'definitions': {
+            'total_calls': 'Count of all Service Appointments dispatched to this garage in the selected period. Includes all statuses: Completed, Canceled, Unable to Complete, No-Show, Dispatched, Assigned.',
+            'completion': 'Completed SAs / Total SAs. Target: 95%. Measures how many dispatched calls this garage actually finished.',
+            'first_call_pct': '1st Call Acceptance: When this garage is the primary (rank 1) in the priority matrix (ERS_Spotting_Number__c = 1), what % did they accept without declining? Higher = garage is reliable as a first responder.',
+            'accepted_completion_pct': 'Completion of Accepted: Of all SAs this garage accepted (did not decline), what % were Completed? This isolates operational effectiveness from acceptance behavior.',
+            'median_response': 'Median time from SA Created to driver ActualStartTime (on-site arrival). Only Field Services SAs — Towbook arrival times are unreliable (bulk-updated at midnight). Excludes Tow Drop-Off SAs. Target: 45 min.',
+            'eta_accuracy': 'Of completed Field Services SAs, what % had actual response time within the promised PTA (ERS_PTA__c)? Measures whether the ETA given to the member was accurate.',
+            'acceptance': 'Of SAs auto-assigned to this garage, what % were accepted (not declined by facility)? Based on ERS_Auto_Assign__c = true and absence of ERS_Facility_Decline_Reason__c.',
+            'satisfaction': 'Totally Satisfied / Total Survey Responses. Surveys are matched by Work Order number. Target: 82% (AAA accreditation requirement). Surveys arrive days after the call.',
+            'dispatch_mix': 'Percentage of SAs dispatched via Field Services (internal fleet) vs Towbook (external contractor). Based on ERS_Dispatch_Method__c formula field.',
         },
     }
 
@@ -1226,24 +1771,54 @@ def get_map_grids():
 
 @app.get("/api/map/drivers")
 def get_map_drivers():
-    """Active drivers with last known GPS positions (cached 2 minutes)."""
+    """Active drivers logged into vehicles with last known GPS positions (cached 2 minutes)."""
     def _fetch():
-        drivers = sf_query_all("""
-            SELECT Id, Name,
-                   LastKnownLatitude, LastKnownLongitude, LastKnownLocationDate,
-                   ERS_Driver_Type__c, ERS_Tech_ID__c,
-                   RelatedRecord.Phone
-            FROM ServiceResource
-            WHERE IsActive = true
-              AND ResourceType = 'T'
-              AND LastKnownLatitude != null
-            ORDER BY Name
-        """)
-        drivers = [d for d in drivers if not d.get('Name', '').lower().startswith('towbook')]
+        from sf_client import sf_query_all as _sqa_local, sf_parallel as _sf_par
+
+        def _drv():
+            return _sqa_local("""
+                SELECT Id, Name,
+                       LastKnownLatitude, LastKnownLongitude, LastKnownLocationDate,
+                       ERS_Driver_Type__c, ERS_Tech_ID__c,
+                       RelatedRecord.Phone
+                FROM ServiceResource
+                WHERE IsActive = true
+                  AND ResourceType = 'T'
+                  AND LastKnownLatitude != null
+                ORDER BY Name
+            """)
+
+        def _trucks():
+            return _sqa_local("""
+                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c, ERS_LegacyTruckID__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """)
+
+        fetched = _sf_par(drivers=_drv, trucks=_trucks)
+        drivers = fetched['drivers']
+        logged_in_ids = set()
+        truck_map = {}
+        for asset in fetched['trucks']:
+            dr_id = asset.get('ERS_Driver__c')
+            if dr_id:
+                logged_in_ids.add(dr_id)
+                truck_map[dr_id] = {
+                    'truck_name': asset.get('Name', ''),
+                    'truck_capabilities': asset.get('ERS_Truck_Capabilities__c', ''),
+                }
+
         result = []
         for d in drivers:
+            if d.get('Name', '').lower().startswith('towbook'):
+                continue
+            # Only show drivers logged into a vehicle
+            if d['Id'] not in logged_in_ids:
+                continue
             gps_date = _to_eastern(d.get('LastKnownLocationDate'))
             rr = d.get('RelatedRecord') or {}
+            truck = truck_map.get(d['Id'], {})
             result.append({
                 'id': d['Id'],
                 'name': d.get('Name', '?'),
@@ -1253,6 +1828,8 @@ def get_map_drivers():
                 'driver_type': d.get('ERS_Driver_Type__c', ''),
                 'tech_id': d.get('ERS_Tech_ID__c', ''),
                 'phone': rr.get('Phone') or None,
+                'truck': truck.get('truck_name', ''),
+                'truck_capabilities': truck.get('truck_capabilities', ''),
             })
         return result
 
@@ -1306,6 +1883,168 @@ def get_map_weather():
         return results
 
     return cache.cached_query('map_weather', _fetch, ttl=900)
+
+
+# ── Dispatch Optimization ────────────────────────────────────────────────────
+
+@app.get("/api/dispatch/queue")
+def api_dispatch_queue():
+    """Live queue board — all open SAs with aging and urgency."""
+    return get_live_queue()
+
+@app.get("/api/dispatch/recommend/{sa_id}")
+def api_dispatch_recommend(sa_id: str):
+    """Top driver recommendations for a specific SA."""
+    result = recommend_drivers(sa_id)
+    if 'error' in result:
+        raise HTTPException(status_code=404, detail=result['error'])
+    return result
+
+@app.get("/api/dispatch/cascade/{territory_id}")
+def api_dispatch_cascade(territory_id: str):
+    """Cross-skill cascade opportunities for a territory."""
+    return get_cascade_status(territory_id)
+
+@app.get("/api/garages/{territory_id}/decomposition")
+def api_response_decomposition(
+    territory_id: str,
+    period_start: str = Query(...),
+    period_end: str = Query(...),
+):
+    """Response time decomposition + decline analysis + driver leaderboard."""
+    return get_response_decomposition(territory_id, period_start, period_end)
+
+@app.get("/api/territory/{territory_id}/forecast")
+def api_forecast(territory_id: str, weeks_history: int = Query(8, ge=2, le=16)):
+    """16-day demand forecast using DOW patterns + weather."""
+    return get_forecast(territory_id, weeks_history)
+
+
+# ── Admin Panel API (PIN-protected) ──────────────────────────────────────────
+_ADMIN_PIN = os.getenv('ADMIN_PIN', '121838')
+
+
+def _check_pin(request: Request):
+    pin = request.headers.get('X-Admin-Pin', '')
+    if pin != _ADMIN_PIN:
+        raise HTTPException(status_code=403, detail="Invalid PIN")
+
+
+@app.post("/api/admin/verify")
+def admin_verify(request: Request):
+    """Verify admin PIN."""
+    _check_pin(request)
+    return {"ok": True}
+
+
+@app.get("/api/admin/status")
+def admin_status(request: Request):
+    """Full system status: cache + SF health + uptime."""
+    _check_pin(request)
+    return {
+        "cache": cache.stats(),
+        "salesforce": sf_stats(),
+        "uptime_seconds": round(time.time() - _start_time),
+    }
+
+
+@app.post("/api/admin/flush")
+def admin_flush(request: Request, prefix: str = Query('', description="Cache key prefix to flush, empty = all")):
+    """Flush cache entries. Empty prefix = flush everything."""
+    _check_pin(request)
+    cache.invalidate(prefix)
+    return {"flushed": prefix or "ALL", "cache_after": cache.stats()}
+
+
+@app.post("/api/admin/flush/live")
+def admin_flush_live(request: Request):
+    """Flush only live/operational caches (command center, queue, drivers)."""
+    _check_pin(request)
+    for p in ['command_center', 'queue_live', 'map_drivers', 'sa_lookup', 'simulate']:
+        cache.invalidate(p)
+    return {"flushed": "live_caches", "cache_after": cache.stats()}
+
+
+@app.post("/api/admin/flush/historical")
+def admin_flush_historical(request: Request):
+    """Flush historical caches (scorecard, performance, decomposition, forecast)."""
+    _check_pin(request)
+    for p in ['scorecard', 'perf_', 'scorer_', 'decomp_', 'forecast_']:
+        cache.invalidate(p)
+    return {"flushed": "historical_caches", "cache_after": cache.stats()}
+
+
+@app.post("/api/admin/flush/static")
+def admin_flush_static(request: Request):
+    """Flush static reference caches (garages, grids, skills, weather)."""
+    _check_pin(request)
+    for p in ['garages_list', 'map_grids', 'map_weather', 'skills_', 'ops_garages', 'ops_territories']:
+        cache.invalidate(p)
+    return {"flushed": "static_caches", "cache_after": cache.stats()}
+
+
+# ── User Management (PIN-protected) ──────────────────────────────────────────
+
+@app.get("/api/admin/users")
+def admin_list_users(request: Request):
+    """List all users."""
+    _check_pin(request)
+    return users.list_users()
+
+
+@app.post("/api/admin/users")
+def admin_create_user(request: Request, body: dict):
+    """Create a new user."""
+    _check_pin(request)
+    username = body.get("username", "").strip().lower()
+    password = body.get("password", "")
+    name = body.get("name", "").strip()
+    role = body.get("role", "viewer")
+    if not username or not password or not name:
+        raise HTTPException(status_code=400, detail="username, password, and name are required")
+    if role not in ("admin", "supervisor", "viewer"):
+        raise HTTPException(status_code=400, detail="role must be admin, supervisor, or viewer")
+    try:
+        return users.create_user(username, password, name, role)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.put("/api/admin/users/{username}")
+def admin_update_user(request: Request, username: str, body: dict):
+    """Update a user."""
+    _check_pin(request)
+    try:
+        return users.update_user(
+            username,
+            name=body.get("name"),
+            role=body.get("role"),
+            password=body.get("password") or None,
+            active=body.get("active"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/api/admin/users/{username}")
+def admin_delete_user(request: Request, username: str):
+    """Delete a user."""
+    _check_pin(request)
+    try:
+        users.delete_user(username)
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/admin/sessions")
+def admin_list_sessions(request: Request):
+    """List active sessions (who's logged in)."""
+    _check_pin(request)
+    return users.list_sessions()
+
+
+_start_time = time.time()
 
 
 # ── Serve React SPA ──────────────────────────────────────────────────────────

@@ -114,6 +114,7 @@ def get_ops_garages():
         rows = sf_query_all("""
             SELECT Id, Name, Latitude, Longitude,
                    ERS_Facility_Account__r.Name, ERS_Facility_Account__r.Phone,
+                   ERS_Facility_Account__r.Dispatch_Method__c,
                    Street, City, State
             FROM ServiceTerritory
             WHERE Id IN (SELECT ERS_Spotted_Territory__c FROM ERS_Territory_Priority_Matrix__c)
@@ -146,6 +147,7 @@ def get_ops_garages():
                 'primary_zones': primary_zones,
                 'secondary_zones': secondary_zones,
                 'total_zones': len(zone_entries),
+                'dispatch_method': acct.get('Dispatch_Method__c') or 'Unknown',
             })
         garages.sort(key=lambda g: g['name'])
         return garages
@@ -263,6 +265,8 @@ def get_ops_territories():
             primary_completed = 0
             secondary_total = 0
             secondary_completed = 0
+            unranked_total = 0
+            unranked_completed = 0
             for s in sa_list:
                 wt = (s.get('WorkType') or {}).get('Name', '')
                 if 'drop' in wt.lower():
@@ -277,6 +281,17 @@ def get_ops_territories():
                     secondary_total += 1
                     if s.get('Status') == 'Completed':
                         secondary_completed += 1
+                else:
+                    unranked_total += 1
+                    if s.get('Status') == 'Completed':
+                        unranked_completed += 1
+
+            # If no priority matrix data, fall back to overall acceptance
+            # (treat all non-drop-off SAs as "primary")
+            if primary_total == 0 and secondary_total == 0 and unranked_total > 0:
+                primary_total = unranked_total
+                primary_completed = unranked_completed
+
             pct_primary_completion = round(100 * primary_completed / primary_total) if primary_total else None
             pct_secondary_completion = round(100 * secondary_completed / secondary_total) if secondary_total else None
 
@@ -384,12 +399,12 @@ def get_ops_territory_detail(territory_id: str):
             if not is_dropoff:
                 wt_counts[wt] += 1
                 # Track completion by rank (exclude drop-offs)
-                if priority_rank is not None:
-                    rank_stats[priority_rank]['total'] += 1
-                    if status == 'Completed':
-                        rank_stats[priority_rank]['completed'] += 1
-                    elif status not in ('Dispatched', 'Assigned'):
-                        rank_stats[priority_rank]['canceled'] += 1
+                rk = priority_rank if priority_rank is not None else 0  # 0 = unranked
+                rank_stats[rk]['total'] += 1
+                if status == 'Completed':
+                    rank_stats[rk]['completed'] += 1
+                elif status not in ('Dispatched', 'Assigned'):
+                    rank_stats[rk]['canceled'] += 1
 
             # PTA
             pta_min = None
@@ -456,12 +471,38 @@ def get_ops_territory_detail(territory_id: str):
 
         # Build completion-by-rank summary
         completion_by_rank = []
-        for rank in sorted(rank_stats.keys()):
-            rs = rank_stats[rank]
-            label = {1: '1st call', 2: '2nd call', 3: '3rd call'}.get(rank, f'{rank}th call')
+        ranked_keys = sorted(k for k in rank_stats.keys() if k > 0)
+        has_ranked = len(ranked_keys) > 0
+
+        # If we have ranked data, show ranked entries; unranked (0) shown separately
+        # If NO ranked data at all, treat unranked as "All calls" (fallback)
+        if has_ranked:
+            for rank in ranked_keys:
+                rs = rank_stats[rank]
+                label = {1: '1st call', 2: '2nd call', 3: '3rd call'}.get(rank, f'{rank}th call')
+                completion_by_rank.append({
+                    'rank': rank,
+                    'label': label,
+                    'total': rs['total'],
+                    'completed': rs['completed'],
+                    'canceled': rs['canceled'],
+                    'completion_pct': round(100 * rs['completed'] / max(rs['total'], 1), 1),
+                })
+            if 0 in rank_stats and rank_stats[0]['total'] > 0:
+                rs = rank_stats[0]
+                completion_by_rank.append({
+                    'rank': 0,
+                    'label': 'Unranked',
+                    'total': rs['total'],
+                    'completed': rs['completed'],
+                    'canceled': rs['canceled'],
+                    'completion_pct': round(100 * rs['completed'] / max(rs['total'], 1), 1),
+                })
+        elif 0 in rank_stats and rank_stats[0]['total'] > 0:
+            rs = rank_stats[0]
             completion_by_rank.append({
-                'rank': rank,
-                'label': label,
+                'rank': 1,
+                'label': 'All calls',
                 'total': rs['total'],
                 'completed': rs['completed'],
                 'canceled': rs['canceled'],

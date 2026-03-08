@@ -4,6 +4,7 @@ import L from 'leaflet'
 import { clsx } from 'clsx'
 import { CheckCircle2, XCircle, ChevronDown, ChevronUp, Clock, Truck, Navigation, AlertTriangle, Zap, Layers, Loader2 } from 'lucide-react'
 import { fetchMapGrids, fetchMapWeather } from '../api'
+import { getMapConfig } from '../mapStyles'
 
 const _WMO_EMOJI = {
   0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',
@@ -104,6 +105,14 @@ export default function MapView({ data }) {
   const { results, summary } = data
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [showAnalysis, setShowAnalysis] = useState(true)
+
+  // Map style (from Admin settings)
+  const [mapConfig, setMapCfg] = useState(getMapConfig)
+  useEffect(() => {
+    const handler = () => setMapCfg(getMapConfig())
+    window.addEventListener('mapStyleChanged', handler)
+    return () => window.removeEventListener('mapStyleChanged', handler)
+  }, [])
 
   // Map overlay layers
   const [layers, setLayers] = useState({ grid: false, weather: false })
@@ -278,7 +287,12 @@ export default function MapView({ data }) {
           <div className="glass rounded-xl overflow-hidden relative" style={{ height: 440 }}>
             <MapContainer key={`${selected.sa_lat}-${selected.sa_lon}`} center={center} zoom={11}
               style={{ height: '100%', width: '100%' }} scrollWheelZoom={true}>
-              <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+              <TileLayer key={mapConfig.url} url={mapConfig.url}
+                className={mapConfig.filter ? 'dynamic-map-tiles' : ''}
+                {...(mapConfig.noSubdomains ? { subdomains: [] } : {})} />
+              {mapConfig.filter && (
+                <style>{`.dynamic-map-tiles { filter: ${mapConfig.filter}; }`}</style>
+              )}
 
               {/* Customer */}
               <Marker position={[selected.sa_lat, selected.sa_lon]} icon={CUSTOMER_ICON} zIndexOffset={1000}>
