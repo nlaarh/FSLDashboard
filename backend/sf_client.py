@@ -63,8 +63,8 @@ def _rate_limit_check():
 
 # ── Circuit Breaker ─────────────────────────────────────────────────────────
 # If SF fails repeatedly, stop calling it to let it recover
-_BREAKER_THRESHOLD = 5       # consecutive failures before opening circuit
-_BREAKER_COOLDOWN = 60       # seconds to wait before retrying
+_BREAKER_THRESHOLD = 15      # consecutive failures before opening circuit
+_BREAKER_COOLDOWN = 30       # seconds to wait before retrying
 _breaker_lock = threading.Lock()
 _breaker_failures = 0
 _breaker_open_until = 0.0
@@ -181,28 +181,29 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
             r = _session.get(f'{instance}/services/data/v60.0/query',
                              headers=headers, params={'q': soql}, timeout=(10, 120))
         except requests.exceptions.Timeout:
-            _breaker_failure()
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
                 continue
+            # Only count as breaker failure after ALL retries exhausted
+            _breaker_failure()
             with _stats_lock:
                 _stats['errors'] += 1
             raise RuntimeError("SF query timed out after retries")
         except requests.exceptions.ConnectionError:
-            _breaker_failure()
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
                 continue
+            _breaker_failure()
             with _stats_lock:
                 _stats['errors'] += 1
             raise RuntimeError("SF connection failed after retries")
 
         # Retry on server errors
         if r.status_code in (500, 502, 503):
-            _breaker_failure()
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
                 continue
+            _breaker_failure()
             with _stats_lock:
                 _stats['errors'] += 1
 
@@ -272,12 +273,13 @@ def sf_query_all(soql: str) -> list[dict]:
                 _breaker_success()
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                _breaker_failure()
                 if attempt < 2:
                     _time.sleep(2 ** attempt)
                     token, instance = refresh_auth()
                     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
                     continue
+                # Only count after all retries exhausted
+                _breaker_failure()
                 raise
         if isinstance(result, list) or 'records' not in result:
             break
