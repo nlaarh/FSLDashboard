@@ -38,14 +38,15 @@ jobs:
     - name: Create deployment package
       working-directory: backend
       run: |
-        # Only source code + requirements.txt + static assets
+        # All Python source + config + static assets
         # Azure Oryx will pip install from requirements.txt server-side
         zip -r ../deploy.zip \
-          main.py app.py sf_client.py ops.py db.py \
-          cache.py scorer.py scheduler.py simulator.py \
-          gunicorn.conf.py startup.sh requirements.txt \
+          *.py \
+          startup.sh requirements.txt \
           static/
         echo "Package size: $(du -h ../deploy.zip | cut -f1)"
+        echo "Files included:"
+        unzip -l ../deploy.zip | grep "\.py$" | awk '{print $4}'
 
     - name: Deploy to Azure via Kudu ZIP Deploy
       env:
