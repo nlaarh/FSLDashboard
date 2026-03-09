@@ -330,12 +330,28 @@ function GarageRow({ garage: g, expanded, onToggle }) {
             )}
           </div>
           <div className="text-[10px] text-slate-500 flex items-center gap-3">
-            <span>{g.drivers.total} driver{g.drivers.total !== 1 ? 's' : ''} ({g.drivers.idle} idle)</span>
-            {(g.drivers.idle_by_tier?.tow > 0 || g.drivers.busy_by_tier?.tow > 0) && (
-              <span className="text-brand-400 font-medium">
-                <Truck className="w-3 h-3 inline -mt-0.5 mr-0.5" />
-                {(g.drivers.idle_by_tier?.tow || 0) + (g.drivers.busy_by_tier?.tow || 0)} tow
-              </span>
+            {g.has_fleet_drivers ? (
+              <>
+                <span>{g.drivers.total} driver{g.drivers.total !== 1 ? 's' : ''} ({g.drivers.idle} idle)</span>
+                {(g.drivers.idle_by_tier?.tow > 0 || g.drivers.busy_by_tier?.tow > 0) && (
+                  <span className="text-brand-400 font-medium">
+                    <Truck className="w-3 h-3 inline -mt-0.5 mr-0.5" />
+                    {(g.drivers.idle_by_tier?.tow || 0) + (g.drivers.busy_by_tier?.tow || 0)} tow
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                {g.drivers.tb_seen_today > 0 && (
+                  <span>{g.drivers.tb_seen_today} driver{g.drivers.tb_seen_today !== 1 ? 's' : ''} seen today</span>
+                )}
+                {g.drivers.tb_active > 0 && (
+                  <span className="text-amber-400 font-medium">{g.drivers.tb_active} on calls</span>
+                )}
+                {!g.drivers.tb_seen_today && !g.drivers.tb_active && (
+                  <span className="text-slate-600">no driver data</span>
+                )}
+              </>
             )}
             <span>{g.completed_today} done</span>
             {g.queue_depth > 0 && (

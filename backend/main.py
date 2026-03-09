@@ -2203,9 +2203,14 @@ def pta_advisor():
             open_sas = []       # unassigned open calls (true queue)
             assigned_open = []  # open calls already assigned to a driver
             completed_count = 0
+            tb_drivers_seen = set()  # unique Towbook driver names from ALL today's SAs
             for sa in sa_list:
                 st = sa.get('Status')
                 wt = (sa.get('WorkType') or {}).get('Name', '')
+                # Track all Towbook drivers seen today (active + completed)
+                opd_name = (sa.get('Off_Platform_Driver__r') or {}).get('Name')
+                if opd_name:
+                    tb_drivers_seen.add(opd_name)
                 if st == 'Completed':
                     completed_count += 1
                 elif st in ('Dispatched', 'Assigned'):
@@ -2451,12 +2456,14 @@ def pta_advisor():
                 'queue_depth': len(all_open),
                 'queue_by_type': dict(queue_by_type),
                 'drivers': {
-                    'total': len(all_driver_ids) + len(tb_drivers),
+                    'total': len(all_driver_ids) if has_fleet_drivers else len(tb_drivers_seen),
                     'idle': len(idle_list),
                     'busy': len(busy_list),
                     'idle_by_tier': _count_by_tier(idle_list),
                     'busy_by_tier': _count_by_tier(busy_list),
                     'busy_details': busy_list,
+                    'tb_seen_today': len(tb_drivers_seen),
+                    'tb_active': len(tb_drivers),
                 },
                 'completed_today': completed_count,
                 'projected_pta': projected,
