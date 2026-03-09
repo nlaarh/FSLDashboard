@@ -870,6 +870,46 @@ def _haversine_mi(lat1, lon1, lat2, lon2):
     return round(R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1-a)), 1)
 
 
+# ── Skill hierarchy for driver-call matching ─────────────────────────────────
+# Tow drivers can do: tow + light + battery
+# Light drivers can do: light + battery
+# Battery drivers can do: battery only
+_TOW_CAPS = {'tow', 'flat bed', 'wheel lift'}
+_BATTERY_CAPS = {'battery', 'battery service', 'jumpstart'}
+
+def _driver_tier(truck_capabilities: str) -> str:
+    """Classify driver tier from truck capabilities string (semicolon-separated)."""
+    caps = {c.strip().lower() for c in (truck_capabilities or '').split(';') if c.strip()}
+    if caps & _TOW_CAPS:
+        return 'tow'
+    if caps & _BATTERY_CAPS:
+        # Has battery but NOT light-service items like Tire/Lockout → battery-only
+        light_caps = {'tire', 'lockout', 'locksmith', 'fuel - gasoline', 'fuel - diesel', 'extrication- driveway', 'extrication- highway/roadway'}
+        if caps & light_caps:
+            return 'light'
+        return 'battery'
+    # Has light-service caps (tire, lockout, etc.) but no tow and no battery
+    return 'light'
+
+def _call_tier(work_type: str) -> str:
+    """Classify call tier from work type name."""
+    wt = (work_type or '').lower()
+    if 'tow' in wt:
+        return 'tow'
+    if wt in ('battery', 'jumpstart'):
+        return 'battery'
+    return 'light'
+
+def _can_serve(driver_tier: str, call_tier: str) -> bool:
+    """Check if a driver tier can serve a call tier (skill hierarchy)."""
+    hierarchy = {
+        'tow': {'tow', 'light', 'battery'},
+        'light': {'light', 'battery'},
+        'battery': {'battery'},
+    }
+    return call_tier in hierarchy.get(driver_tier, set())
+
+
 @app.get("/api/ops/brief")
 def ops_brief():
     """Proactive ops brief: fleet status, coverage gaps, demand, suggestions."""
@@ -994,6 +1034,7 @@ def ops_brief():
         for d in all_drivers_raw:
             gps_date = _to_eastern(d.get('LastKnownLocationDate'))
             truck = truck_info.get(d['Id'], {})
+            caps = truck.get('truck_capabilities', '')
             driver_info = {
                 'id': d['Id'],
                 'name': d.get('Name', '?'),
@@ -1001,9 +1042,10 @@ def ops_brief():
                 'lon': float(d['LastKnownLongitude']),
                 'gps_time': gps_date.strftime('%I:%M %p') if gps_date else '?',
                 'driver_type': d.get('ERS_Driver_Type__c', ''),
+                'tier': _driver_tier(caps),
                 'phone': (d.get('RelatedRecord') or {}).get('Phone'),
                 'truck': truck.get('truck_name', ''),
-                'truck_capabilities': truck.get('truck_capabilities', ''),
+                'truck_capabilities': caps,
             }
             if d['Id'] in busy_driver_ids:
                 busy_drivers.append(driver_info)
@@ -1034,12 +1076,14 @@ def ops_brief():
                 wait_min = round((now_utc - cdt).total_seconds() / 60)
             lat, lon = sa.get('Latitude'), sa.get('Longitude')
             pta = sa.get('ERS_PTA__c')
+            wt_name = (sa.get('WorkType') or {}).get('Name', '?')
             open_sas.append({
                 'id': sa.get('Id'),
                 'number': sa.get('AppointmentNumber', '?'),
                 'wait_min': wait_min,
                 'pta_min': round(float(pta)) if pta else None,
-                'work_type': (sa.get('WorkType') or {}).get('Name', '?'),
+                'work_type': wt_name,
+                'call_tier': _call_tier(wt_name),
                 'lat': float(lat) if lat else None,
                 'lon': float(lon) if lon else None,
                 'territory': (sa.get('ServiceTerritory') or {}).get('Name', '?'),
@@ -1057,10 +1101,13 @@ def ops_brief():
             sla_target = oc['pta_min'] or 45
             time_left = sla_target - oc['wait_min']
             if time_left < 15 and oc['lat'] and oc['lon']:
-                # Find nearest idle driver
+                # Find nearest idle driver WITH matching skills
+                ct = oc.get('call_tier', 'light')
                 nearest = None
                 nearest_dist = 999
                 for drv in idle_drivers:
+                    if not _can_serve(drv.get('tier', 'light'), ct):
+                        continue
                     d = _haversine_mi(oc['lat'], oc['lon'], drv['lat'], drv['lon'])
                     if d < nearest_dist:
                         nearest_dist = d
@@ -1071,6 +1118,7 @@ def ops_brief():
                     'sla_target': sla_target,
                     'nearest_idle_driver': nearest['name'] if nearest else None,
                     'nearest_idle_dist_mi': nearest_dist if nearest and nearest_dist < 999 else None,
+                    'nearest_idle_tier': nearest.get('tier') if nearest else None,
                 })
 
         # 6) Zone-level coverage analysis using priority matrix
@@ -1126,7 +1174,7 @@ def ops_brief():
                             break
                     break
 
-            # Find nearest driver to zone centroid (avg of open call positions)
+            # Find nearest driver to zone centroid — must match skill of longest-waiting call
             nearest_driver = None
             nearest_dist = 999
             zone_lat = None
@@ -1134,10 +1182,14 @@ def ops_brief():
             if open_calls:
                 lats = [c['lat'] for c in open_calls if c['lat']]
                 lons = [c['lon'] for c in open_calls if c['lon']]
+                # Use the tier of the longest-waiting call for matching
+                longest_call_tier = open_calls[0].get('call_tier', 'light') if open_calls else 'light'
                 if lats and lons:
                     zone_lat = sum(lats) / len(lats)
                     zone_lon = sum(lons) / len(lons)
                     for drv in idle_drivers:
+                        if not _can_serve(drv.get('tier', 'light'), longest_call_tier):
+                            continue
                         d = _haversine_mi(zone_lat, zone_lon, drv['lat'], drv['lon'])
                         if d < nearest_dist:
                             nearest_dist = d
@@ -1198,17 +1250,20 @@ def ops_brief():
         # 8) Actionable suggestions
         suggestions = []
 
-        # Reposition idle drivers toward uncovered zones
+        # Reposition idle drivers toward uncovered zones (skill-matched)
         for z in zones:
             if z['open_calls'] > 0 and z['coverage'] == 'gap':
-                # Find closest idle driver to this zone
+                # Find closest idle driver with matching skills
                 best_drv = None
                 best_dist = 999
                 zone_calls = calls_by_zone.get(z['zone_id'], [])
                 if zone_calls:
                     zc = zone_calls[0]
+                    zc_tier = zc.get('call_tier', 'light')
                     if zc['lat'] and zc['lon']:
                         for drv in idle_drivers:
+                            if not _can_serve(drv.get('tier', 'light'), zc_tier):
+                                continue
                             d = _haversine_mi(zc['lat'], zc['lon'], drv['lat'], drv['lon'])
                             if d < best_dist:
                                 best_dist = d
