@@ -473,12 +473,18 @@ export default function GarageDashboard({ garageId, garageName }) {
               border={perf.completion.pct >= 95 ? 'border-emerald-800/30' : perf.completion.pct >= 80 ? 'border-amber-800/30' : 'border-red-800/30'}
               target="95%" met={perf.completion.pct >= 95}
               definition={perf.definitions?.completion} defId="completion" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard label={perf.first_call?.first_call_source === 'acceptance' ? 'Call Acceptance' : '1st Call Acceptance'}
+            <MetricCard label="1st Call Acceptance"
               value={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_pct}%` : 'N/A'} icon={Zap}
-              sub={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total}${perf.first_call?.first_call_source === 'spotting' ? ' primary' : ''} calls` : 'No data'}
+              sub={perf.first_call?.first_call_total > 0 ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total} 1st calls` : 'No data'}
               color={perf.first_call?.first_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.first_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.first_call_pct != null ? 'text-red-400' : 'text-slate-500'}
               border={perf.first_call?.first_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
               definition={perf.definitions?.first_call_acceptance} defId="first_call" activeDef={activeDef} setActiveDef={setActiveDef} />
+            <MetricCard label="2nd+ Call Acceptance"
+              value={perf.first_call?.second_call_pct != null ? `${perf.first_call.second_call_pct}%` : 'N/A'} icon={Zap}
+              sub={perf.first_call?.second_call_total > 0 ? `${perf.first_call.second_call_accepted} / ${perf.first_call.second_call_total} reassigned` : 'No reassigned calls'}
+              color={perf.first_call?.second_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.second_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.second_call_pct != null ? 'text-red-400' : 'text-slate-500'}
+              border={perf.first_call?.second_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+              definition="When this garage was NOT the first territory assigned (SA was reassigned from another garage), what % did they accept? Lower numbers here are expected since these are overflow/backup calls." defId="second_call" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Completion of Accepted" value={perf.first_call?.accepted_completion_pct != null ? `${perf.first_call.accepted_completion_pct}%` : 'N/A'} icon={CheckCircle2}
               sub={perf.first_call?.accepted_total > 0 ? `${perf.first_call.accepted_completed} / ${perf.first_call.accepted_total} accepted` : ''}
               color={perf.first_call?.accepted_completion_pct >= 95 ? 'text-emerald-400' : perf.first_call?.accepted_completion_pct >= 80 ? 'text-amber-400' : perf.first_call?.accepted_completion_pct != null ? 'text-red-400' : 'text-slate-500'}

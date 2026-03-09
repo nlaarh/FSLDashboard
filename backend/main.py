@@ -1091,11 +1091,25 @@ def ops_brief():
         # Build zone summaries
         zones = []
         zone_names = {}
+        zone_cities = defaultdict(lambda: defaultdict(int))
         for sa in all_sas:
             zid = sa.get('ERS_Parent_Territory__c')
             zname = (sa.get('ERS_Parent_Territory__r') or {}).get('Name')
             if zid and zname:
                 zone_names[zid] = zname
+                city = (sa.get('City') or '').strip()
+                if city:
+                    zone_cities[zid][city] += 1
+
+        # Build display name: "CM011 — Buffalo" (code + most common city)
+        zone_display = {}
+        for zid, code in zone_names.items():
+            cities = zone_cities.get(zid, {})
+            if cities:
+                top_city = max(cities, key=cities.get)
+                zone_display[zid] = f"{code} — {top_city}"
+            else:
+                zone_display[zid] = code
 
         for zone_id, zone_name in zone_names.items():
             open_calls = calls_by_zone.get(zone_id, [])
@@ -1141,7 +1155,7 @@ def ops_brief():
 
             zones.append({
                 'zone_id': zone_id,
-                'zone_name': zone_name,
+                'zone_name': zone_display.get(zone_id, zone_name),
                 'open_calls': len(open_calls),
                 'completed_today': completed,
                 'total_today': len(open_calls) + completed,
@@ -1477,6 +1491,17 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
               AND CreatedDate < {until}
             GROUP BY DAY_IN_MONTH(CreatedDate), CALENDAR_MONTH(CreatedDate), Status
         """),
+        # SA history: territory assignment sequence (which garage was assigned 1st, 2nd, etc.)
+        sa_history=lambda: sf_query_all(f"""
+            SELECT ServiceAppointmentId, OldValue, NewValue, CreatedDate
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'ServiceTerritory'
+              AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
+              AND ServiceAppointment.CreatedDate >= {since}
+              AND ServiceAppointment.CreatedDate < {until}
+              AND NewValue LIKE '0Hh%'
+            ORDER BY ServiceAppointmentId, CreatedDate ASC
+        """),
     )
 
     sas = data['sas']
@@ -1526,32 +1551,50 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'pct': round(100 * len(completed) / max(total, 1), 1),
     }
 
-    # 1st Call % — when this garage is primary (spotting=1), did they accept?
-    # ERS_Spotting_Number__c is a formula field — SF may return int 1, float 1.0, or None
-    first_call_sas = [s for s in sas if s.get('ERS_Spotting_Number__c') in (1, 1.0)]
+    # 1st Call vs 2nd+ Call — from SA history (territory assignment sequence)
+    # If this garage's territory was the FIRST ServiceTerritory assigned → 1st call
+    # If it was 2nd or later (SA was reassigned from another garage) → 2nd+ call
+    sa_history = data.get('sa_history', [])
+
+    # Build assignment order per SA: list of territory IDs in chronological order
+    sa_territory_order = defaultdict(list)  # sa_id -> [territory_id_1, territory_id_2, ...]
+    for h in sa_history:
+        sa_id = h.get('ServiceAppointmentId')
+        new_val = h.get('NewValue', '')
+        if sa_id and new_val.startswith('0Hh'):
+            # Only add if different from last (avoid duplicates from same assignment)
+            order = sa_territory_order[sa_id]
+            if not order or order[-1] != new_val:
+                order.append(new_val)
+
+    first_call_sas = []
+    second_call_sas = []
+    for s in sas:
+        sa_id = s['Id']
+        order = sa_territory_order.get(sa_id, [])
+        if not order:
+            # No history found — treat as 1st call (initial assignment, no reassignment)
+            first_call_sas.append(s)
+        elif order[0] == territory_id:
+            first_call_sas.append(s)
+        else:
+            second_call_sas.append(s)
+
     first_call_accepted = [s for s in first_call_sas if not s.get('ERS_Facility_Decline_Reason__c')]
-    first_call_total = len(first_call_sas)
+    second_call_accepted = [s for s in second_call_sas if not s.get('ERS_Facility_Decline_Reason__c')]
 
     # Completion of accepted — of SAs they didn't decline, how many completed?
     accepted_sas = [s for s in sas if not s.get('ERS_Facility_Decline_Reason__c')]
     accepted_completed = [s for s in accepted_sas if s.get('Status') == 'Completed']
 
-    # Fallback: if no spotting data, use overall acceptance rate (accepted / total)
-    if first_call_total > 0:
-        fc_pct = round(100 * len(first_call_accepted) / first_call_total, 1)
-        fc_source = 'spotting'
-    elif total > 0:
-        fc_pct = round(100 * len(accepted_sas) / total, 1)
-        fc_source = 'acceptance'
-    else:
-        fc_pct = None
-        fc_source = None
-
     first_call = {
-        'first_call_total': first_call_total or total,
-        'first_call_accepted': len(first_call_accepted) if first_call_total > 0 else len(accepted_sas),
-        'first_call_pct': fc_pct,
-        'first_call_source': fc_source,
+        'first_call_total': len(first_call_sas),
+        'first_call_accepted': len(first_call_accepted),
+        'first_call_pct': round(100 * len(first_call_accepted) / max(len(first_call_sas), 1), 1) if first_call_sas else None,
+        'second_call_total': len(second_call_sas),
+        'second_call_accepted': len(second_call_accepted),
+        'second_call_pct': round(100 * len(second_call_accepted) / max(len(second_call_sas), 1), 1) if second_call_sas else None,
+        'first_call_source': 'sa_history',
         'accepted_total': len(accepted_sas),
         'accepted_completed': len(accepted_completed),
         'accepted_completion_pct': round(100 * len(accepted_completed) / max(len(accepted_sas), 1), 1) if accepted_sas else None,
@@ -1724,7 +1767,7 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'definitions': {
             'total_calls': 'Count of all Service Appointments dispatched to this garage in the selected period. Includes all statuses: Completed, Canceled, Unable to Complete, No-Show, Dispatched, Assigned.',
             'completion': 'Completed SAs / Total SAs. Target: 95%. Measures how many dispatched calls this garage actually finished.',
-            'first_call_acceptance': 'When this garage is the primary (rank 1) in the priority matrix (ERS_Spotting_Number__c = 1), what % did they accept without declining? If no spotting data exists, falls back to overall acceptance rate. Higher = garage is reliable as a first responder.',
+            'first_call_acceptance': 'Based on SA history: if this garage was the FIRST territory assigned to the SA, it counts as 1st call. If the SA was reassigned from another garage, it counts as 2nd+ call. Shows acceptance rate (no decline) for each group.',
             'completion_of_accepted': 'Of all SAs this garage accepted (did not decline), what % were Completed? This isolates operational effectiveness from acceptance behavior.',
             'median_response': 'Median time from SA Created to driver ActualStartTime (on-site arrival). Only Field Services SAs — Towbook arrival times are unreliable (bulk-updated at midnight). Excludes Tow Drop-Off SAs. Target: 45 min. Shows N/A for Towbook-only garages.',
             'eta_accuracy': 'Of completed Field Services SAs, what % had actual response time within the promised PTA (ERS_PTA__c)? Measures whether the ETA given to the member was accurate. Shows N/A for Towbook-only garages.',
