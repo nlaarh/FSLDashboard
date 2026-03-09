@@ -56,10 +56,10 @@ const COL_DEFS = {
 }
 
 // ── Sort header ───────────────────────────────────────────────────────────────
-function Th({ label, col, sort, onSort, right = false }) {
-  const [showDef, setShowDef] = useState(false)
+function Th({ label, col, sort, onSort, activeDef, setActiveDef, right = false }) {
   const active = sort.col === col
   const def = COL_DEFS[col]
+  const showDef = activeDef === col
   return (
     <th className={clsx(
         'px-3 py-3 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap relative',
@@ -76,7 +76,7 @@ function Th({ label, col, sort, onSort, right = false }) {
           : <span className="inline-block w-3 ml-0.5" />}
       </span>
       {def && (
-        <button onClick={e => { e.stopPropagation(); setShowDef(s => !s) }}
+        <button onClick={e => { e.stopPropagation(); setActiveDef(showDef ? null : col) }}
           className="ml-1 w-3.5 h-3.5 rounded-full bg-slate-700/60 hover:bg-slate-600 text-slate-500 hover:text-white
                      text-[8px] font-bold inline-flex items-center justify-center transition-colors align-middle"
           title="How this is calculated">?</button>
@@ -86,7 +86,7 @@ function Th({ label, col, sort, onSort, right = false }) {
           onClick={e => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-1 gap-2">
             <span className="text-[10px] font-bold text-brand-400 uppercase truncate">{label}</span>
-            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
+            <button onClick={() => setActiveDef(null)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
           </div>
           <div className="text-[11px] text-slate-300 leading-relaxed break-words">{def}</div>
         </div>
@@ -272,6 +272,7 @@ export default function Dashboard() {
   const [search,     setSearch]     = useState('')
   const [sort,       setSort]       = useState({ col: 'status', dir: 'asc' })
   const [expanded,   setExpanded]   = useState(null)   // garage id
+  const [activeDef,  setActiveDef]  = useState(null)   // which column tooltip is open
   const [lastUpdate, setLastUpdate] = useState(null)
   const navigate = useNavigate()
   const refreshRef = useRef(null)
@@ -443,16 +444,16 @@ export default function Dashboard() {
             <thead>
               <tr className="border-b border-slate-800">
                 <th className="w-2 px-0" />   {/* status border */}
-                <Th label="Garage"     col="name"         sort={sort} onSort={onSort} />
-                <Th label="City"       col="city"         sort={sort} onSort={onSort} />
-                <Th label="Open"       col="open"         sort={sort} onSort={onSort} />
-                <Th label="Today"      col="total"        sort={sort} onSort={onSort} />
-                <Th label="Done %"     col="completion"   sort={sort} onSort={onSort} />
-                <Th label="1st Call %" col="pct_primary"  sort={sort} onSort={onSort} />
-                <Th label="2nd+ Call %" col="pct_secondary" sort={sort} onSort={onSort} />
-                <Th label="Avg PTA"    col="avg_pta"      sort={sort} onSort={onSort} />
-                <Th label="Avg ATA"    col="resp_time"    sort={sort} onSort={onSort} />
-                <Th label="Max Wait"   col="max_wait"     sort={sort} onSort={onSort} />
+                <Th label="Garage"     col="name"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="City"       col="city"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Open"       col="open"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Today"      col="total"        sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Done %"     col="completion"   sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="1st Call %" col="pct_primary"  sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="2nd+ Call %" col="pct_secondary" sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Avg PTA"    col="avg_pta"      sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Avg ATA"    col="resp_time"    sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
+                <Th label="Max Wait"   col="max_wait"     sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right">
                   Actions
                 </th>

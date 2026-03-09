@@ -58,15 +58,15 @@ function GradeRing({ grade, composite }) {
   )
 }
 
-function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, target, met, border, definition }) {
-  const [showDef, setShowDef] = useState(false)
+function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, target, met, border, definition, defId, activeDef, setActiveDef }) {
+  const showDef = activeDef === defId
   return (
     <div className={clsx('rounded-xl p-4 bg-slate-800/50 border relative', border || 'border-slate-700/30')}>
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
         <div className="flex items-center gap-1">
           {definition && (
-            <button onClick={() => setShowDef(s => !s)}
+            <button onClick={() => setActiveDef?.(showDef ? null : defId)}
               className="w-4 h-4 rounded-full bg-slate-700/60 hover:bg-slate-600 text-slate-400 hover:text-white text-[9px] font-bold flex items-center justify-center transition-colors"
               title="How this is calculated">?</button>
           )}
@@ -77,7 +77,7 @@ function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, targe
         <div className="absolute top-0 left-0 right-0 z-10 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl whitespace-normal break-words overflow-hidden">
           <div className="flex items-center justify-between mb-1 gap-2">
             <span className="text-[10px] font-bold text-brand-400 uppercase truncate">{label}</span>
-            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
+            <button onClick={() => setActiveDef?.(null)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
           </div>
           <div className="text-[11px] text-slate-300 leading-relaxed break-words">{definition}</div>
         </div>
@@ -304,6 +304,7 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [decomp, setDecomp]       = useState(null)
   const [loading, setLoading]     = useState({ perf: false, scorecard: false, score: false, decomp: false })
   const [error, setError]         = useState(null)
+  const [activeDef, setActiveDef] = useState(null)  // which metric tooltip is open
 
   // ── Load performance (period-dependent)
   useEffect(() => {
@@ -431,24 +432,24 @@ export default function GarageDashboard({ garageId, garageName }) {
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
             <MetricCard label="Total Calls" value={perf.total_sas.toLocaleString()} icon={Activity}
               sub={`${perf.completed} completed`}
-              definition={perf.definitions?.total_calls} />
+              definition={perf.definitions?.total_calls} defId="total_calls" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Completion" value={`${perf.completion.pct}%`} icon={CheckCircle2}
               sub={`${perf.completion.completed} / ${perf.completion.total}`}
               color={perf.completion.pct >= 95 ? 'text-emerald-400' : perf.completion.pct >= 80 ? 'text-amber-400' : 'text-red-400'}
               border={perf.completion.pct >= 95 ? 'border-emerald-800/30' : perf.completion.pct >= 80 ? 'border-amber-800/30' : 'border-red-800/30'}
               target="95%" met={perf.completion.pct >= 95}
-              definition={perf.definitions?.completion} />
+              definition={perf.definitions?.completion} defId="completion" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label={perf.first_call?.first_call_source === 'acceptance' ? 'Call Acceptance' : '1st Call Acceptance'}
               value={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_pct}%` : 'N/A'} icon={Zap}
               sub={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total}${perf.first_call?.first_call_source === 'spotting' ? ' primary' : ''} calls` : 'No data'}
               color={perf.first_call?.first_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.first_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.first_call_pct != null ? 'text-red-400' : 'text-slate-500'}
               border={perf.first_call?.first_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
-              definition={perf.definitions?.first_call_acceptance} />
+              definition={perf.definitions?.first_call_acceptance} defId="first_call" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Completion of Accepted" value={perf.first_call?.accepted_completion_pct != null ? `${perf.first_call.accepted_completion_pct}%` : 'N/A'} icon={CheckCircle2}
               sub={perf.first_call?.accepted_total > 0 ? `${perf.first_call.accepted_completed} / ${perf.first_call.accepted_total} accepted` : ''}
               color={perf.first_call?.accepted_completion_pct >= 95 ? 'text-emerald-400' : perf.first_call?.accepted_completion_pct >= 80 ? 'text-amber-400' : perf.first_call?.accepted_completion_pct != null ? 'text-red-400' : 'text-slate-500'}
               border={perf.first_call?.accepted_completion_pct >= 95 ? 'border-emerald-800/30' : 'border-amber-800/30'}
-              definition={perf.definitions?.completion_of_accepted} />
+              definition={perf.definitions?.completion_of_accepted} defId="completion_accepted" activeDef={activeDef} setActiveDef={setActiveDef} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
             <MetricCard label="Median Response" value={perf.response_time.median ? `${perf.response_time.median} min` : 'N/A'} icon={Clock}
@@ -456,23 +457,23 @@ export default function GarageDashboard({ garageId, garageName }) {
               color={perf.response_time.median && perf.response_time.median <= 45 ? 'text-emerald-400' : perf.response_time.median && perf.response_time.median <= 70 ? 'text-amber-400' : !perf.response_time.median ? 'text-slate-500' : 'text-red-400'}
               border={perf.response_time.median && perf.response_time.median <= 45 ? 'border-emerald-800/30' : !perf.response_time.median ? 'border-slate-700/30' : 'border-red-800/30'}
               target="45 min" met={perf.response_time.median && perf.response_time.median <= 45}
-              definition={perf.definitions?.median_response} />
+              definition={perf.definitions?.median_response} defId="median_response" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="ETA Accuracy" value={perf.pts_ata ? `${perf.pts_ata.on_time_pct}%` : 'N/A'} icon={Target}
               sub={perf.pts_ata ? `avg ${perf.pts_ata.avg_delta > 0 ? '+' : ''}${perf.pts_ata.avg_delta} min vs promise` : perf.response_time.total === 0 ? 'Towbook — no arrival data' : ''}
               color={perf.pts_ata && perf.pts_ata.on_time_pct >= 70 ? 'text-emerald-400' : perf.pts_ata ? 'text-red-400' : 'text-slate-500'}
               border={perf.pts_ata && perf.pts_ata.on_time_pct >= 70 ? 'border-emerald-800/30' : !perf.pts_ata ? 'border-slate-700/30' : 'border-red-800/30'}
-              definition={perf.definitions?.eta_accuracy} />
+              definition={perf.definitions?.eta_accuracy} defId="eta_accuracy" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Acceptance" value={`${perf.acceptance.primary_pct}%`} icon={Users}
               sub={`${perf.acceptance.primary_accepted} / ${perf.acceptance.primary_total} auto`}
               color={perf.acceptance.primary_pct >= 90 ? 'text-emerald-400' : perf.acceptance.primary_pct >= 75 ? 'text-amber-400' : 'text-red-400'}
               border={perf.acceptance.primary_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
-              definition={perf.definitions?.acceptance} />
+              definition={perf.definitions?.acceptance} defId="acceptance" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Satisfaction" value={perf.satisfaction ? `${perf.satisfaction.total_satisfied_pct}%` : 'N/A'} icon={ThumbsUp}
               sub={perf.satisfaction ? `${perf.satisfaction.total} surveys` : ''}
               color={perf.satisfaction && perf.satisfaction.total_satisfied_pct >= 82 ? 'text-emerald-400' : 'text-red-400'}
               border={perf.satisfaction && perf.satisfaction.meets_target ? 'border-emerald-800/30' : 'border-red-800/30'}
               target="82%" met={perf.satisfaction?.meets_target}
-              definition={perf.definitions?.satisfaction} />
+              definition={perf.definitions?.satisfaction} defId="satisfaction" activeDef={activeDef} setActiveDef={setActiveDef} />
           </div>
 
           {/* ═══ RESPONSE TIME (left) + DECOMPOSITION (right) ═════════════════ */}
