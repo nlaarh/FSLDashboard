@@ -61,6 +61,12 @@ export const fetchOpsTerritory = (id) => api.get(`/ops/territory/${id}`).then(r 
 export const fetchOpsGarages = () => api.get('/ops/garages').then(r => r.data)
 export const fetchOpsBrief = () => api.get('/ops/brief').then(r => r.data)
 
+// PTA Advisor
+export const fetchPtaAdvisor = () => api.get('/pta-advisor').then(r => r.data)
+export const refreshPtaAdvisor = (pin) => api.post('/pta-advisor/refresh', null, pinHeader(pin)).then(r => r.data)
+export const adminGetSettings = (pin) => api.get('/admin/settings', pinHeader(pin)).then(r => r.data)
+export const adminUpdateSettings = (pin, data) => api.put('/admin/settings', data, pinHeader(pin)).then(r => r.data)
+
 // Admin (PIN-protected)
 const pinHeader = (pin) => ({ headers: { 'X-Admin-Pin': pin } })
 export const adminVerify = (pin) => api.post('/admin/verify', null, pinHeader(pin)).then(r => r.data)

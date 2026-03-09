@@ -572,6 +572,7 @@ const CACHE_ENTRIES = [
   { endpoint: 'Skills', key: 'skills_{tid}', ttl: 3600, category: 'Static', notes: 'Per territory' },
   { endpoint: 'Priority Matrix', key: 'priority_matrix', ttl: 600, category: 'Static', notes: 'Ops dashboard' },
   { endpoint: 'Ops Territories', key: 'ops_territories', ttl: 120, category: 'Live', notes: 'Territory list with live counts' },
+  { endpoint: 'PTA Advisor', key: 'pta_advisor', ttl: 900, category: 'Live', notes: 'Projected PTA, configurable interval' },
 ]
 
 

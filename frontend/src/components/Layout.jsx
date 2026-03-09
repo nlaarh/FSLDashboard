@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Truck, LayoutDashboard, Radio, ListOrdered, CloudSun, Settings } from 'lucide-react'
+import { Truck, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, Settings } from 'lucide-react'
 
 export default function Layout() {
   const { pathname } = useLocation()
@@ -46,6 +46,17 @@ export default function Layout() {
             >
               <ListOrdered className="w-4 h-4 inline mr-1.5 -mt-0.5" />
               Queue
+            </Link>
+            <Link
+              to="/pta"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/pta'
+                  ? 'bg-brand-600/20 text-brand-300'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+              PTA Advisor
             </Link>
             <Link
               to="/forecast"
