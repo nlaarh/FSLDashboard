@@ -79,6 +79,8 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                   AND Status = 'Completed'
                   AND ActualStartTime != null
                   AND ERS_Dispatch_Method__c = 'Field Services'
+                ORDER BY CreatedDate DESC
+                LIMIT 500
             """),
             # Aggregate: could not wait count
             cnw=lambda: sf_query_all(f"""
@@ -283,4 +285,4 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
             },
         }
 
-    return cached_query(cache_key, _compute, ttl=300)
+    return cached_query(cache_key, _compute, ttl=1800)  # 30 min — historical data doesn't change fast
