@@ -8,6 +8,7 @@ export default function Scorecard({ data, garageId }) {
   const { sla, fleet, volume, goals } = data
   const [score, setScore] = useState(null)
   const [scoreLoading, setScoreLoading] = useState(false)
+  const [scoreError, setScoreError] = useState(null)
 
   const dowOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
   const dowData = dowOrder.map(d => ({ day: d, count: volume.by_dow?.[d] || 0 }))
@@ -18,7 +19,7 @@ export default function Scorecard({ data, garageId }) {
       setScoreLoading(true)
       fetchScore(garageId)
         .then(setScore)
-        .catch(() => {})
+        .catch(e => { console.error('Score fetch failed:', e); setScoreError(e.response?.data?.detail || e.message || 'Failed to load') })
         .finally(() => setScoreLoading(false))
     }
   }, [garageId, score, scoreLoading])
@@ -97,6 +98,14 @@ export default function Scorecard({ data, garageId }) {
         <div className="glass rounded-xl p-6 flex items-center gap-3">
           <Loader2 className="w-5 h-5 animate-spin text-brand-400" />
           <span className="text-sm text-slate-400">Computing performance score (querying surveys, response times...)...</span>
+        </div>
+      )}
+      {!score && scoreError && !scoreLoading && (
+        <div className="glass rounded-xl p-6">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-400" />
+            <span className="text-sm text-red-400">Performance score unavailable: {scoreError}</span>
+          </div>
         </div>
       )}
 

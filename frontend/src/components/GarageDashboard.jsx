@@ -304,6 +304,9 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [decomp, setDecomp]       = useState(null)
   const [loading, setLoading]     = useState({ perf: false, scorecard: false, score: false, decomp: false })
   const [error, setError]         = useState(null)
+  const [decompError, setDecompError] = useState(null)
+  const [scorecardError, setScorecardError] = useState(null)
+  const [scoreError, setScoreError] = useState(null)
   const [activeDef, setActiveDef] = useState(null)  // which metric tooltip is open
 
   // ── Load performance (period-dependent)
@@ -324,9 +327,10 @@ export default function GarageDashboard({ garageId, garageName }) {
     let ignore = false
     setLoading(p => ({ ...p, decomp: true }))
     setDecomp(null)
+    setDecompError(null)
     fetchDecomposition(garageId, start, end)
       .then(d => { if (!ignore) setDecomp(d) })
-      .catch(() => {})
+      .catch(e => { if (!ignore) { console.error('Decomposition fetch failed:', e); setDecompError(e.response?.data?.detail || e.message || 'Failed to load') } })
       .finally(() => { if (!ignore) setLoading(p => ({ ...p, decomp: false })) })
     return () => { ignore = true }
   }, [garageId, start, end])
@@ -334,8 +338,8 @@ export default function GarageDashboard({ garageId, garageName }) {
   // ── Load scorecard + score (once, not period-dependent)
   useEffect(() => {
     setLoading(p => ({ ...p, scorecard: true, score: true }))
-    fetchScorecard(garageId).then(setScorecard).catch(() => {}).finally(() => setLoading(p => ({ ...p, scorecard: false })))
-    fetchScore(garageId).then(setScore).catch(() => {}).finally(() => setLoading(p => ({ ...p, score: false })))
+    fetchScorecard(garageId).then(setScorecard).catch(e => { console.error('Scorecard fetch failed:', e); setScorecardError(e.response?.data?.detail || e.message || 'Failed to load') }).finally(() => setLoading(p => ({ ...p, scorecard: false })))
+    fetchScore(garageId).then(setScore).catch(e => { console.error('Score fetch failed:', e); setScoreError(e.response?.data?.detail || e.message || 'Failed to load') }).finally(() => setLoading(p => ({ ...p, score: false })))
   }, [garageId])
 
   const { insights, actions } = perf ? buildInsights(perf) : { insights: [], actions: [] }
@@ -356,6 +360,11 @@ export default function GarageDashboard({ garageId, garageName }) {
           {/* Grade */}
           {score && !score.error && (
             <GradeRing grade={score.grade} composite={score.composite} />
+          )}
+          {!score && scoreError && !loading.score && (
+            <div className="w-20 h-20 rounded-2xl bg-slate-800/50 border border-red-800/30 flex items-center justify-center">
+              <span className="text-[10px] text-red-400 text-center px-1">Grade unavailable</span>
+            </div>
           )}
           {loading.score && !score && (
             <div className="w-20 h-20 rounded-2xl bg-slate-800/50 border border-slate-700/30 flex items-center justify-center">
@@ -645,7 +654,11 @@ export default function GarageDashboard({ garageId, garageName }) {
                   )}
                 </>
               ) : !loading.decomp ? (
-                <div className="text-sm text-slate-500 py-8 text-center">No decomposition data available</div>
+                <div className="text-sm py-8 text-center">
+                  {decompError
+                    ? <span className="text-red-400">Decomposition unavailable: {decompError}</span>
+                    : <span className="text-slate-500">No decomposition data available</span>}
+                </div>
               ) : null}
             </div>
           </div>
@@ -686,6 +699,11 @@ export default function GarageDashboard({ garageId, garageName }) {
             )}
 
             {/* Fleet + Volume (1/3 width) */}
+            {!scorecard && scorecardError && !loading.scorecard && (
+              <div className="glass rounded-xl p-5 flex items-center justify-center">
+                <span className="text-sm text-red-400">Scorecard unavailable: {scorecardError}</span>
+              </div>
+            )}
             {scorecard && (
               <div className="glass rounded-xl p-5 space-y-4">
                 <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">

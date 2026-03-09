@@ -269,6 +269,7 @@ export default function Dashboard() {
   const [garLoading, setGarLoading] = useState(true)
   const [ccLoading,  setCcLoading]  = useState(false)
   const [garError,   setGarError]   = useState(null)
+  const [ccError,    setCcError]    = useState(null)
   const [search,     setSearch]     = useState('')
   const [sort,       setSort]       = useState({ col: 'status', dir: 'asc' })
   const [expanded,   setExpanded]   = useState(null)   // garage id
@@ -290,9 +291,10 @@ export default function Dashboard() {
   // ── Fetch live data (independent, can retry) ─────────────────────────────────
   const loadLive = useCallback(() => {
     setCcLoading(true)
+    setCcError(null)
     fetchOpsTerritories()
-      .then(data => { setCcData(data); setLastUpdate(new Date()) })
-      .catch(() => {})   // silently — garages still show without it
+      .then(data => { setCcData(data); setLastUpdate(new Date()); setCcError(null) })
+      .catch(e => { console.error('Live data fetch failed:', e); setCcError(e.message || 'Failed to load live data') })
       .finally(() => setCcLoading(false))
   }, [])
 
@@ -413,6 +415,15 @@ export default function Dashboard() {
           color={fleetPta && fleetPta <= 60 ? 'text-emerald-400' : fleetPta && fleetPta <= 90 ? 'text-amber-400' : 'text-red-400'}
           icon={Clock} />
       </div>
+
+      {/* ── Live data error banner ────────────────────────────────────── */}
+      {ccError && !ccLoading && (
+        <div className="mb-4 px-4 py-2.5 rounded-xl border border-amber-800/30 bg-amber-950/10 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="text-xs text-amber-300">Live data temporarily unavailable</span>
+          <span className="text-[10px] text-slate-500 ml-1">— garage list still shown from last load</span>
+        </div>
+      )}
 
       {/* ── Alerts ────────────────────────────────────────────────────── */}
       {!garLoading && <AlertStrip rows={sorted} onNav={onNav} />}

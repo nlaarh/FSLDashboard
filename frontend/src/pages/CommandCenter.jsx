@@ -226,7 +226,7 @@ export default function CommandCenter() {
       .finally(() => setLoading(false))
     fetchOpsBrief()
       .then(setBrief)
-      .catch(() => {})
+      .catch(e => console.error('Ops brief fetch failed:', e))
       .finally(() => setBriefLoading(false))
   }, [hours])
 

@@ -44,7 +44,7 @@ export default function Forecast() {
         setGarages(g)
         if (g.length && !selectedGarage) setSelectedGarage(g[0])
       })
-      .catch(() => {})
+      .catch(e => { console.error('Failed to load garages for forecast:', e); setError(e.message || 'Failed to load garages') })
   }, [])
 
   // Load forecast when garage changes
