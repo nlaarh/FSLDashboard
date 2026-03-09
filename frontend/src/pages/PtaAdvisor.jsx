@@ -314,9 +314,11 @@ function GarageRow({ garage: g, expanded, onToggle }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-white truncate">{g.name}</span>
-            {!g.has_fleet_drivers && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-500 font-medium">Towbook</span>
-            )}
+            <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+              g.has_fleet_drivers
+                ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
+                : 'bg-slate-700/50 text-slate-500'
+            }`}>{g.has_fleet_drivers ? 'Fleet' : 'Contractor'}</span>
             {g.avg_projected_pta != null && (
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                 g.avg_projected_pta > 120 ? 'bg-red-500/10 text-red-400' :
