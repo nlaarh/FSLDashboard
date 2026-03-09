@@ -133,12 +133,26 @@ def _breaker_failure():
 # ── Stats ───────────────────────────────────────────────────────────────────
 _stats_lock = threading.Lock()
 _stats = {'total_calls': 0, 'errors': 0, 'rate_waits': 0, 'breaker_trips': 0}
+_recent_errors: deque = deque(maxlen=20)  # last 20 errors with timestamps
+
+
+def _record_error(error_msg: str, soql_snippet: str = ''):
+    """Record an error with timestamp for debugging."""
+    with _stats_lock:
+        _stats['errors'] += 1
+        _recent_errors.append({
+            'time': _time.strftime('%H:%M:%S'),
+            'error': str(error_msg)[:200],
+            'query': soql_snippet[:100] if soql_snippet else '',
+        })
+    log.error(f"SF error: {error_msg}")
 
 
 def get_stats():
     """Return SF client health stats for monitoring."""
     with _stats_lock:
         s = dict(_stats)
+        s['recent_errors'] = list(_recent_errors)
     with _rate_lock:
         now = _time.time()
         recent = sum(1 for t in _call_timestamps if t > now - 60)
@@ -206,16 +220,14 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
                 continue
             # Only count as breaker failure after ALL retries exhausted
             _breaker_failure()
-            with _stats_lock:
-                _stats['errors'] += 1
+            _record_error("SF query timed out after retries", soql)
             raise RuntimeError("SF query timed out after retries")
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as ce:
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
                 continue
             _breaker_failure()
-            with _stats_lock:
-                _stats['errors'] += 1
+            _record_error(f"SF connection failed: {ce}", soql)
             raise RuntimeError("SF connection failed after retries")
 
         # Retry on server errors
@@ -224,8 +236,7 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
                 _time.sleep(2 ** attempt)
                 continue
             _breaker_failure()
-            with _stats_lock:
-                _stats['errors'] += 1
+            _record_error(f"SF server error {r.status_code} after {_retries} retries", soql)
             raise RuntimeError(f"SF server error {r.status_code} after {_retries} retries")
 
         # Handle expired session
@@ -253,13 +264,11 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
         result = r.json()
     if isinstance(result, list):
         _breaker_failure()
-        with _stats_lock:
-            _stats['errors'] += 1
+        _record_error(f"SF query error: {result}", soql)
         raise RuntimeError(f"SF query error: {result}")
     if isinstance(result, dict) and 'errorCode' in result:
         _breaker_failure()
-        with _stats_lock:
-            _stats['errors'] += 1
+        _record_error(f"SF error: {result.get('message', result)}", soql)
         raise RuntimeError(f"SF error: {result.get('message', result)}")
 
     # Success — reset breaker
