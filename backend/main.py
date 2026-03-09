@@ -2065,25 +2065,30 @@ _start_time = time.time()
 import threading
 
 def _warmup_cache():
-    """Pre-fetch the most-used endpoints into cache."""
+    """Pre-fetch ALL key endpoints so first users never wait for cold SF queries."""
     import logging
     log = logging.getLogger('warmup')
     try:
-        log.info("Cache warmup starting...")
-        # Garages list (used by Dashboard)
-        try:
-            from ops import get_ops_garages
-            get_ops_garages()
-            log.info("  garages: cached")
-        except Exception as e:
-            log.warning(f"  garages warmup failed: {e}")
-        # Ops territories (used by Dashboard live data)
-        try:
-            from ops import get_ops_territories
-            get_ops_territories()
-            log.info("  ops_territories: cached")
-        except Exception as e:
-            log.warning(f"  ops_territories warmup failed: {e}")
+        log.info("Cache warmup starting (full)...")
+
+        # Phase 1: Core endpoints (sequential to avoid SF overload)
+        warmup_fns = [
+            ("garages_list", lambda: list_garages()),
+            ("ops_garages", lambda: __import__('ops').get_ops_garages()),
+            ("ops_territories", lambda: __import__('ops').get_ops_territories()),
+            ("command_center", lambda: command_center()),
+            ("ops_brief", lambda: ops_brief()),
+            ("map_grids", lambda: get_map_grids()),
+            ("map_drivers", lambda: get_map_drivers()),
+        ]
+
+        for name, fn in warmup_fns:
+            try:
+                fn()
+                log.info(f"  {name}: cached")
+            except Exception as e:
+                log.warning(f"  {name} warmup failed: {e}")
+
         log.info("Cache warmup complete.")
     except Exception as e:
         log.warning(f"Cache warmup error: {e}")
@@ -2091,7 +2096,23 @@ def _warmup_cache():
 @app.on_event("startup")
 async def startup_warmup():
     if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure
-        threading.Thread(target=_warmup_cache, daemon=True).start()
+        # Use a file lock so only ONE worker runs warmup (avoid 3x SF load)
+        import fcntl
+        def _guarded_warmup():
+            lock_path = '/tmp/fslapp_warmup.lock'
+            try:
+                f = open(lock_path, 'w')
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _warmup_cache()
+                fcntl.flock(f, fcntl.LOCK_UN)
+                f.close()
+            except BlockingIOError:
+                # Another worker is already warming up — skip
+                import logging
+                logging.getLogger('warmup').info("Another worker warming up — skipping")
+            except Exception:
+                pass
+        threading.Thread(target=_guarded_warmup, daemon=True).start()
 
 
 # ── Serve React SPA ──────────────────────────────────────────────────────────
