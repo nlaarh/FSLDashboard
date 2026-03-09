@@ -3,7 +3,7 @@
 Designed for 25+ concurrent dispatchers hitting the same Salesforce data.
 
 Key behaviors:
-1. Thundering herd: When cache expires, ONE thread fetches, others wait.
+1. Thundering herd: When cache expires, ONE thread fetches, others get stale data instantly.
 2. Graceful degradation: If SF is down, serve stale cached data instead of crashing.
 3. Stale-while-revalidate: Expired data is kept in memory as a fallback.
 """
@@ -53,7 +53,7 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
 
     If 25 dispatchers hit the same endpoint simultaneously:
     - First request fetches from Salesforce
-    - Other 24 wait on an Event and get the same result
+    - Other 24 get stale data instantly (no blocking!)
     - Zero duplicate Salesforce queries
 
     If Salesforce is down (circuit breaker open, timeout, error):
@@ -73,6 +73,13 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
             return entry['data']
 
         if key in _pending:
+            # Another thread is already fetching — serve stale data immediately
+            # instead of blocking. This prevents the entire server from hanging
+            # when a single SF query is slow (critical with --workers 1).
+            stale_entry = _store.get(key)
+            if stale_entry:
+                return stale_entry['data']
+            # No stale data at all — wait briefly (10s max)
             event = _pending[key]
         else:
             event = Event()
@@ -80,16 +87,15 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
             event = None  # Signal that WE should do the fetch
 
     if event is not None:
-        # Wait for the other thread to finish (up to 120s)
-        event.wait(timeout=120)
+        # Only reach here if no stale data exists — wait briefly
+        event.wait(timeout=10)
         result = get(key)
         if result is not None:
             return result
-        # Other thread may have failed — try stale
         stale = get_stale(key)
         if stale is not None:
             return stale
-        # No data at all — fall through to fetch ourselves
+        # Still nothing — fall through to fetch ourselves
 
     # We're the fetcher
     try:
