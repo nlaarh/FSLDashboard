@@ -2096,23 +2096,15 @@ def _warmup_cache():
 @app.on_event("startup")
 async def startup_warmup():
     if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure
-        # Use a file lock so only ONE worker runs warmup (avoid 3x SF load)
-        import fcntl
-        def _guarded_warmup():
-            lock_path = '/tmp/fslapp_warmup.lock'
-            try:
-                f = open(lock_path, 'w')
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                _warmup_cache()
-                fcntl.flock(f, fcntl.LOCK_UN)
-                f.close()
-            except BlockingIOError:
-                # Another worker is already warming up — skip
-                import logging
-                logging.getLogger('warmup').info("Another worker warming up — skipping")
-            except Exception:
-                pass
-        threading.Thread(target=_guarded_warmup, daemon=True).start()
+        # Each worker warms its own in-memory cache.
+        # 3 workers × 7 endpoints = 21 SF calls — well within 300/min rate limit.
+        # Stagger by worker PID to reduce simultaneous SF queries.
+        import random
+        delay = random.uniform(0, 5)  # 0-5s random delay
+        def _delayed_warmup():
+            time.sleep(delay)
+            _warmup_cache()
+        threading.Thread(target=_delayed_warmup, daemon=True).start()
 
 
 # ── Serve React SPA ──────────────────────────────────────────────────────────
