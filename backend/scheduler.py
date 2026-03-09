@@ -3,7 +3,7 @@
 import math
 from datetime import date, timedelta
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 
 # Cycle times (minutes) — verified from 10K+ SA timestamps
 TOW_CYCLE = 115
@@ -59,6 +59,11 @@ def generate_schedule(territory_id: str, weeks: int = 4,
                       start_date: str | None = None,
                       end_date: str | None = None) -> dict:
     """Single aggregate SOQL query → schedule in ~0.6s (was 22s with individual records)."""
+    territory_id = sanitize_soql(territory_id)
+    if start_date:
+        start_date = sanitize_soql(start_date)
+    if end_date:
+        end_date = sanitize_soql(end_date)
 
     if start_date and end_date:
         since = f"{start_date}T00:00:00Z"

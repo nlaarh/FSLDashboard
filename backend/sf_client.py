@@ -6,13 +6,29 @@ Protects the production Salesforce org from being overwhelmed by FSLAPP:
 3. Connection pooling: reuse TCP connections across 25+ dispatchers
 """
 
-import os, threading, time as _time, logging, requests
+import os, threading, time as _time, logging, re, requests
 from collections import deque
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 
 log = logging.getLogger('sf_client')
+
+
+def sanitize_soql(value: str) -> str:
+    """Sanitize a value for safe SOQL interpolation. Prevents SOQL injection."""
+    if not isinstance(value, str):
+        value = str(value)
+    # Remove/escape characters that could break SOQL string literals
+    # SOQL strings use single quotes, so escape them
+    # Also remove backslashes, semicolons, and other dangerous chars
+    value = value.replace("\\", "").replace("'", "\\'")
+    # Only allow alphanumeric, hyphens, underscores, dots, spaces, colons
+    # (covers SF IDs like 0HoXX0000000001, appointment numbers like SA-0001234, dates like 2026-03-08T00:00:00Z)
+    if not re.match(r'^[a-zA-Z0-9\-_.:/ ]+$', value):
+        raise ValueError(f"Invalid characters in SOQL parameter: {value!r}")
+    return value
+
 
 # Load .env from the apidev directory (one level up from FSLAPP)
 _env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
@@ -42,6 +58,7 @@ _call_timestamps: deque = deque()
 
 def _rate_limit_check():
     """Block if we've exceeded the rate limit. Waits until a slot opens."""
+    wait = 0.0
     with _rate_lock:
         now = _time.time()
         # Purge timestamps older than 60s
@@ -49,15 +66,18 @@ def _rate_limit_check():
             _call_timestamps.popleft()
 
         if len(_call_timestamps) >= _RATE_LIMIT:
-            # Wait until the oldest call falls outside the window
+            # Calculate wait time but release lock before sleeping
             wait = _call_timestamps[0] - (now - 60) + 0.1
             log.warning(f"Rate limit hit ({_RATE_LIMIT}/min). Waiting {wait:.1f}s")
-            _time.sleep(wait)
-            # Re-purge after waiting
-            now = _time.time()
-            while _call_timestamps and _call_timestamps[0] < now - 60:
-                _call_timestamps.popleft()
 
+    if wait > 0:
+        _time.sleep(wait)
+
+    with _rate_lock:
+        # Re-purge after waiting
+        now = _time.time()
+        while _call_timestamps and _call_timestamps[0] < now - 60:
+            _call_timestamps.popleft()
         _call_timestamps.append(_time.time())
 
 
@@ -206,6 +226,7 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
             _breaker_failure()
             with _stats_lock:
                 _stats['errors'] += 1
+            raise RuntimeError(f"SF server error {r.status_code} after {_retries} retries")
 
         # Handle expired session
         if r.status_code in (401, 403):

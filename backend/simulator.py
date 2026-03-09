@@ -10,10 +10,13 @@ Driver GPS positions: from Salesforce (live data)
 """
 
 import math
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 import cache
+
+_ET = ZoneInfo('America/New_York')
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -40,15 +43,22 @@ def _parse_dt(dt_str):
 
 
 def _to_eastern(dt_str):
-    """Convert SF datetime string to Eastern. Also handles datetime objects."""
+    """Convert SF datetime string to Eastern (DST-aware). Also handles datetime objects."""
     if isinstance(dt_str, datetime):
-        return dt_str - timedelta(hours=5)
-    dt = _parse_dt(dt_str)
-    return (dt - timedelta(hours=5)) if dt else None
+        dt = dt_str
+    else:
+        dt = _parse_dt(dt_str)
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_ET)
 
 
 def simulate_day(territory_id: str, date_str: str) -> list[dict]:
     """Fast simulation: SA list + driver distances using LastKnown GPS."""
+    territory_id = sanitize_soql(territory_id)
+    date_str = sanitize_soql(date_str)
     next_day = (date.fromisoformat(date_str) + timedelta(days=1)).isoformat()
 
     # 1. SAs for the day + territory info + members — parallel

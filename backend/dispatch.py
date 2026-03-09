@@ -2,9 +2,12 @@
 
 import math, os, sys
 from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 
-from sf_client import sf_query_all, sf_parallel
+_ET = ZoneInfo('America/New_York')
+
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 import cache
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -98,8 +101,8 @@ def get_live_queue():
 
     def _fetch():
         now = datetime.now(timezone.utc)
-        today_et = (now - timedelta(hours=5)).replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff = (today_et + timedelta(hours=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        today_et = now.astimezone(_ET).replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = today_et.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         sas = sf_query_all(f"""
             SELECT Id, AppointmentNumber, Status, CreatedDate,
@@ -204,6 +207,7 @@ def get_live_queue():
 
 def recommend_drivers(sa_id: str):
     """For a given SA, recommend top 3 drivers ranked by composite score."""
+    sa_id = sanitize_soql(sa_id)
 
     def _fetch():
         # Get SA details
@@ -361,11 +365,12 @@ def recommend_drivers(sa_id: str):
 
 def get_cascade_status(territory_id: str):
     """Show cross-skill dispatch opportunities for a territory."""
+    territory_id = sanitize_soql(territory_id)
 
     def _fetch():
         now = datetime.now(timezone.utc)
-        today_et = (now - timedelta(hours=5)).replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff = (today_et + timedelta(hours=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        today_et = now.astimezone(_ET).replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = today_et.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         data = sf_parallel(
             open_sas=lambda: sf_query_all(f"""
@@ -533,6 +538,9 @@ def get_cascade_status(territory_id: str):
 
 def get_response_decomposition(territory_id: str, period_start: str, period_end: str):
     """Break response time into dispatch, travel, on-site segments."""
+    territory_id = sanitize_soql(territory_id)
+    period_start = sanitize_soql(period_start)
+    period_end = sanitize_soql(period_end)
 
     def _fetch():
         next_day = (date.fromisoformat(period_end) + timedelta(days=1)).isoformat()
@@ -804,6 +812,7 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
 
 def get_forecast(territory_id: str, weeks_history: int = 8):
     """16-day demand forecast using DOW patterns + weather."""
+    territory_id = sanitize_soql(territory_id)
 
     def _fetch():
         days_back = weeks_history * 7

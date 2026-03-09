@@ -10,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
+
+_ET = ZoneInfo('America/New_York')
 
 # WMO weather interpretation codes (Open-Meteo standard)
 _WMO_CODES = {
@@ -57,10 +60,14 @@ def _parse_dt(dt_str):
 
 def _to_eastern(dt_str):
     dt = _parse_dt(dt_str)
-    return (dt - timedelta(hours=5)) if dt else None
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_ET)
 
 
-from sf_client import sf_query_all, sf_parallel, get_stats as sf_stats
+from sf_client import sf_query_all, sf_parallel, get_stats as sf_stats, sanitize_soql
 from scheduler import generate_schedule
 from simulator import simulate_day, haversine
 from scorer import compute_score
@@ -264,6 +271,7 @@ def ops_territories():
 @app.get("/api/ops/territory/{territory_id}")
 def ops_territory_detail(territory_id: str):
     """Today's SA list for a single territory with PTA/ATA per call."""
+    territory_id = sanitize_soql(territory_id)
     return get_ops_territory_detail(territory_id)
 
 
@@ -321,6 +329,11 @@ def get_schedule(territory_id: str,
                  weeks: int = Query(4, ge=1, le=12),
                  start_date: str = Query(None),
                  end_date: str = Query(None)):
+    territory_id = sanitize_soql(territory_id)
+    if start_date:
+        start_date = sanitize_soql(start_date)
+    if end_date:
+        end_date = sanitize_soql(end_date)
     cache_key = f"schedule_{territory_id}_{start_date or 'none'}_{end_date or 'none'}_{weeks}"
     result = cache.cached_query(
         cache_key,
@@ -337,6 +350,7 @@ def get_schedule(territory_id: str,
 @app.get("/api/garages/{territory_id}/scorecard")
 def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
     """Performance scorecard: SLA compliance, fleet capacity, and gap analysis."""
+    territory_id = sanitize_soql(territory_id)
     days = weeks * 7
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     since = f"{cutoff}T00:00:00Z"
@@ -588,6 +602,8 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
 @app.get("/api/garages/{territory_id}/appointments")
 def get_appointments(territory_id: str, date_str: str = Query(..., alias='date')):
     """Get all SAs for a territory on a specific date."""
+    territory_id = sanitize_soql(territory_id)
+    date_str = sanitize_soql(date_str)
     def _fetch():
         next_day = (date.fromisoformat(date_str) + timedelta(days=1)).isoformat()
         sas = sf_query_all(f"""
@@ -634,6 +650,8 @@ def get_appointments(territory_id: str, date_str: str = Query(..., alias='date')
 
 @app.get("/api/garages/{territory_id}/simulate")
 def run_simulation(territory_id: str, date_str: str = Query(..., alias='date')):
+    territory_id = sanitize_soql(territory_id)
+    date_str = sanitize_soql(date_str)
     def _fetch():
         results = simulate_day(territory_id, date_str)
         if not results:
@@ -672,6 +690,7 @@ def run_simulation(territory_id: str, date_str: str = Query(..., alias='date')):
 
 @app.get("/api/garages/{territory_id}/score")
 def get_score(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
+    territory_id = sanitize_soql(territory_id)
     result = compute_score(territory_id, weeks)
     if result.get('error'):
         raise HTTPException(status_code=404, detail=result['error'])
@@ -880,7 +899,8 @@ def ops_brief():
 
     def _fetch():
         now_utc = datetime.now(timezone.utc)
-        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+        now_et = now_utc.astimezone(_ET)
+        today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         # 1) Parallel fetch: drivers, active SAs, priority matrix, hourly baseline
@@ -1267,6 +1287,7 @@ def ops_brief():
 @app.get("/api/sa/{sa_number}")
 def lookup_sa(sa_number: str):
     """Lookup an SA by AppointmentNumber and return driver positions."""
+    sa_number = sanitize_soql(sa_number)
     def _fetch():
         return _lookup_sa_impl(sa_number)
     result = cache.cached_query(f'sa_lookup_{sa_number}', _fetch, ttl=30)
@@ -1417,6 +1438,9 @@ def get_performance(
     period_start: str = Query(...),
     period_end: str = Query(...),
 ):
+    territory_id = sanitize_soql(territory_id)
+    period_start = sanitize_soql(period_start)
+    period_end = sanitize_soql(period_end)
     cache_key = f"perf_{territory_id}_{period_start}_{period_end}"
     return cache.cached_query(cache_key, lambda: _compute_performance(territory_id, period_start, period_end), ttl=3600)
 
@@ -1678,12 +1702,16 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         cnt = r.get('cnt', 0)
         if is_single_day:
             hr = int(r.get('hr', 0))
-            # Shift UTC hour to Eastern
-            eastern_hr = (hr - 5) % 24
+            # Shift UTC hour to Eastern (DST-aware)
+            utc_dt = datetime(int(period_start[:4]), int(period_start[5:7]), int(period_start[8:10]),
+                              hr, tzinfo=timezone.utc)
+            eastern_dt = utc_dt.astimezone(_ET)
+            eastern_hr = eastern_dt.hour
             key = f"{eastern_hr:02d}:00"
         else:
             m = int(r.get('m', 1))
-            key = f"2026-{m:02d}-{d:02d}"
+            year = int(period_start[:4])
+            key = f"{year}-{m:02d}-{d:02d}"
         bucket_totals[key] += cnt
         if status == 'Completed':
             bucket_completed[key] += cnt
@@ -1895,6 +1923,7 @@ def api_dispatch_queue():
 @app.get("/api/dispatch/recommend/{sa_id}")
 def api_dispatch_recommend(sa_id: str):
     """Top driver recommendations for a specific SA."""
+    sa_id = sanitize_soql(sa_id)
     result = recommend_drivers(sa_id)
     if 'error' in result:
         raise HTTPException(status_code=404, detail=result['error'])
@@ -1903,6 +1932,7 @@ def api_dispatch_recommend(sa_id: str):
 @app.get("/api/dispatch/cascade/{territory_id}")
 def api_dispatch_cascade(territory_id: str):
     """Cross-skill cascade opportunities for a territory."""
+    territory_id = sanitize_soql(territory_id)
     return get_cascade_status(territory_id)
 
 @app.get("/api/garages/{territory_id}/decomposition")
@@ -1912,11 +1942,15 @@ def api_response_decomposition(
     period_end: str = Query(...),
 ):
     """Response time decomposition + decline analysis + driver leaderboard."""
+    territory_id = sanitize_soql(territory_id)
+    period_start = sanitize_soql(period_start)
+    period_end = sanitize_soql(period_end)
     return get_response_decomposition(territory_id, period_start, period_end)
 
 @app.get("/api/territory/{territory_id}/forecast")
 def api_forecast(territory_id: str, weeks_history: int = Query(8, ge=2, le=16)):
     """16-day demand forecast using DOW patterns + weather."""
+    territory_id = sanitize_soql(territory_id)
     return get_forecast(territory_id, weeks_history)
 
 

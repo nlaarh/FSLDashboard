@@ -7,9 +7,12 @@ Key insight: Towbook SAs update ActualStartTime in bulk at midnight.
 """
 
 from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 import cache
+
+_ET = ZoneInfo('America/New_York')
 
 
 def _parse_dt(s):
@@ -157,9 +160,9 @@ def get_ops_garages():
 def get_ops_territories():
     """All territories with today's KPIs — correct PTA/ATA."""
     now_utc = datetime.now(timezone.utc)
-    # Today = midnight ET to now (ET = UTC-5, or UTC-4 during DST)
-    # Use simple approach: last 24 hours from midnight UTC today
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    # Today = midnight ET to now (DST-aware)
+    now_et = now_utc.astimezone(_ET)
+    today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
 
     def _fetch():
@@ -351,8 +354,10 @@ def get_ops_territories():
 
 def get_ops_territory_detail(territory_id: str):
     """Single territory today — SA list with PTA/ATA per call."""
+    territory_id = sanitize_soql(territory_id)
     now_utc = datetime.now(timezone.utc)
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    now_et = now_utc.astimezone(_ET)
+    today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
 
     def _fetch():

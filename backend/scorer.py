@@ -6,7 +6,7 @@ All data live from Salesforce (parallel SOQL).
 
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from cache import cached_query
 
 # ── Dimension weights ────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ def _parse_dt(dt_str):
 
 def compute_score(territory_id: str, weeks: int = 4) -> dict:
     """Compute all 8 scoring dimensions. Parallel SOQL queries."""
+    territory_id = sanitize_soql(territory_id)
     days = weeks * 7
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     since = f"{cutoff}T00:00:00Z"
