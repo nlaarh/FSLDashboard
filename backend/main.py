@@ -2101,6 +2101,7 @@ def pta_advisor():
             sas=lambda: _sqa(f"""
                 SELECT Id, Status, CreatedDate, ActualStartTime,
                        ERS_PTA__c, ERS_Dispatch_Method__c,
+                       Off_Platform_Driver__r.Name, Off_Platform_Truck_Id__c,
                        ServiceTerritoryId, ServiceTerritory.Name,
                        WorkType.Name
                 FROM ServiceAppointment
@@ -2308,6 +2309,58 @@ def pta_advisor():
                 else:
                     idle_list.append({'tier': tier})
 
+            # ── Towbook (off-platform) drivers from active SAs ──
+            tb_drivers = defaultdict(list)  # driver_name → [sa, ...]
+            for sa in sa_list:
+                st = sa.get('Status')
+                if st not in ('Dispatched', 'Assigned'):
+                    continue
+                wt = (sa.get('WorkType') or {}).get('Name', '')
+                if 'drop-off' in wt.lower():
+                    continue
+                opd = (sa.get('Off_Platform_Driver__r') or {}).get('Name')
+                if opd:
+                    tb_drivers[opd].append(sa)
+
+            for tb_name, tb_sas in tb_drivers.items():
+                tb_sas.sort(key=lambda s: s.get('CreatedDate', ''))
+                total_work = 0
+                for ds in tb_sas:
+                    jct = _call_tier((ds.get('WorkType') or {}).get('Name', ''))
+                    total_work += _CYCLE_TIMES.get(jct, 40)
+                oldest = tb_sas[0]
+                cdt = _parse_dt(oldest.get('CreatedDate'))
+                elapsed = 0
+                if cdt:
+                    if cdt.tzinfo is None:
+                        cdt = cdt.replace(tzinfo=timezone.utc)
+                    elapsed = (now_utc - cdt).total_seconds() / 60
+                remaining = max(0, total_work - elapsed)
+                job_details = []
+                for s in tb_sas:
+                    wt_n = (s.get('WorkType') or {}).get('Name', '?')
+                    scdt = _parse_dt(s.get('CreatedDate'))
+                    swait = 0
+                    if scdt:
+                        if scdt.tzinfo is None:
+                            scdt = scdt.replace(tzinfo=timezone.utc)
+                        swait = round((now_utc - scdt).total_seconds() / 60)
+                    job_details.append({
+                        'work_type': wt_n,
+                        'wait_min': swait,
+                        'pta_min': round(float(s['ERS_PTA__c'])) if s.get('ERS_PTA__c') else None,
+                        'has_arrived': s.get('ActualStartTime') is not None,
+                    })
+                # Infer tier from truck ID pattern or default to 'tow' for Towbook
+                busy_list.append({
+                    'name': tb_name,
+                    'tier': 'tow',  # Towbook drivers are typically tow-capable
+                    'remaining_min': round(remaining),
+                    'jobs': len(tb_sas),
+                    'job_details': job_details,
+                    'towbook': True,
+                })
+
             # ── Project PTA for each call type ──
             # Algorithm: simulate FIFO dispatch with skill hierarchy
             has_fleet_drivers = len(all_driver_ids) > 0
@@ -2398,7 +2451,7 @@ def pta_advisor():
                 'queue_depth': len(all_open),
                 'queue_by_type': dict(queue_by_type),
                 'drivers': {
-                    'total': len(all_driver_ids),
+                    'total': len(all_driver_ids) + len(tb_drivers),
                     'idle': len(idle_list),
                     'busy': len(busy_list),
                     'idle_by_tier': _count_by_tier(idle_list),

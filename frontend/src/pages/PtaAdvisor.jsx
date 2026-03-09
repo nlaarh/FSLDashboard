@@ -452,6 +452,7 @@ function GarageRow({ garage: g, expanded, onToggle }) {
                         d.tier === 'battery' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
                         'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                       }`}>{d.tier}</span>
+                      {d.towbook && <span className="text-[9px] px-1 py-0.5 rounded bg-slate-700/50 text-slate-500">TB</span>}
                       <span className="ml-auto text-[10px] text-slate-500">{d.jobs} job{d.jobs !== 1 ? 's' : ''}</span>
                       <span className={`text-[10px] font-bold ${d.remaining_min > 60 ? 'text-red-400' : d.remaining_min > 30 ? 'text-amber-400' : 'text-emerald-400'}`}>
                         {d.remaining_min} min left
