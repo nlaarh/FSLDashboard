@@ -6,15 +6,17 @@ import os
 port = os.environ.get('PORT', '8000')
 bind = f"0.0.0.0:{port}"
 
-# Worker configuration
-workers = 2
+# Worker configuration — 3 workers for 25+ concurrent users
+# Each UvicornWorker runs an async event loop + threadpool (40 threads default)
+# = 120 concurrent request slots total
+workers = 3
 worker_class = "uvicorn.workers.UvicornWorker"
-timeout = 600  # Azure default
+timeout = 120
 
 # Logging
 accesslog = "-"
 errorlog = "-"
-loglevel = "debug"
+loglevel = "info"
 
 # Working directory
 chdir = "/home/site/wwwroot"
