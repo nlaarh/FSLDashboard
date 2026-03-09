@@ -174,32 +174,30 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         decline_count = data['declines'][0].get('cnt', 0) if data['declines'] else 0
         decline_rate = decline_count / max(total, 1)
 
-        # Satisfaction — use WO numbers from parallel query
+        # Satisfaction — use WO numbers from parallel query (single batch, max 500)
         satisfaction_rate = None
         total_surveys = 0
         totally_satisfied = 0
         wo_nums = [r.get('WorkOrderNumber') for r in data.get('wo_nums', []) if r.get('WorkOrderNumber')]
         if wo_nums:
-            # Aggregate survey query by WO numbers (batch 500 at a time)
-            all_surveys = []
-            for i in range(0, len(wo_nums), 500):
-                batch = wo_nums[i:i+500]
-                num_list = ",".join(f"'{w}'" for w in batch)
-                svs = sf_query_all(f"""
+            num_list = ",".join(f"'{w}'" for w in wo_nums[:500])
+            try:
+                all_surveys = sf_query_all(f"""
                     SELECT ERS_Overall_Satisfaction__c, COUNT(Id) cnt
                     FROM Survey_Result__c
                     WHERE ERS_Work_Order_Number__c IN ({num_list})
                     GROUP BY ERS_Overall_Satisfaction__c
                 """)
-                all_surveys.extend(svs)
-            for sv in all_surveys:
-                sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower()
-                cnt = sv.get('cnt', 1)
-                total_surveys += cnt
-                if sat == 'totally satisfied':
-                    totally_satisfied += cnt
-            if total_surveys > 0:
-                satisfaction_rate = totally_satisfied / total_surveys
+                for sv in all_surveys:
+                    sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower()
+                    cnt = sv.get('cnt', 1)
+                    total_surveys += cnt
+                    if sat == 'totally satisfied':
+                        totally_satisfied += cnt
+                if total_surveys > 0:
+                    satisfaction_rate = totally_satisfied / total_surveys
+            except Exception:
+                pass  # Score still works without satisfaction
 
         # Score each dimension
         actuals = {

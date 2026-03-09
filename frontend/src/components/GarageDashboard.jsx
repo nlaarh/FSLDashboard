@@ -308,23 +308,27 @@ export default function GarageDashboard({ garageId, garageName }) {
 
   // ── Load performance (period-dependent)
   useEffect(() => {
+    let ignore = false
     setLoading(p => ({ ...p, perf: true }))
     setError(null)
     setPerf(null)
     fetchPerformance(garageId, start, end)
-      .then(setPerf)
-      .catch(e => setError(e.response?.data?.detail || e.message))
-      .finally(() => setLoading(p => ({ ...p, perf: false })))
+      .then(d => { if (!ignore) setPerf(d) })
+      .catch(e => { if (!ignore) setError(e.response?.data?.detail || e.message) })
+      .finally(() => { if (!ignore) setLoading(p => ({ ...p, perf: false })) })
+    return () => { ignore = true }
   }, [garageId, start, end])
 
   // ── Load decomposition (period-dependent)
   useEffect(() => {
+    let ignore = false
     setLoading(p => ({ ...p, decomp: true }))
     setDecomp(null)
     fetchDecomposition(garageId, start, end)
-      .then(setDecomp)
+      .then(d => { if (!ignore) setDecomp(d) })
       .catch(() => {})
-      .finally(() => setLoading(p => ({ ...p, decomp: false })))
+      .finally(() => { if (!ignore) setLoading(p => ({ ...p, decomp: false })) })
+    return () => { ignore = true }
   }, [garageId, start, end])
 
   // ── Load scorecard + score (once, not period-dependent)
@@ -420,9 +424,30 @@ export default function GarageDashboard({ garageId, garageName }) {
       )}
 
       {isFullLoading && (
-        <div className="flex items-center justify-center py-16 gap-3">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
-          <span className="text-slate-400">Loading garage dashboard...</span>
+        <div className="space-y-4 animate-pulse">
+          {/* Skeleton KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="glass rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-slate-700/50" />
+                  <div className="h-3 w-20 rounded bg-slate-700/50" />
+                </div>
+                <div className="h-7 w-16 rounded bg-slate-700/50" />
+                <div className="h-2 w-24 rounded bg-slate-700/50" />
+              </div>
+            ))}
+          </div>
+          {/* Skeleton chart */}
+          <div className="glass rounded-xl p-5 space-y-3">
+            <div className="h-4 w-40 rounded bg-slate-700/50" />
+            <div className="h-48 rounded bg-slate-700/30" />
+          </div>
+          {/* Loading indicator */}
+          <div className="flex items-center justify-center py-4 gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-brand-400" />
+            <span className="text-slate-400 text-sm">Loading garage data from Salesforce...</span>
+          </div>
         </div>
       )}
 
