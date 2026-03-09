@@ -2310,6 +2310,7 @@ def pta_advisor():
 
             # ── Project PTA for each call type ──
             # Algorithm: simulate FIFO dispatch with skill hierarchy
+            has_fleet_drivers = len(all_driver_ids) > 0
             projected = {}
             current_settings = pta_map.get(tid, {})
 
@@ -2353,12 +2354,12 @@ def pta_advisor():
                     next_free = heapq.heappop(heap) if heap else 0
                     projected_min = round(next_free + travel)
                 else:
-                    # No Fleet drivers — if PTA setting exists, use it
-                    # (Towbook garages manage their own dispatch)
-                    if current_min:
+                    # No capable drivers for this call type
+                    if not has_fleet_drivers and current_min:
+                        # Towbook garage — use PTA setting (we can't see their drivers)
                         projected_min = current_min
                     else:
-                        projected_min = None  # No drivers AND no setting
+                        projected_min = None  # No coverage for this type
 
                 # Recommendation
                 if projected_min is None:
@@ -2390,7 +2391,6 @@ def pta_advisor():
             proj_vals = [p['projected_min'] for p in projected.values() if p.get('projected_min') is not None]
             avg_projected = round(sum(proj_vals) / len(proj_vals)) if proj_vals else None
 
-            has_fleet_drivers = len(all_driver_ids) > 0
             garages.append({
                 'id': tid,
                 'name': t_name,
