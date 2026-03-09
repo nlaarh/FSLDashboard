@@ -41,23 +41,56 @@ function MiniBar({ pct, color }) {
   )
 }
 
+// ── Column definitions (for ? tooltips) ──────────────────────────────────────
+const COL_DEFS = {
+  name:          'Garage / territory name from Salesforce ServiceTerritory.',
+  city:          'City from the territory address.',
+  open:          'SAs currently in Dispatched or Assigned status — still waiting for a driver.',
+  total:         'Total Service Appointments created today for this garage (all statuses).',
+  completion:    'Completed SAs / Total SAs today. Measures how many dispatched calls this garage actually finished.',
+  pct_primary:   '1st Call %: When this garage is rank 1 (primary) for the call zone in the priority matrix, what % were completed? If no priority matrix data, uses overall completion rate.',
+  pct_secondary: '2nd+ Call %: Completion rate for calls where this garage was rank 2 or higher (backup). These are calls declined by the primary garage.',
+  avg_pta:       'Average Promised Time of Arrival (ERS_PTA__c) in minutes — the ETA given to the member at dispatch.',
+  resp_time:     'Average actual response time. For Field Services: CreatedDate → ActualStartTime. For Towbook-only garages: estimated from PTA (no real arrival data). "actual (N)" = N Field Services calls measured.',
+  max_wait:      'Longest current wait time among open SAs (Dispatched/Assigned). High values indicate a stuck or delayed call.',
+}
+
 // ── Sort header ───────────────────────────────────────────────────────────────
 function Th({ label, col, sort, onSort, right = false }) {
+  const [showDef, setShowDef] = useState(false)
   const active = sort.col === col
+  const def = COL_DEFS[col]
   return (
-    <th onClick={() => onSort(col)}
-      className={clsx(
-        'px-3 py-3 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
+    <th className={clsx(
+        'px-3 py-3 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap relative',
         'hover:text-slate-200 transition-colors',
         right ? 'text-right' : 'text-left',
         active ? 'text-brand-400' : 'text-slate-500'
       )}>
-      {label}
-      {active
-        ? sort.dir === 'asc'
-          ? <ChevronUp   className="inline w-3 h-3 ml-0.5 -mt-0.5" />
-          : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
-        : <span className="inline-block w-3 ml-0.5" />}
+      <span onClick={() => onSort(col)}>
+        {label}
+        {active
+          ? sort.dir === 'asc'
+            ? <ChevronUp   className="inline w-3 h-3 ml-0.5 -mt-0.5" />
+            : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
+          : <span className="inline-block w-3 ml-0.5" />}
+      </span>
+      {def && (
+        <button onClick={e => { e.stopPropagation(); setShowDef(s => !s) }}
+          className="ml-1 w-3.5 h-3.5 rounded-full bg-slate-700/60 hover:bg-slate-600 text-slate-500 hover:text-white
+                     text-[8px] font-bold inline-flex items-center justify-center transition-colors align-middle"
+          title="How this is calculated">?</button>
+      )}
+      {showDef && def && (
+        <div className="absolute top-full left-0 z-50 w-64 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl mt-1"
+          onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-bold text-brand-400 uppercase">{label}</span>
+            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
+          </div>
+          <div className="text-[11px] text-slate-300 leading-relaxed">{def}</div>
+        </div>
+      )}
     </th>
   )
 }

@@ -286,9 +286,11 @@ def get_ops_territories():
                     if s.get('Status') == 'Completed':
                         unranked_completed += 1
 
-            # If no priority matrix data, fall back to overall acceptance
-            # (treat all non-drop-off SAs as "primary")
-            if primary_total == 0 and secondary_total == 0 and unranked_total > 0:
+            # If no rank-1 (primary) SAs, fold unranked into primary so every
+            # garage with volume gets a "1st Call %" on the dashboard.
+            # Only 58/128 garages appear in the priority matrix, and many are
+            # never rank 1 for any zone — without this fallback they show "—".
+            if primary_total == 0 and unranked_total > 0:
                 primary_total = unranked_total
                 primary_completed = unranked_completed
 

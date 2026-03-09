@@ -1715,10 +1715,10 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'definitions': {
             'total_calls': 'Count of all Service Appointments dispatched to this garage in the selected period. Includes all statuses: Completed, Canceled, Unable to Complete, No-Show, Dispatched, Assigned.',
             'completion': 'Completed SAs / Total SAs. Target: 95%. Measures how many dispatched calls this garage actually finished.',
-            'first_call_pct': '1st Call Acceptance: When this garage is the primary (rank 1) in the priority matrix (ERS_Spotting_Number__c = 1), what % did they accept without declining? Higher = garage is reliable as a first responder.',
-            'accepted_completion_pct': 'Completion of Accepted: Of all SAs this garage accepted (did not decline), what % were Completed? This isolates operational effectiveness from acceptance behavior.',
-            'median_response': 'Median time from SA Created to driver ActualStartTime (on-site arrival). Only Field Services SAs — Towbook arrival times are unreliable (bulk-updated at midnight). Excludes Tow Drop-Off SAs. Target: 45 min.',
-            'eta_accuracy': 'Of completed Field Services SAs, what % had actual response time within the promised PTA (ERS_PTA__c)? Measures whether the ETA given to the member was accurate.',
+            'first_call_acceptance': 'When this garage is the primary (rank 1) in the priority matrix (ERS_Spotting_Number__c = 1), what % did they accept without declining? If no spotting data exists, falls back to overall acceptance rate. Higher = garage is reliable as a first responder.',
+            'completion_of_accepted': 'Of all SAs this garage accepted (did not decline), what % were Completed? This isolates operational effectiveness from acceptance behavior.',
+            'median_response': 'Median time from SA Created to driver ActualStartTime (on-site arrival). Only Field Services SAs — Towbook arrival times are unreliable (bulk-updated at midnight). Excludes Tow Drop-Off SAs. Target: 45 min. Shows N/A for Towbook-only garages.',
+            'eta_accuracy': 'Of completed Field Services SAs, what % had actual response time within the promised PTA (ERS_PTA__c)? Measures whether the ETA given to the member was accurate. Shows N/A for Towbook-only garages.',
             'acceptance': 'Of SAs auto-assigned to this garage, what % were accepted (not declined by facility)? Based on ERS_Auto_Assign__c = true and absence of ERS_Facility_Decline_Reason__c.',
             'satisfaction': 'Totally Satisfied / Total Survey Responses. Surveys are matched by Work Order number. Target: 82% (AAA accreditation requirement). Surveys arrive days after the call.',
             'dispatch_mix': 'Percentage of SAs dispatched via Field Services (internal fleet) vs Towbook (external contractor). Based on ERS_Dispatch_Method__c formula field.',
@@ -2045,6 +2045,40 @@ def admin_list_sessions(request: Request):
 
 
 _start_time = time.time()
+
+
+# ── Cache warmup on startup ──────────────────────────────────────────────────
+# Pre-populate cache so the first user doesn't wait for cold SF queries.
+# Runs in a background thread so it doesn't block gunicorn startup.
+import threading
+
+def _warmup_cache():
+    """Pre-fetch the most-used endpoints into cache."""
+    import logging
+    log = logging.getLogger('warmup')
+    try:
+        time.sleep(3)  # Let gunicorn finish binding
+        log.info("Cache warmup starting...")
+        # Garages list (used by Dashboard)
+        try:
+            from ops import get_ops_garages
+            get_ops_garages()
+            log.info("  garages: cached")
+        except Exception as e:
+            log.warning(f"  garages warmup failed: {e}")
+        # Ops territories (used by Dashboard live data)
+        try:
+            from ops import get_ops_territories
+            get_ops_territories()
+            log.info("  ops_territories: cached")
+        except Exception as e:
+            log.warning(f"  ops_territories warmup failed: {e}")
+        log.info("Cache warmup complete.")
+    except Exception as e:
+        log.warning(f"Cache warmup error: {e}")
+
+if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure, not local dev
+    threading.Thread(target=_warmup_cache, daemon=True).start()
 
 
 # ── Serve React SPA ──────────────────────────────────────────────────────────

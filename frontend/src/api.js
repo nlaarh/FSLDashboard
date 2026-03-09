@@ -2,11 +2,22 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api', timeout: 60000 })
 
-// Redirect to login on 401 (expired session or not logged in)
+// Retry transient failures (network errors, 502/503/504) up to 2 times
 api.interceptors.response.use(
   res => res,
-  err => {
-    if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
+  async err => {
+    const config = err.config
+    if (!config) return Promise.reject(err)
+    config._retryCount = config._retryCount || 0
+    const status = err.response?.status
+    const isRetryable = !status || status === 502 || status === 503 || status === 504
+    if (isRetryable && config._retryCount < 2 && config.method === 'get') {
+      config._retryCount += 1
+      await new Promise(r => setTimeout(r, 1000 * config._retryCount))
+      return api(config)
+    }
+    // Redirect to login on 401 (expired session or not logged in)
+    if (status === 401 && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login'
     }
     return Promise.reject(err)
