@@ -1018,10 +1018,13 @@ def ops_brief():
             'busy_drivers': busy_drivers,
         }
 
-        # 4) Open calls (waiting for service)
+        # 4) Open calls (waiting for service) — exclude Tow Drop-Off (paired SAs, not actionable)
         open_sas = []
         for sa in all_sas:
             if sa.get('Status') not in ('Dispatched', 'Assigned'):
+                continue
+            wt = (sa.get('WorkType') or {}).get('Name', '')
+            if 'drop-off' in wt.lower():
                 continue
             cdt = _parse_dt(sa.get('CreatedDate'))
             wait_min = 0
