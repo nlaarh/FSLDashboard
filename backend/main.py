@@ -140,18 +140,6 @@ body{font-family:system-ui;display:flex;justify-content:center;align-items:cente
 .card{background:#fff;padding:2.5rem;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.1);width:360px}
 h2{margin:0 0 .5rem;text-align:center;color:#1a1a2e;font-size:1.4rem}
 .subtitle{text-align:center;color:#666;margin-bottom:2rem;font-size:.9rem}
-.sso-btn{width:100%;padding:.8rem;background:#0078d4;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:.6rem}
-.sso-btn:hover{background:#106ebe}
-.sso-btn svg{width:20px;height:20px}
-.divider{display:flex;align-items:center;margin:1.5rem 0;color:#999;font-size:.85rem}
-.divider::before,.divider::after{content:'';flex:1;border-bottom:1px solid #ddd}
-.divider::before{margin-right:.8rem}
-.divider::after{margin-left:.8rem}
-.pwd-toggle{text-align:center;margin-bottom:1rem}
-.pwd-toggle a{color:#0066cc;cursor:pointer;font-size:.9rem;text-decoration:none}
-.pwd-toggle a:hover{text-decoration:underline}
-.pwd-form{display:none}
-.pwd-form.show{display:block}
 input{width:100%;padding:.6rem;margin:.3rem 0 .8rem;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;font-size:.95rem}
 .login-btn{width:100%;padding:.7rem;background:#333;color:#fff;border:none;border-radius:6px;font-size:.95rem;cursor:pointer}
 .login-btn:hover{background:#555}
@@ -160,22 +148,12 @@ input{width:100%;padding:.6rem;margin:.3rem 0 .8rem;border:1px solid #ddd;border
 <body><div class="card">
 <h2>FSLAPP</h2>
 <div class="subtitle">Field Service Lightning Analytics</div>
-<button class="sso-btn" onclick="window.location.href='/.auth/login/aad'">
-<svg viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-<rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-<rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
-Sign in with Microsoft
-</button>
-<div class="divider">or</div>
-<div class="pwd-toggle"><a onclick="document.getElementById('pwdForm').classList.toggle('show')">Use Username and Password</a></div>
-<div class="pwd-form" id="pwdForm">
 <div class="err" id="err"></div>
 <form onsubmit="return doLogin(event)">
 <input name="username" placeholder="Username" required>
 <input name="password" type="password" placeholder="Password" required>
 <button type="submit" class="login-btn">Sign In</button>
 </form>
-</div>
 </div>
 <script>
 async function doLogin(e){e.preventDefault();
