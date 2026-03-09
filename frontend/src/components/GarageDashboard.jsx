@@ -74,12 +74,12 @@ function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, targe
         </div>
       </div>
       {showDef && definition && (
-        <div className="absolute top-0 left-0 right-0 z-10 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-brand-400 uppercase">{label}</span>
-            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
+        <div className="absolute top-0 left-0 right-0 z-10 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl whitespace-normal break-words overflow-hidden">
+          <div className="flex items-center justify-between mb-1 gap-2">
+            <span className="text-[10px] font-bold text-brand-400 uppercase truncate">{label}</span>
+            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
           </div>
-          <div className="text-[11px] text-slate-300 leading-relaxed">{definition}</div>
+          <div className="text-[11px] text-slate-300 leading-relaxed break-words">{definition}</div>
         </div>
       )}
       <div className={clsx('text-2xl font-black', color)}>{value}</div>

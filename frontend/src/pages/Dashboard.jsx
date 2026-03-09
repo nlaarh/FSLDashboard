@@ -82,13 +82,13 @@ function Th({ label, col, sort, onSort, right = false }) {
           title="How this is calculated">?</button>
       )}
       {showDef && def && (
-        <div className="absolute top-full left-0 z-50 w-64 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl mt-1"
+        <div className="absolute top-full left-0 z-50 w-56 max-w-[90vw] bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl mt-1 whitespace-normal break-words overflow-hidden"
           onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-brand-400 uppercase">{label}</span>
-            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
+          <div className="flex items-center justify-between mb-1 gap-2">
+            <span className="text-[10px] font-bold text-brand-400 uppercase truncate">{label}</span>
+            <button onClick={() => setShowDef(false)} className="text-slate-400 hover:text-white text-xs shrink-0">✕</button>
           </div>
-          <div className="text-[11px] text-slate-300 leading-relaxed">{def}</div>
+          <div className="text-[11px] text-slate-300 leading-relaxed break-words">{def}</div>
         </div>
       )}
     </th>
