@@ -2049,7 +2049,7 @@ _start_time = time.time()
 
 # ── Cache warmup on startup ──────────────────────────────────────────────────
 # Pre-populate cache so the first user doesn't wait for cold SF queries.
-# Runs in a background thread so it doesn't block gunicorn startup.
+# Uses FastAPI startup event (runs after gunicorn worker is ready).
 import threading
 
 def _warmup_cache():
@@ -2057,7 +2057,6 @@ def _warmup_cache():
     import logging
     log = logging.getLogger('warmup')
     try:
-        time.sleep(3)  # Let gunicorn finish binding
         log.info("Cache warmup starting...")
         # Garages list (used by Dashboard)
         try:
@@ -2077,8 +2076,10 @@ def _warmup_cache():
     except Exception as e:
         log.warning(f"Cache warmup error: {e}")
 
-if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure, not local dev
-    threading.Thread(target=_warmup_cache, daemon=True).start()
+@app.on_event("startup")
+async def startup_warmup():
+    if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure
+        threading.Thread(target=_warmup_cache, daemon=True).start()
 
 
 # ── Serve React SPA ──────────────────────────────────────────────────────────
