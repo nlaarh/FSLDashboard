@@ -1,23 +1,238 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, AlertTriangle, GitBranch, ChevronDown, ChevronUp, ArrowRight, Clock, XCircle, TrendingDown, HelpCircle, X } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowRightLeft, TrendingDown, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, X, Calendar, ArrowRight } from 'lucide-react'
 import { fetchMatrixHealth } from '../api'
 
 const PERIODS = [
-  { key: '2026-01', label: 'January' },
-  { key: '2026-02', label: 'February' },
-  { key: 'mtd', label: 'This Month' },
-  { key: 'ytd', label: 'YTD' },
+  { key: '2026-01', label: 'January 2026' },
+  { key: '2026-02', label: 'February 2026' },
+  { key: 'current', label: 'This Month' },
 ]
+
+function pctBadge(val, threshold, inverse = false) {
+  if (val == null) return <span className="text-slate-600 text-xs">N/A</span>
+  const bad = inverse ? val > threshold : val < threshold
+  const warn = inverse ? val > threshold * 0.85 : val < threshold * 1.15
+  const color = bad ? 'text-red-400' : warn ? 'text-amber-400' : 'text-emerald-400'
+  return <span className={`font-semibold ${color}`}>{val}%</span>
+}
+
+function csatBadge(val) {
+  if (val == null) return <span className="text-slate-600 text-xs">No surveys</span>
+  const color = val >= 82 ? 'text-emerald-400' : val >= 70 ? 'text-amber-400' : 'text-red-400'
+  return <span className={`font-semibold ${color}`}>{val}%</span>
+}
+
+function impactTag(value, unit, color = 'text-brand-300') {
+  return (
+    <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-slate-800/50">
+      <span className={`text-lg font-bold ${color}`}>{value.toLocaleString()}</span>
+      <span className="text-[10px] text-slate-500 uppercase tracking-wider">{unit}</span>
+    </div>
+  )
+}
+
+function RecommendationCard({ rec, expanded, onToggle }) {
+  const { zone, current_primary, current_accept_pct, current_satisfaction,
+    suggested_primary, suggested_accept_pct, suggested_satisfaction, impact, confidence } = rec
+
+  const improvePct = (suggested_accept_pct - current_accept_pct).toFixed(1)
+  const csatWarning = suggested_satisfaction != null && current_satisfaction != null && suggested_satisfaction < current_satisfaction
+
+  return (
+    <div className="rounded-xl border border-slate-700/50 bg-slate-900/60 overflow-hidden hover:border-slate-600/50 transition-colors">
+      {/* Header */}
+      <button onClick={onToggle} className="w-full text-left px-5 py-4 flex items-start gap-4">
+        <div className="flex-shrink-0 mt-0.5">
+          <ArrowRightLeft className="w-5 h-5 text-amber-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-white font-semibold">{zone}</span>
+            {confidence === 'high' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium uppercase">High confidence</span>
+            )}
+            {csatWarning && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium uppercase flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Lower CSAT
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">
+            <span className="text-red-400 font-medium">{current_primary}</span> is the current primary garage but only accepts{' '}
+            <span className="text-red-400 font-semibold">{current_accept_pct}%</span> of calls.{' '}
+            <span className="text-emerald-400 font-medium">{suggested_primary}</span> accepts{' '}
+            <span className="text-emerald-400 font-semibold">{suggested_accept_pct}%</span>{' '}
+            — that's <span className="text-white font-semibold">+{improvePct}%</span> better.
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            Swapping would avoid ~<span className="text-brand-300 font-medium">{impact.cascades_avoided}</span> cascades
+            and save ~<span className="text-brand-300 font-medium">{Math.round(impact.minutes_saved / 60)}</span> hours of member wait time per month.
+          </p>
+        </div>
+        <div className="flex-shrink-0">
+          {expanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+        </div>
+      </button>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="px-5 pb-5 pt-0 border-t border-slate-800">
+          {/* Current vs Suggested */}
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-4 mt-4 items-center">
+            {/* Current */}
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <div className="text-[10px] text-red-400 uppercase tracking-wider font-semibold mb-2">Today — Current Primary</div>
+              <div className="text-white font-semibold">{current_primary}</div>
+              <div className="mt-2 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Accept Rate</span>
+                  {pctBadge(current_accept_pct, 75)}
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">CSAT Score</span>
+                  {csatBadge(current_satisfaction)}
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Monthly Volume</span>
+                  <span className="text-slate-300 font-medium">{impact.primary_volume.toLocaleString()} calls</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Arrow */}
+            <div className="hidden md:flex flex-col items-center gap-1">
+              <ArrowRight className="w-6 h-6 text-amber-400" />
+              <span className="text-[10px] text-amber-400 font-medium">SWAP</span>
+            </div>
+
+            {/* Suggested */}
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <div className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold mb-2">Recommended — New Primary</div>
+              <div className="text-white font-semibold">{suggested_primary}</div>
+              <div className="mt-2 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Accept Rate</span>
+                  {pctBadge(suggested_accept_pct, 75)}
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">CSAT Score</span>
+                  {csatBadge(suggested_satisfaction)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Impact numbers */}
+          <div className="mt-4 flex flex-wrap gap-3">
+            {impactTag(impact.cascades_avoided, 'fewer cascades/mo', 'text-emerald-400')}
+            {impactTag(Math.round(impact.minutes_saved / 60), 'hours saved/mo', 'text-brand-300')}
+            {impactTag(impact.cnw_avoided, 'fewer CNW/mo', 'text-amber-400')}
+          </div>
+
+          {/* Action text */}
+          <div className="mt-4 rounded-lg bg-slate-800/60 p-3 border border-slate-700/30">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Recommended Action</div>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              In the <span className="text-white font-medium">Territory Priority Matrix</span> for zone{' '}
+              <span className="text-white font-medium">{zone}</span>, move{' '}
+              <span className="text-emerald-400 font-medium">{suggested_primary}</span> to the primary position (rank 2)
+              and move <span className="text-red-400 font-medium">{current_primary}</span> down to a backup position.
+              {csatWarning && (
+                <span className="text-amber-400"> Note: {suggested_primary} has a lower customer satisfaction score
+                  ({suggested_satisfaction}% vs {current_satisfaction}%) — verify service quality before making this change.</span>
+              )}
+              {!csatWarning && suggested_satisfaction != null && current_satisfaction != null && suggested_satisfaction >= current_satisfaction && (
+                <span className="text-emerald-400"> {suggested_primary} also has equal or better customer satisfaction
+                  ({suggested_satisfaction}% vs {current_satisfaction}%), further supporting this change.</span>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ZoneHealthRow({ zone, expanded, onToggle }) {
+  const { zone: name, primary_garage, primary_accept_pct, primary_volume,
+    cascade_pct, chain } = zone
+
+  const healthy = primary_accept_pct != null && primary_accept_pct >= 75
+  return (
+    <div className={`rounded-lg border ${healthy ? 'border-slate-800' : 'border-amber-500/20'} bg-slate-900/40 overflow-hidden`}>
+      <button onClick={onToggle} className="w-full text-left px-4 py-3 flex items-center gap-3 text-sm">
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+        <span className="text-slate-300 font-medium flex-1 truncate">{name}</span>
+        <span className="text-slate-500 text-xs hidden sm:inline">{primary_garage}</span>
+        <span className="w-14 text-right">{pctBadge(primary_accept_pct, 75)}</span>
+        <span className="w-14 text-right text-slate-400 text-xs">{primary_volume?.toLocaleString() || '—'}</span>
+        <span className="w-10 text-right">{pctBadge(cascade_pct, 20, true)}</span>
+        {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-600" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-600" />}
+      </button>
+      {expanded && chain && chain.length > 0 && (
+        <div className="px-4 pb-3 border-t border-slate-800">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-2 mb-1.5">Cascade Chain</div>
+          <div className="space-y-1">
+            {chain.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="w-8 text-slate-600 text-right">#{c.rank}</span>
+                <span className={`flex-1 ${i === 0 ? 'text-white font-medium' : 'text-slate-400'}`}>{c.garage}</span>
+                <span className="w-12 text-right">{pctBadge(c.accept_pct, 75)}</span>
+                <span className="text-slate-600 w-16 text-right">{c.total?.toLocaleString()} calls</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HowItWorks({ onClose }) {
+  return (
+    <div className="rounded-xl border border-slate-700/50 bg-slate-900/80 p-6 mb-6">
+      <div className="flex items-start justify-between mb-4">
+        <h3 className="text-white font-semibold">How Matrix Advisor Works</h3>
+        <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-4 h-4" /></button>
+      </div>
+      <div className="space-y-3 text-sm text-slate-400 leading-relaxed">
+        <div>
+          <span className="text-brand-300 font-semibold">Purpose:</span>{' '}
+          The Territory Priority Matrix defines which garage handles calls first in each dispatch zone.
+          When the primary garage declines, calls cascade to the next garage in the chain — adding ~8 minutes of member wait time per step.
+          This page analyzes decline patterns and recommends where to re-order the matrix to reduce cascades.
+        </div>
+        <div>
+          <span className="text-brand-300 font-semibold">What to look for:</span>{' '}
+          Zones where the primary garage has a low accept rate (&lt;75%) but another garage in the same chain has a much higher
+          accept rate. Swapping their positions in the matrix means more calls get accepted on the first try.
+        </div>
+        <div>
+          <span className="text-brand-300 font-semibold">How recommendations work:</span>{' '}
+          A swap is recommended when the primary garage accepts less than 75% of calls, and another garage in the chain
+          accepts 10%+ more, with at least 10 calls to back it up. Customer satisfaction (CSAT) is shown as a safety check —
+          if the suggested garage has worse satisfaction, you'll see a warning.
+        </div>
+        <div>
+          <span className="text-brand-300 font-semibold">Decisions you can make:</span>{' '}
+          Update the Territory Priority Matrix in Salesforce to swap the primary garage for flagged zones.
+          Review each recommendation — check the accept rate improvement, time saved, and CSAT scores before acting.
+          This should be reviewed monthly after each period closes.
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function MatrixAdvisor() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [period, setPeriod] = useState('2026-02')
-  const [tab, setTab] = useState('cascade')
+  const [expandedRec, setExpandedRec] = useState(null)
   const [expandedZone, setExpandedZone] = useState(null)
-  const [expandedGarage, setExpandedGarage] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [showAllZones, setShowAllZones] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -25,8 +240,9 @@ export default function MatrixAdvisor() {
     try {
       const d = await fetchMatrixHealth(period)
       setData(d)
-    } catch (e) {
-      setError('Failed to load matrix data')
+      if (d.recommendations?.length > 0) setExpandedRec(0)
+    } catch {
+      setError('Failed to load matrix data. The first load may take 15-20 seconds.')
     } finally {
       setLoading(false)
     }
@@ -34,580 +250,168 @@ export default function MatrixAdvisor() {
 
   useEffect(() => { load() }, [load])
 
-  if (loading && !data) {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-brand-400" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <Loader2 className="w-8 h-8 text-brand-400 animate-spin" />
+        <p className="text-slate-500 text-sm">Loading matrix analysis... first load may take 15-20s</p>
       </div>
     )
   }
 
-  if (error && !data) {
+  if (error) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto mb-3" />
-          <p className="text-slate-400">{error}</p>
-          <button onClick={load} className="mt-3 px-4 py-2 bg-brand-600 rounded-lg text-sm">Retry</button>
-        </div>
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <AlertTriangle className="w-8 h-8 text-red-400" />
+        <p className="text-red-400 text-sm">{error}</p>
+        <button onClick={load} className="text-brand-400 text-sm hover:underline">Retry</button>
       </div>
     )
   }
 
-  const summary = data?.summary || {}
+  const recs = data?.recommendations || []
   const zones = data?.zones || []
-  const garages = data?.garages || []
-  const recommendations = data?.recommendations || []
-  const cascadeDepth = data?.cascade_depth || []
+  const summary = data?.summary || {}
+  const problemZones = zones.filter(z => z.primary_accept_pct != null && z.primary_accept_pct < 75)
+  const healthyZones = zones.filter(z => z.primary_accept_pct == null || z.primary_accept_pct >= 75)
+  const displayZones = showAllZones ? zones : problemZones.slice(0, 15)
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-brand-600/20 flex items-center justify-center">
-            <GitBranch className="w-5 h-5 text-brand-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-white">Matrix Advisor</h1>
-            <p className="text-xs text-slate-500">
-              Priority matrix cascade analysis — are calls going to the right garages?
-            </p>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <ArrowRightLeft className="w-6 h-6 text-brand-400" />
+            Matrix Advisor
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Priority matrix adjustment recommendations — reviewed {today}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          {loading && <Loader2 className="w-4 h-4 animate-spin text-brand-400" />}
+        <div className="flex items-center gap-3">
           <button onClick={() => setShowHelp(!showHelp)}
-            className={`p-1.5 rounded-lg transition-colors ${showHelp ? 'text-brand-400 bg-brand-600/20' : 'text-slate-600 hover:text-slate-400'}`}
-            title="How it Works">
+            className="p-2 rounded-lg text-slate-500 hover:text-brand-400 hover:bg-slate-800 transition-all"
+            title="How it works">
             <HelpCircle className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg p-1">
+            {PERIODS.map(p => (
+              <button key={p.key} onClick={() => setPeriod(p.key)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  period === p.key ? 'bg-brand-600/20 text-brand-300' : 'text-slate-500 hover:text-white'
+                }`}>
+                <Calendar className="w-3 h-3 inline mr-1 -mt-0.5" />{p.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={load} className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-all">
+            <RefreshCw className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Period selector */}
-      <div className="flex items-center gap-2">
-        <div className="flex items-center bg-slate-800/50 rounded-lg p-0.5">
-          {PERIODS.map(p => (
-            <button key={p.key} onClick={() => setPeriod(p.key)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                period === p.key ? 'bg-brand-600/20 text-brand-300' : 'text-slate-500 hover:text-white'
-              }`}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {data?.computed_at && (
-          <span className="text-[10px] text-slate-600 ml-auto">
-            Computed {new Date(data.computed_at).toLocaleTimeString()}
+      {showHelp && <HowItWorks onClose={() => setShowHelp(false)} />}
+
+      {/* Summary bar */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {[
+          { label: 'Zones Analyzed', value: summary.zones_analyzed, color: 'text-white' },
+          { label: 'Total Calls', value: summary.total_calls?.toLocaleString(), color: 'text-white' },
+          { label: 'Total Declined', value: summary.total_declined?.toLocaleString(), color: 'text-red-400' },
+          { label: 'Problem Zones', value: problemZones.length, color: problemZones.length > 0 ? 'text-amber-400' : 'text-emerald-400' },
+          { label: 'Recommendations', value: recs.length, color: recs.length > 0 ? 'text-brand-300' : 'text-slate-400' },
+        ].map((s, i) => (
+          <div key={i} className="rounded-lg bg-slate-900/60 border border-slate-800 px-4 py-3">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider">{s.label}</div>
+            <div className={`text-xl font-bold mt-1 ${s.color}`}>{s.value ?? '—'}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Recommendations */}
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+          <TrendingDown className="w-5 h-5 text-amber-400" />
+          Recommended Matrix Adjustments
+          <span className="text-xs text-slate-500 font-normal ml-2">
+            {recs.length === 0 ? 'No adjustments needed this period' : `${recs.length} zone${recs.length > 1 ? 's' : ''} flagged`}
           </span>
+        </h2>
+
+        {recs.length === 0 ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-8 text-center">
+            <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+            <p className="text-slate-400">All zones are performing well — no matrix adjustments recommended for this period.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {recs.map((rec, i) => (
+              <RecommendationCard
+                key={i}
+                rec={rec}
+                expanded={expandedRec === i}
+                onToggle={() => setExpandedRec(expandedRec === i ? null : i)}
+              />
+            ))}
+          </div>
         )}
       </div>
 
-      {/* How it Works */}
-      {showHelp && <HowItWorks onClose={() => setShowHelp(false)} />}
+      {/* Zone Overview */}
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-slate-500" />
+          Zone Health Overview
+          <span className="text-xs text-slate-500 font-normal ml-2">
+            {problemZones.length} problem zone{problemZones.length !== 1 ? 's' : ''} • {healthyZones.length} healthy
+          </span>
+        </h2>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <SummaryCard label="Total Calls" value={summary.total_calls?.toLocaleString()} />
-        <SummaryCard label="Total Declined" value={summary.total_declined?.toLocaleString()}
-          color={summary.total_declined > 1000 ? 'text-red-400' : 'text-amber-400'} />
-        <SummaryCard label="Could Not Wait" value={summary.total_cnw?.toLocaleString()}
-          color={summary.total_cnw > 500 ? 'text-red-400' : 'text-amber-400'} />
-        <SummaryCard label="Garages" value={summary.garages_analyzed} />
-        <SummaryCard label="Recommendations" value={summary.recommendations_count}
-          color={summary.recommendations_count > 0 ? 'text-amber-400' : 'text-emerald-400'} />
-      </div>
-
-      {/* Cascade depth distribution bar */}
-      {cascadeDepth.length > 0 && (
-        <div className="glass rounded-xl p-3">
-          <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Cascade Depth Distribution</h3>
-          <div className="flex items-end gap-1 h-12">
-            {cascadeDepth.filter(d => d.rank <= 8).map(d => {
-              const maxCount = Math.max(...cascadeDepth.map(x => x.count))
-              const pct = d.count / maxCount
-              return (
-                <div key={d.rank} className="flex-1 flex flex-col items-center gap-0.5 group relative">
-                  <div className="w-full rounded-t" style={{
-                    height: `${Math.max(pct * 48, 2)}px`,
-                    backgroundColor: d.rank <= 2 ? 'rgb(99 102 241 / 0.5)' : d.rank <= 4 ? 'rgb(245 158 11 / 0.4)' : 'rgb(239 68 68 / 0.4)',
-                  }} />
-                  <span className="text-[8px] text-slate-600">{d.rank === 2 ? 'Primary' : `R${d.rank}`}</span>
-                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-[9px] text-white px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
-                    Rank {d.rank}: {d.count.toLocaleString()} SAs
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+        {/* Column headers */}
+        <div className="flex items-center gap-3 px-4 py-2 text-[10px] text-slate-600 uppercase tracking-wider">
+          <span className="w-2" />
+          <span className="flex-1">Zone</span>
+          <span className="text-xs hidden sm:inline text-slate-600 flex-shrink-0">Primary Garage</span>
+          <span className="w-14 text-right">Accept</span>
+          <span className="w-14 text-right">Volume</span>
+          <span className="w-10 text-right">Cascade</span>
+          <span className="w-3.5" />
         </div>
-      )}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-slate-800/50 pb-0.5">
-        {[
-          ['cascade', 'Zone Health', zones.length],
-          ['garages', 'Garage Performance', garages.length],
-          ['recommendations', 'Recommendations', recommendations.length],
-        ].map(([key, label, count]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`px-4 py-2 text-xs font-medium transition-colors rounded-t-lg ${
-              tab === key ? 'bg-slate-800/50 text-white border-b-2 border-brand-400' : 'text-slate-500 hover:text-white'
-            }`}>
-            {label} {count > 0 && <span className="text-slate-600 ml-1">({count})</span>}
+        <div className="space-y-1.5">
+          {displayZones.map((z, i) => (
+            <ZoneHealthRow
+              key={i}
+              zone={z}
+              expanded={expandedZone === i}
+              onToggle={() => setExpandedZone(expandedZone === i ? null : i)}
+            />
+          ))}
+        </div>
+
+        {!showAllZones && zones.length > 15 && (
+          <button onClick={() => setShowAllZones(true)}
+            className="mt-3 text-sm text-brand-400 hover:text-brand-300 transition-colors">
+            Show all {zones.length} zones →
           </button>
-        ))}
+        )}
+        {showAllZones && zones.length > 15 && (
+          <button onClick={() => setShowAllZones(false)}
+            className="mt-3 text-sm text-brand-400 hover:text-brand-300 transition-colors">
+            Show problem zones only
+          </button>
+        )}
       </div>
 
-      {/* Tab content */}
-      {tab === 'cascade' && <CascadeTab zones={zones} expandedZone={expandedZone} setExpandedZone={setExpandedZone} />}
-      {tab === 'garages' && <GaragesTab garages={garages} expandedGarage={expandedGarage} setExpandedGarage={setExpandedGarage} />}
-      {tab === 'recommendations' && <RecommendationsTab recommendations={recommendations} />}
-    </div>
-  )
-}
-
-
-function SummaryCard({ label, value, color = 'text-white' }) {
-  return (
-    <div className="glass rounded-xl p-3">
-      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className={`text-lg font-bold ${color}`}>{value ?? '—'}</div>
-    </div>
-  )
-}
-
-
-function CascadeTab({ zones, expandedZone, setExpandedZone }) {
-  const [sortBy, setSortBy] = useState('cascade')
-
-  const sorted = [...zones].sort((a, b) => {
-    if (sortBy === 'cascade') return b.cascade_pct - a.cascade_pct
-    if (sortBy === 'volume') return b.primary_volume - a.primary_volume
-    if (sortBy === 'accept') return (a.primary_accept_pct ?? 999) - (b.primary_accept_pct ?? 999)
-    if (sortBy === 'cnw') return b.cnw - a.cnw
-    return 0
-  })
-
-  if (!zones.length) return <div className="text-center text-slate-600 py-12">No zone data for this period</div>
-
-  return (
-    <div className="space-y-2">
-      {/* Sort controls */}
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[10px] text-slate-600 uppercase">Sort:</span>
-        {[['cascade', 'Decline %'], ['volume', 'Volume'], ['cnw', 'CNW'], ['accept', 'Accept %']].map(([key, label]) => (
-          <button key={key} onClick={() => setSortBy(key)}
-            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-              sortBy === key ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-white'
-            }`}>{label}</button>
-        ))}
-      </div>
-
-      {/* Header row */}
-      <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10px] text-slate-600 uppercase tracking-wider">
-        <div className="col-span-2">Zone</div>
-        <div className="col-span-3">Primary Garage</div>
-        <div className="col-span-1 text-right">Accept %</div>
-        <div className="col-span-1 text-right">Volume</div>
-        <div className="col-span-1 text-right">Declined</div>
-        <div className="col-span-1 text-right">Decline %</div>
-        <div className="col-span-1 text-right">Delay</div>
-        <div className="col-span-1 text-right">CNW</div>
-        <div className="col-span-1"></div>
-      </div>
-
-      {sorted.map(z => {
-        const expanded = expandedZone === z.zone
-        const acceptColor = z.primary_accept_pct == null ? 'text-slate-600' :
-          z.primary_accept_pct >= 80 ? 'text-emerald-400' :
-          z.primary_accept_pct >= 60 ? 'text-amber-400' : 'text-red-400'
-
-        return (
-          <div key={z.zone} className={`glass rounded-xl overflow-hidden ${z.cascade_pct > 10 ? 'border border-amber-500/20' : ''}`}>
-            <button onClick={() => setExpandedZone(expanded ? null : z.zone)}
-              className="w-full grid grid-cols-12 gap-2 px-4 py-3 text-left hover:bg-slate-800/30 transition-colors items-center">
-              <div className="col-span-2 text-sm font-medium text-white truncate">{z.zone}</div>
-              <div className="col-span-3 text-xs text-slate-400 truncate">{z.primary_garage}</div>
-              <div className={`col-span-1 text-right text-xs font-bold ${acceptColor}`}>
-                {z.primary_accept_pct != null ? `${z.primary_accept_pct}%` : '—'}
-              </div>
-              <div className="col-span-1 text-right text-xs text-slate-400">{z.primary_volume?.toLocaleString()}</div>
-              <div className="col-span-1 text-right text-xs text-slate-400">{z.primary_declined}</div>
-              <div className={`col-span-1 text-right text-xs font-bold ${
-                z.cascade_pct > 10 ? 'text-red-400' : z.cascade_pct > 5 ? 'text-amber-400' : 'text-slate-400'
-              }`}>{z.cascade_pct}%</div>
-              <div className="col-span-1 text-right text-xs text-slate-500">
-                {z.cascade_delay_min != null ? `${z.cascade_delay_min}m` : '—'}
-              </div>
-              <div className={`col-span-1 text-right text-xs ${z.cnw > 10 ? 'text-red-400 font-bold' : 'text-slate-500'}`}>
-                {z.cnw}
-              </div>
-              <div className="col-span-1 text-right text-slate-600">
-                {expanded ? <ChevronUp className="w-3.5 h-3.5 inline" /> : <ChevronDown className="w-3.5 h-3.5 inline" />}
-              </div>
-            </button>
-
-            {expanded && z.chain && (
-              <div className="px-4 pb-4 border-t border-slate-800/50 pt-3">
-                <h4 className="text-xs font-semibold text-slate-400 mb-2">Priority Matrix Chain</h4>
-                <div className="space-y-1.5">
-                  {z.chain.map((c, i) => (
-                    <div key={i} className="flex items-center gap-3 text-xs">
-                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                        i === 0 ? 'bg-brand-600/20 text-brand-400' : 'bg-slate-800 text-slate-500'
-                      }`}>{Math.round(c.rank)}</span>
-                      <span className="text-slate-300 flex-1 truncate">{c.garage}</span>
-                      <span className={`font-medium ${
-                        c.accept_pct == null ? 'text-slate-600' :
-                        c.accept_pct >= 80 ? 'text-emerald-400' :
-                        c.accept_pct >= 60 ? 'text-amber-400' : 'text-red-400'
-                      }`}>{c.accept_pct != null ? `${c.accept_pct}% accept` : 'no data'}</span>
-                      <span className="text-slate-600">{c.total.toLocaleString()} calls</span>
-                      {c.declined > 0 && <span className="text-red-400/70">{c.declined} declined</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-
-function GaragesTab({ garages, expandedGarage, setExpandedGarage }) {
-  const [sortBy, setSortBy] = useState('total')
-
-  const sorted = [...garages].sort((a, b) => {
-    if (sortBy === 'total') return b.total - a.total
-    if (sortBy === 'accept') return (a.accept_pct ?? 999) - (b.accept_pct ?? 999)
-    if (sortBy === 'cnw') return b.cnw - a.cnw
-    if (sortBy === 'declined') return b.declined - a.declined
-    return 0
-  })
-
-  return (
-    <div className="space-y-2">
-      {/* Sort controls */}
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[10px] text-slate-600 uppercase">Sort:</span>
-        {[['total', 'Volume'], ['declined', 'Declines'], ['cnw', 'CNW'], ['accept', 'Accept %']].map(([key, label]) => (
-          <button key={key} onClick={() => setSortBy(key)}
-            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-              sortBy === key ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-white'
-            }`}>{label}</button>
-        ))}
-      </div>
-
-      {sorted.map(g => {
-        const expanded = expandedGarage === g.name
-        const acceptColor = g.accept_pct == null ? 'text-slate-600' :
-          g.accept_pct >= 80 ? 'text-emerald-400' :
-          g.accept_pct >= 60 ? 'text-amber-400' : 'text-red-400'
-
-        return (
-          <div key={g.name} className="glass rounded-xl overflow-hidden">
-            <button onClick={() => setExpandedGarage(expanded ? null : g.name)}
-              className="w-full px-4 py-3 flex items-center gap-4 text-left hover:bg-slate-800/30 transition-colors">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-white truncate">{g.name}</span>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                    g.dispatch_method === 'Field Services'
-                      ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
-                      : 'bg-slate-700/50 text-slate-500'
-                  }`}>{g.dispatch_method === 'Field Services' ? 'Fleet' : 'Contractor'}</span>
-                </div>
-                <div className="text-[10px] text-slate-500 flex items-center gap-3 mt-0.5">
-                  <span>{g.total.toLocaleString()} calls</span>
-                  <span>{g.completion_pct}% completed</span>
-                  {g.avg_pta && <span>PTA {g.avg_pta}m</span>}
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <div className={`text-xs font-bold ${acceptColor}`}>
-                    {g.accept_pct != null ? `${g.accept_pct}%` : '—'}
-                  </div>
-                  <div className="text-[9px] text-slate-600">accept</div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-xs font-bold ${g.decline_pct > 5 ? 'text-red-400' : 'text-slate-400'}`}>
-                    {g.declined} <span className="text-[9px] text-slate-600">({g.decline_pct}%)</span>
-                  </div>
-                  <div className="text-[9px] text-slate-600">declined</div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-xs font-bold ${g.cnw_pct > 5 ? 'text-red-400' : 'text-slate-400'}`}>
-                    {g.cnw} <span className="text-[9px] text-slate-600">({g.cnw_pct}%)</span>
-                  </div>
-                  <div className="text-[9px] text-slate-600">CNW</div>
-                </div>
-                {g.satisfaction_pct != null && (
-                  <div className="text-right">
-                    <div className={`text-xs font-bold ${
-                      g.satisfaction_pct >= 82 ? 'text-emerald-400' :
-                      g.satisfaction_pct >= 70 ? 'text-amber-400' : 'text-red-400'
-                    }`}>
-                      {g.satisfaction_pct}%
-                    </div>
-                    <div className="text-[9px] text-slate-600">CSAT</div>
-                  </div>
-                )}
-                <div className="text-slate-600">
-                  {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                </div>
-              </div>
-            </button>
-
-            {expanded && (
-              <div className="px-4 pb-4 border-t border-slate-800/50 pt-3 space-y-4">
-                {/* Decline reasons */}
-                {g.top_decline_reasons?.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-semibold text-slate-400 mb-2">Top Decline Reasons</h4>
-                    <div className="space-y-1.5">
-                      {g.top_decline_reasons.map((d, i) => {
-                        const pct = g.declined > 0 ? Math.round(100 * d.count / g.declined) : 0
-                        return (
-                          <div key={i} className="flex items-center gap-2 text-xs">
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-0.5">
-                                <span className="text-slate-300">{d.reason}</span>
-                                <span className="text-slate-500">{d.count} ({pct}%)</span>
-                              </div>
-                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div className="h-full bg-red-500/40 rounded-full" style={{ width: `${pct}%` }} />
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Cancellation reasons */}
-                {g.top_cancel_reasons?.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-semibold text-slate-400 mb-2">Top Cancellation Reasons</h4>
-                    <div className="space-y-1">
-                      {g.top_cancel_reasons.map((c, i) => (
-                        <div key={i} className="flex items-center justify-between text-xs">
-                          <span className="text-slate-400">{c.reason}</span>
-                          <span className="text-slate-500">{c.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Hourly decline heatmap */}
-                {g.hourly_declines && g.hourly_declines.some(v => v > 0) && (
-                  <div>
-                    <h4 className="text-xs font-semibold text-slate-400 mb-2">Decline Pattern by Hour</h4>
-                    <div className="flex gap-0.5">
-                      {g.hourly_declines.map((v, h) => {
-                        const max = Math.max(...g.hourly_declines, 1)
-                        const intensity = v / max
-                        return (
-                          <div key={h} className="flex-1 group relative">
-                            <div className="h-8 rounded-sm" style={{
-                              backgroundColor: v === 0 ? 'rgb(30 41 59 / 0.5)' :
-                                `rgba(239, 68, 68, ${0.15 + intensity * 0.6})`
-                            }} />
-                            <div className="text-[8px] text-slate-600 text-center mt-0.5">
-                              {h % 3 === 0 ? `${h}` : ''}
-                            </div>
-                            {v > 0 && (
-                              <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-[9px] text-white px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                {h}:00 — {v} declines
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div className="flex justify-between text-[8px] text-slate-600 mt-0.5">
-                      <span>12 AM</span>
-                      <span>6 AM</span>
-                      <span>12 PM</span>
-                      <span>6 PM</span>
-                      <span>12 AM</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-
-function HowItWorks({ onClose }) {
-  const Section = ({ title, children }) => (
-    <div className="mb-4 last:mb-0">
-      <h3 className="text-sm font-semibold text-brand-400 mb-1.5">{title}</h3>
-      <div className="text-xs text-slate-400 space-y-1.5 leading-relaxed">{children}</div>
-    </div>
-  )
-
-  return (
-    <div className="glass rounded-xl border border-brand-500/20 p-5 relative">
-      <button onClick={onClose} className="absolute top-3 right-3 text-slate-600 hover:text-white">
-        <X className="w-4 h-4" />
-      </button>
-      <h2 className="text-base font-bold text-white mb-4">How Matrix Advisor Works</h2>
-
-      <Section title="Purpose">
-        <p>The Priority Matrix defines which garage gets called first for each dispatch zone.
-          When the primary garage declines, the call cascades down the chain. Each cascade step
-          adds ~8 minutes of delay for the member waiting on the road.</p>
-        <p>Matrix Advisor analyzes this cascade pattern to find zones where the wrong garage
-          is ranked first — causing unnecessary delays and "Could Not Wait" cancellations.</p>
-      </Section>
-
-      <Section title="Decisions You Can Make">
-        <p><span className="text-white font-medium">1. Identify underperforming primaries</span> — Which garages
-          frequently decline calls when they're the first option? A high decline rate means
-          members wait longer while the call cascades.</p>
-        <p><span className="text-white font-medium">2. Swap priority rankings</span> — If the Rank 3 garage has
-          a 95% accept rate and the primary has 60%, swapping them could eliminate hundreds
-          of cascade steps per month.</p>
-        <p><span className="text-white font-medium">3. Spot decline patterns</span> — The hourly heatmap shows
-          WHEN garages decline most. End-of-shift declines (5-6 PM) suggest capacity issues.
-          Morning declines may signal staffing gaps.</p>
-        <p><span className="text-white font-medium">4. Track CNW correlation</span> — "Could Not Wait" cancellations
-          are members who gave up. High CNW in a zone directly correlates with cascade depth.
-          Fixing the cascade fixes the CNW.</p>
-      </Section>
-
-      <div className="border-t border-slate-800/50 pt-4 mt-4">
-        <Section title="Zone Health Tab">
-          <p>Shows each dispatch zone with its primary garage and priority chain.
-            <span className="text-white"> Decline %</span> = primary garage's decline count / total volume.
-            Click any zone to expand and see the full cascade chain with per-garage accept rates.</p>
-        </Section>
-
-        <Section title="Garage Performance Tab">
-          <p>Ranks all garages by volume, declines, or CNW. Expand any garage to see:</p>
-          <p><span className="text-slate-300">Decline Reasons:</span> Why they declined (End of Shift, Meal Break, etc.) with proportional bars.</p>
-          <p><span className="text-slate-300">Cancellation Reasons:</span> Top member cancellation types.</p>
-          <p><span className="text-slate-300">Hourly Heatmap:</span> When declines happen by hour — darker red = more declines at that hour.</p>
-        </Section>
-
-        <Section title="Recommendations Tab">
-          <p>Auto-generated when a primary garage's accept rate drops below 75% and a better
-            alternative exists in the same zone chain (10%+ higher accept rate, 10+ calls minimum).</p>
-          <p><span className="text-slate-300">Impact metrics:</span></p>
-          <p><span className="text-white">Cascades Avoided</span> = calls that would no longer need to cascade if the swap is made.</p>
-          <p><span className="text-white">Time Saved</span> = cascades avoided x 8 min per cascade step.</p>
-          <p><span className="text-white">CNW Avoided</span> = estimated cancellations prevented (based on zone's CNW rate).</p>
-        </Section>
-
-        <Section title="How Calculations Work">
-          <p><span className="text-slate-300">Primary Garage:</span> The first real garage in the priority matrix chain
-            (skipping placeholders like "LS - LOCKSMITH REQUIRED" or "000-" entries).</p>
-          <p><span className="text-slate-300">Accept Rate:</span> Primary accepted calls / (primary accepted + total declines).
-            Uses ERS_Spotting_Number__c to identify primary accepts — when the spotting number matches the
-            garage's rank in the zone chain, they accepted as primary.</p>
-          <p><span className="text-slate-300">Data Source:</span> 5 parallel Salesforce queries: all SAs for the period,
-            decline reasons (aggregate), cancellation reasons (aggregate), priority matrix configuration,
-            and hourly decline pattern (aggregate).</p>
-          <p><span className="text-slate-300">Caching:</span> Past months are cached for 24 hours (data is immutable).
-            Current month is refreshed every 15 minutes.</p>
-        </Section>
-      </div>
-    </div>
-  )
-}
-
-
-function RecommendationsTab({ recommendations }) {
-  if (!recommendations.length) {
-    return (
-      <div className="text-center py-12">
-        <div className="text-slate-600 text-sm">No recommendations for this period</div>
-        <p className="text-[10px] text-slate-700 mt-1">All primary garages accepting above 75% threshold</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-3">
-      {recommendations.map((r, i) => (
-        <div key={i} className="glass rounded-xl border border-amber-500/20 p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-              <span className="text-sm font-bold text-amber-400">#{i + 1}</span>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-semibold text-white">Swap Primary in {r.zone}</span>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                  r.confidence === 'high'
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                }`}>{r.confidence === 'high' ? 'High Confidence' : 'Medium'}</span>
-              </div>
-
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3 flex-wrap">
-                <span className="text-red-400">{r.current_primary}</span>
-                <span className="text-slate-600">({r.current_accept_pct}% accept{r.current_satisfaction != null ? `, ${r.current_satisfaction}% CSAT` : ''})</span>
-                <ArrowRight className="w-3 h-3 text-slate-600" />
-                <span className="text-emerald-400">{r.suggested_primary}</span>
-                <span className="text-slate-600">({r.suggested_accept_pct}% accept{r.suggested_satisfaction != null ? `, ${r.suggested_satisfaction}% CSAT` : ''})</span>
-                {r.suggested_satisfaction != null && r.current_satisfaction != null && r.suggested_satisfaction < r.current_satisfaction && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                    Lower CSAT
-                  </span>
-                )}
-              </div>
-
-              {/* Impact cards */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-800/50 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <Clock className="w-3 h-3 text-brand-400" />
-                    <span className="text-[9px] text-slate-500 uppercase">Time Saved</span>
-                  </div>
-                  <div className="text-base font-bold text-white">
-                    {r.impact.minutes_saved.toLocaleString()} <span className="text-xs text-slate-500">min</span>
-                  </div>
-                  <div className="text-[9px] text-slate-600">per period</div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <XCircle className="w-3 h-3 text-red-400" />
-                    <span className="text-[9px] text-slate-500 uppercase">CNW Avoided</span>
-                  </div>
-                  <div className="text-base font-bold text-white">
-                    {r.impact.cnw_avoided}
-                  </div>
-                  <div className="text-[9px] text-slate-600">cancellations</div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <TrendingDown className="w-3 h-3 text-emerald-400" />
-                    <span className="text-[9px] text-slate-500 uppercase">Cascades Avoided</span>
-                  </div>
-                  <div className="text-base font-bold text-white">
-                    {r.impact.cascades_avoided}
-                  </div>
-                  <div className="text-[9px] text-slate-600">{r.impact.primary_volume?.toLocaleString()} calls in zone</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ))}
+      {/* Computed timestamp */}
+      {data?.computed_at && (
+        <p className="text-xs text-slate-600 text-right">
+          Analysis computed {new Date(data.computed_at).toLocaleString()}
+        </p>
+      )}
     </div>
   )
 }

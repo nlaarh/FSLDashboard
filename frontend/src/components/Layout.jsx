@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Truck, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, Settings } from 'lucide-react'
+import { Truck, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Settings } from 'lucide-react'
 
 export default function Layout() {
   const { pathname } = useLocation()
@@ -68,6 +68,17 @@ export default function Layout() {
             >
               <CloudSun className="w-4 h-4 inline mr-1.5 -mt-0.5" />
               Forecast
+            </Link>
+            <Link
+              to="/matrix"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/matrix'
+                  ? 'bg-brand-600/20 text-brand-300'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+              Matrix
             </Link>
           </div>
           <div className="ml-auto flex items-center gap-4">

@@ -2660,7 +2660,7 @@ def _matrix_period_bounds(period: str):
         end = first - timedelta(days=1)
         start = end.replace(day=1)
         return start.strftime('%Y-%m-%dT00:00:00Z'), first.strftime('%Y-%m-%dT00:00:00Z'), 86400
-    if period == 'mtd':
+    if period in ('mtd', 'current'):
         start = now.replace(day=1)
         return start.strftime('%Y-%m-%dT00:00:00Z'), now.strftime('%Y-%m-%dT%H:%M:%SZ'), 900
     if period == 'ytd':
