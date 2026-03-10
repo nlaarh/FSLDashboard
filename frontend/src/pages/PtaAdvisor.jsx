@@ -409,8 +409,8 @@ function GarageRow({ garage: g, expanded, onToggle }) {
               if (!p) return null
               const rec = REC_STYLES[p.recommendation] || REC_STYLES.ok
               const queueCount = g.queue_by_type?.[tier] || 0
-              const idleCount = g.drivers.idle_by_tier?.[tier] || 0
-              const busyCount = g.drivers.busy_by_tier?.[tier] || 0
+              const idleCount = g.drivers.capable_idle?.[tier] ?? g.drivers.idle_by_tier?.[tier] ?? 0
+              const busyCount = g.drivers.capable_busy?.[tier] ?? g.drivers.busy_by_tier?.[tier] ?? 0
               return (
                 <div key={tier} className={`rounded-xl border p-3 ${rec.bg} ${rec.border}`}>
                   <div className="flex items-center gap-2 mb-2">
@@ -450,14 +450,23 @@ function GarageRow({ garage: g, expanded, onToggle }) {
                         <span className="text-slate-600">Queue</span>
                         <span className="text-slate-400">{queueCount} calls</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Idle drivers</span>
-                        <span className="text-slate-400">{idleCount}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Busy drivers</span>
-                        <span className="text-slate-400">{busyCount}</span>
-                      </div>
+                      {g.drivers.is_towbook ? (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Active drivers</span>
+                          <span className="text-slate-400">{busyCount} on calls</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Idle drivers</span>
+                            <span className="text-slate-400">{idleCount}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Busy drivers</span>
+                            <span className="text-slate-400">{busyCount}</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
