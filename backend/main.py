@@ -273,6 +273,7 @@ def list_garages():
                 WHERE CreatedDate >= {d28}T00:00:00Z
                   AND ServiceTerritoryId != null
                   AND Status IN ('Dispatched','Completed','Assigned')
+                  AND WorkType.Name != 'Tow Drop-Off'
                 GROUP BY ServiceTerritoryId, ServiceTerritory.Name
                 ORDER BY COUNT(Id) DESC
             """),
@@ -353,6 +354,7 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+                  AND WorkType.Name != 'Tow Drop-Off'
                 GROUP BY WorkType.Name, Status
             """),
             rt=lambda: sf_query_all(f"""
@@ -388,6 +390,7 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
                   AND CreatedDate >= {since}
                   AND ERS_PTA__c != null AND ERS_PTA__c > 0 AND ERS_PTA__c < 999
                   AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+                  AND WorkType.Name != 'Tow Drop-Off'
             """),
             dow=lambda: sf_query_all(f"""
                 SELECT DAY_IN_WEEK(CreatedDate) dow, COUNT(Id) cnt
@@ -395,6 +398,7 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+                  AND WorkType.Name != 'Tow Drop-Off'
                 GROUP BY DAY_IN_WEEK(CreatedDate)
             """),
         )
@@ -712,14 +716,17 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 by_territory[tid].append(sa)
 
         territories = []
-        for tid, sa_list in by_territory.items():
-            st = (sa_list[0].get('ServiceTerritory') or {})
+        for tid, sa_list_raw in by_territory.items():
+            st = (sa_list_raw[0].get('ServiceTerritory') or {})
             t_lat = st.get('Latitude')
             t_lon = st.get('Longitude')
             t_name = st.get('Name') or '?'
             if not t_lat or not t_lon:
                 continue
 
+            # Exclude Tow Drop-Off from counts (paired SAs, not real calls)
+            sa_list = [s for s in sa_list_raw
+                       if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
             total_t = len(sa_list)
             open_list = [s for s in sa_list if s.get('Status') in ('Dispatched', 'Assigned')]
             completed_list = [s for s in sa_list if s.get('Status') == 'Completed']
@@ -773,7 +780,7 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 health_status = 'good'
 
             sa_points = []
-            for s in sa_list:
+            for s in sa_list_raw:
                 lat, lon = s.get('Latitude'), s.get('Longitude')
                 if lat and lon:
                     et = _to_eastern(s.get('CreatedDate'))
@@ -1228,13 +1235,16 @@ def ops_brief():
                                  if _to_eastern(sa.get('CreatedDate'))
                                  and _to_eastern(sa.get('CreatedDate')).hour == current_hour)
 
-        # Parse baseline
+        # Parse baseline — HOUR_IN_DAY returns UTC, convert to Eastern
         hourly_baseline = {}
         for row in baseline_raw:
-            hr = row.get('hr')
+            utc_hr = row.get('hr')
             cnt = row.get('cnt', 0)
-            if hr is not None:
-                hourly_baseline[hr] = round(cnt / 8)  # avg over 8 weeks
+            if utc_hr is not None:
+                # Convert UTC hour to Eastern (DST-aware)
+                ref_utc = now_utc.replace(hour=int(utc_hr), minute=0, second=0, microsecond=0)
+                eastern_hr = ref_utc.astimezone(_ET).hour
+                hourly_baseline[eastern_hr] = hourly_baseline.get(eastern_hr, 0) + round(cnt / 8)  # avg over 8 weeks
 
         normal_for_hour = hourly_baseline.get(current_hour, 0)
         pct_vs_normal = round(100 * (current_hour_calls - normal_for_hour) / max(normal_for_hour, 1)) if normal_for_hour > 0 else 0
@@ -1561,10 +1571,13 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         """),
     )
 
-    sas = data['sas']
-    if not sas:
+    all_sas = data['sas']
+    if not all_sas:
         raise HTTPException(status_code=404, detail="No SAs found for this period")
 
+    # Exclude Tow Drop-Off from all counts (paired SAs, not real calls)
+    sas = [s for s in all_sas
+           if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
     total = len(sas)
     completed = [s for s in sas if s.get('Status') == 'Completed']
 
@@ -2836,6 +2849,10 @@ def _compute_matrix(start_iso: str, end_iso: str):
         tname = (sa.get('ServiceTerritory') or {}).get('Name', '')
         if not tname or _is_placeholder(tname):
             continue
+        # Exclude Tow Drop-Off (paired SAs, not real calls)
+        wt_name = (sa.get('WorkType') or {}).get('Name', '') or ''
+        if 'drop' in wt_name.lower():
+            continue
         g = garage_stats[tname]
         g['total'] += 1
         status_cat = sa.get('StatusCategory', '')
@@ -2933,11 +2950,11 @@ def _compute_matrix(start_iso: str, end_iso: str):
         tname = (st or {}).get('Name', '') if isinstance(st, dict) else ''
         if not tname:
             tname = row.get('Name', '')
-        sat = row.get('ERS_Overall_Satisfaction__c', '')
+        sat = (row.get('ERS_Overall_Satisfaction__c') or '').lower().strip()
         cnt = row.get('cnt') or row.get('expr0') or 0
         if tname:
             survey_by_garage[tname]['total'] += cnt
-            if sat == 'Totally satisfied':
+            if sat == 'totally satisfied':
                 survey_by_garage[tname]['satisfied'] += cnt
 
     # ── Build zone health ──

@@ -826,6 +826,7 @@ def get_forecast(territory_id: str, weeks_history: int = 8):
             WHERE ServiceTerritoryId = '{territory_id}'
               AND CreatedDate >= {since}
               AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+              AND WorkType.Name != 'Tow Drop-Off'
             GROUP BY DAY_IN_WEEK(CreatedDate)
         """)
 

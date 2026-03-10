@@ -67,6 +67,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                                  'Cancel Call - Service Not En Route',
                                  'Cancel Call - Service En Route',
                                  'Unable to Complete','Assigned','No-Show')
+                  AND WorkType.Name != 'Tow Drop-Off'
                 GROUP BY Status
             """),
             # Individual: only Field Services completed with ActualStartTime
@@ -89,6 +90,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND ERS_Cancellation_Reason__c LIKE 'Member Could Not Wait%'
+                  AND WorkType.Name != 'Tow Drop-Off'
             """),
             # Aggregate: decline count
             declines=lambda: sf_query_all(f"""
@@ -97,6 +99,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND ERS_Facility_Decline_Reason__c != null
+                  AND WorkType.Name != 'Tow Drop-Off'
             """),
             # WO numbers for surveys (limited to 1000 most recent)
             wo_nums=lambda: sf_query_all(f"""

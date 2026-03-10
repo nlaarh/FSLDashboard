@@ -194,14 +194,17 @@ def get_ops_territories():
         rank_lookup = matrix['rank_lookup']
 
         territories = []
-        for tid, sa_list in by_territory.items():
-            st = sa_list[0]
+        for tid, sa_list_raw in by_territory.items():
+            st = sa_list_raw[0]
             t_name = (st.get('ServiceTerritory') or {}).get('Name') or '?'
             t_lat = (st.get('ServiceTerritory') or {}).get('Latitude')
             t_lon = (st.get('ServiceTerritory') or {}).get('Longitude')
             if not t_lat or not t_lon:
                 continue
 
+            # Exclude Tow Drop-Off from counts (paired SAs, not real calls)
+            sa_list = [s for s in sa_list_raw
+                       if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
             total = len(sa_list)
             open_list = [s for s in sa_list if s.get('Status') in ('Dispatched', 'Assigned')]
             completed = [s for s in sa_list if s.get('Status') == 'Completed']

@@ -1,9 +1,12 @@
 """Dynamic schedule generation — uses aggregate SOQL for speed (~0.6s)."""
 
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
+
+_ET = ZoneInfo('America/New_York')
 
 # Cycle times (minutes) — verified from 10K+ SA timestamps
 TOW_CYCLE = 115
@@ -40,7 +43,7 @@ def _classify_work_type(wt_name: str | None) -> str | None:
     if not wt_name:
         return None
     lower = wt_name.lower().strip()
-    if lower in SKIP_TYPES:
+    if lower in SKIP_TYPES or 'drop-off' in lower:
         return None
     if lower == 'tow pick-up' or lower == 'tow':
         return 'tow'
@@ -85,6 +88,7 @@ def generate_schedule(territory_id: str, weeks: int = 4,
               AND CreatedDate >= {since}
               AND CreatedDate <= {until}
               AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+              AND WorkType.Name != 'Tow Drop-Off'
             GROUP BY DAY_IN_WEEK(CreatedDate), HOUR_IN_DAY(CreatedDate), WorkType.Name
         """),
         weeks=lambda: sf_query_all(f"""
@@ -94,6 +98,7 @@ def generate_schedule(territory_id: str, weeks: int = 4,
               AND CreatedDate >= {since}
               AND CreatedDate <= {until}
               AND Status IN ('Dispatched','Completed','Canceled','Assigned')
+              AND WorkType.Name != 'Tow Drop-Off'
             GROUP BY WEEK_IN_YEAR(CreatedDate), CALENDAR_YEAR(CreatedDate)
         """),
     )
@@ -128,12 +133,21 @@ def generate_schedule(territory_id: str, weeks: int = 4,
         soql_dow = int(soql_dow)
         utc_hour = int(utc_hour)
 
-        # Convert UTC to Eastern (UTC-5)
-        eastern_hour = (utc_hour - 5) % 24
-        if utc_hour < 5:
-            soql_dow = soql_dow - 1
+        # Convert UTC to Eastern (DST-aware)
+        # Use a representative date in the query range for correct offset
+        ref_date = date.fromisoformat(start_date) if start_date else date.today()
+        utc_dt = datetime(ref_date.year, ref_date.month, ref_date.day,
+                          utc_hour, tzinfo=timezone.utc)
+        eastern_dt = utc_dt.astimezone(_ET)
+        eastern_hour = eastern_dt.hour
+        # If the day shifted (e.g., UTC 3am → ET 11pm previous day)
+        day_offset = (eastern_dt.date() - utc_dt.date()).days
+        if day_offset != 0:
+            soql_dow = soql_dow + day_offset
             if soql_dow < 1:
                 soql_dow = 7
+            elif soql_dow > 7:
+                soql_dow = 1
 
         our_dow = (soql_dow - 2) % 7
 
