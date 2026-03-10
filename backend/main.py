@@ -1559,6 +1559,7 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
             GROUP BY DAY_IN_MONTH(CreatedDate), CALENDAR_MONTH(CreatedDate), Status
         """),
         # SA history: territory assignment sequence (which garage was assigned 1st, 2nd, etc.)
+        # Note: NewValue can't be filtered on History objects — filter in Python
         sa_history=lambda: sf_query_all(f"""
             SELECT ServiceAppointmentId, OldValue, NewValue, CreatedDate
             FROM ServiceAppointmentHistory
@@ -1566,7 +1567,6 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
               AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
               AND ServiceAppointment.CreatedDate >= {since}
               AND ServiceAppointment.CreatedDate < {until}
-              AND NewValue LIKE '0Hh%'
             ORDER BY ServiceAppointmentId, CreatedDate ASC
         """),
     )
@@ -1630,7 +1630,7 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
     sa_territory_order = defaultdict(list)  # sa_id -> [territory_id_1, territory_id_2, ...]
     for h in sa_history:
         sa_id = h.get('ServiceAppointmentId')
-        new_val = h.get('NewValue', '')
+        new_val = h.get('NewValue', '') or ''
         if sa_id and new_val.startswith('0Hh'):
             # Only add if different from last (avoid duplicates from same assignment)
             order = sa_territory_order[sa_id]
