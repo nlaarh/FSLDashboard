@@ -2752,6 +2752,18 @@ def _compute_matrix(start_iso: str, end_iso: str):
             ORDER BY COUNT(Id) DESC
             LIMIT 2000
         """),
+        surveys=lambda: sf_query_all(f"""
+            SELECT ERS_Work_Order__r.ServiceTerritory.Name,
+                   ERS_Overall_Satisfaction__c, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_iso}
+              AND ERS_Work_Order__r.CreatedDate < {end_iso}
+              AND ERS_Overall_Satisfaction__c != null
+              AND ERS_Work_Order__r.ServiceTerritoryId != null
+            GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Overall_Satisfaction__c
+            ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
+            LIMIT 2000
+        """),
     )
 
     sa_list = data['volume']
@@ -2759,6 +2771,7 @@ def _compute_matrix(start_iso: str, end_iso: str):
     cancel_rows = data['cancellations']
     matrix_rows = data['matrix']
     hour_decline_rows = data['hour_decline']
+    survey_rows = data['surveys']
 
     # ── Build priority matrix lookup FIRST (needed for primary detection) ──
     zone_chains = defaultdict(list)
@@ -2892,6 +2905,24 @@ def _compute_matrix(start_iso: str, end_iso: str):
         if tname:
             hour_decline_by_garage[tname][int(hr)] += cnt
 
+    # Survey satisfaction by garage
+    # KPI = "% Totally Satisfied" (accreditation metric)
+    survey_by_garage = defaultdict(lambda: {'total': 0, 'satisfied': 0})
+    for row in survey_rows:
+        st = row.get('ServiceTerritory')
+        if not st:
+            # Aggregate query returns nested under WorkOrder relationship
+            st = (row.get('ERS_Work_Order__r') or {}).get('ServiceTerritory')
+        tname = (st or {}).get('Name', '') if isinstance(st, dict) else ''
+        if not tname:
+            tname = row.get('Name', '')
+        sat = row.get('ERS_Overall_Satisfaction__c', '')
+        cnt = row.get('cnt') or row.get('expr0') or 0
+        if tname:
+            survey_by_garage[tname]['total'] += cnt
+            if sat == 'Totally satisfied':
+                survey_by_garage[tname]['satisfied'] += cnt
+
     # ── Build zone health ──
     # NOTE: We can't map individual SAs to zones (no zone field on SA).
     # Zone metrics use the primary garage's performance as a proxy.
@@ -2950,6 +2981,7 @@ def _compute_matrix(start_iso: str, end_iso: str):
             'cascade_pct': cascade_pct,
             'cascade_delay_min': _CASCADE_STEP_DELAY,
             'cnw': p_cnw,
+            'satisfaction_pct': round(100 * survey_by_garage[p_name]['satisfied'] / survey_by_garage[p_name]['total'], 1) if survey_by_garage[p_name]['total'] >= 5 else None,
             'chain': chain_detail,
         })
 
@@ -2990,6 +3022,8 @@ def _compute_matrix(start_iso: str, end_iso: str):
             'top_decline_reasons': top_declines,
             'top_cancel_reasons': top_cancels,
             'hourly_declines': hour_declines,
+            'satisfaction_pct': round(100 * survey_by_garage[gname]['satisfied'] / survey_by_garage[gname]['total'], 1) if survey_by_garage[gname]['total'] >= 5 else None,
+            'survey_count': survey_by_garage[gname]['total'],
         })
 
     # ── Build recommendations ──
@@ -3019,13 +3053,19 @@ def _compute_matrix(start_iso: str, end_iso: str):
         cnw_rate = zh['cnw'] / max(zh['primary_volume'], 1)
         cnw_avoided = round(cascade_reduction * cnw_rate)
 
+        # Include satisfaction for both current and suggested
+        cur_survey = survey_by_garage.get(zh['primary_garage'], {'total': 0, 'satisfied': 0})
+        alt_survey = survey_by_garage.get(best_alt['garage'], {'total': 0, 'satisfied': 0})
+
         recommendations.append({
             'zone': zh['zone'],
             'type': 'swap_primary',
             'current_primary': zh['primary_garage'],
             'current_accept_pct': zh['primary_accept_pct'],
+            'current_satisfaction': round(100 * cur_survey['satisfied'] / cur_survey['total'], 1) if cur_survey['total'] >= 5 else None,
             'suggested_primary': best_alt['garage'],
             'suggested_accept_pct': best_alt['accept_pct'],
+            'suggested_satisfaction': round(100 * alt_survey['satisfied'] / alt_survey['total'], 1) if alt_survey['total'] >= 5 else None,
             'impact': {
                 'cascades_avoided': cascade_reduction,
                 'minutes_saved': time_saved,

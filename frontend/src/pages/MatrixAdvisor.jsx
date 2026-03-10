@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, AlertTriangle, GitBranch, ChevronDown, ChevronUp, ArrowRight, Clock, XCircle, TrendingDown } from 'lucide-react'
+import { Loader2, AlertTriangle, GitBranch, ChevronDown, ChevronUp, ArrowRight, Clock, XCircle, TrendingDown, HelpCircle, X } from 'lucide-react'
 import { fetchMatrixHealth } from '../api'
 
 const PERIODS = [
@@ -17,6 +17,7 @@ export default function MatrixAdvisor() {
   const [tab, setTab] = useState('cascade')
   const [expandedZone, setExpandedZone] = useState(null)
   const [expandedGarage, setExpandedGarage] = useState(null)
+  const [showHelp, setShowHelp] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,7 +75,14 @@ export default function MatrixAdvisor() {
             </p>
           </div>
         </div>
-        {loading && <Loader2 className="w-4 h-4 animate-spin text-brand-400" />}
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-brand-400" />}
+          <button onClick={() => setShowHelp(!showHelp)}
+            className={`p-1.5 rounded-lg transition-colors ${showHelp ? 'text-brand-400 bg-brand-600/20' : 'text-slate-600 hover:text-slate-400'}`}
+            title="How it Works">
+            <HelpCircle className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Period selector */}
@@ -95,6 +103,9 @@ export default function MatrixAdvisor() {
           </span>
         )}
       </div>
+
+      {/* How it Works */}
+      {showHelp && <HowItWorks onClose={() => setShowHelp(false)} />}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -336,6 +347,17 @@ function GaragesTab({ garages, expandedGarage, setExpandedGarage }) {
                   </div>
                   <div className="text-[9px] text-slate-600">CNW</div>
                 </div>
+                {g.satisfaction_pct != null && (
+                  <div className="text-right">
+                    <div className={`text-xs font-bold ${
+                      g.satisfaction_pct >= 82 ? 'text-emerald-400' :
+                      g.satisfaction_pct >= 70 ? 'text-amber-400' : 'text-red-400'
+                    }`}>
+                      {g.satisfaction_pct}%
+                    </div>
+                    <div className="text-[9px] text-slate-600">CSAT</div>
+                  </div>
+                )}
                 <div className="text-slate-600">
                   {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
@@ -429,6 +451,85 @@ function GaragesTab({ garages, expandedGarage, setExpandedGarage }) {
 }
 
 
+function HowItWorks({ onClose }) {
+  const Section = ({ title, children }) => (
+    <div className="mb-4 last:mb-0">
+      <h3 className="text-sm font-semibold text-brand-400 mb-1.5">{title}</h3>
+      <div className="text-xs text-slate-400 space-y-1.5 leading-relaxed">{children}</div>
+    </div>
+  )
+
+  return (
+    <div className="glass rounded-xl border border-brand-500/20 p-5 relative">
+      <button onClick={onClose} className="absolute top-3 right-3 text-slate-600 hover:text-white">
+        <X className="w-4 h-4" />
+      </button>
+      <h2 className="text-base font-bold text-white mb-4">How Matrix Advisor Works</h2>
+
+      <Section title="Purpose">
+        <p>The Priority Matrix defines which garage gets called first for each dispatch zone.
+          When the primary garage declines, the call cascades down the chain. Each cascade step
+          adds ~8 minutes of delay for the member waiting on the road.</p>
+        <p>Matrix Advisor analyzes this cascade pattern to find zones where the wrong garage
+          is ranked first — causing unnecessary delays and "Could Not Wait" cancellations.</p>
+      </Section>
+
+      <Section title="Decisions You Can Make">
+        <p><span className="text-white font-medium">1. Identify underperforming primaries</span> — Which garages
+          frequently decline calls when they're the first option? A high decline rate means
+          members wait longer while the call cascades.</p>
+        <p><span className="text-white font-medium">2. Swap priority rankings</span> — If the Rank 3 garage has
+          a 95% accept rate and the primary has 60%, swapping them could eliminate hundreds
+          of cascade steps per month.</p>
+        <p><span className="text-white font-medium">3. Spot decline patterns</span> — The hourly heatmap shows
+          WHEN garages decline most. End-of-shift declines (5-6 PM) suggest capacity issues.
+          Morning declines may signal staffing gaps.</p>
+        <p><span className="text-white font-medium">4. Track CNW correlation</span> — "Could Not Wait" cancellations
+          are members who gave up. High CNW in a zone directly correlates with cascade depth.
+          Fixing the cascade fixes the CNW.</p>
+      </Section>
+
+      <div className="border-t border-slate-800/50 pt-4 mt-4">
+        <Section title="Zone Health Tab">
+          <p>Shows each dispatch zone with its primary garage and priority chain.
+            <span className="text-white"> Decline %</span> = primary garage's decline count / total volume.
+            Click any zone to expand and see the full cascade chain with per-garage accept rates.</p>
+        </Section>
+
+        <Section title="Garage Performance Tab">
+          <p>Ranks all garages by volume, declines, or CNW. Expand any garage to see:</p>
+          <p><span className="text-slate-300">Decline Reasons:</span> Why they declined (End of Shift, Meal Break, etc.) with proportional bars.</p>
+          <p><span className="text-slate-300">Cancellation Reasons:</span> Top member cancellation types.</p>
+          <p><span className="text-slate-300">Hourly Heatmap:</span> When declines happen by hour — darker red = more declines at that hour.</p>
+        </Section>
+
+        <Section title="Recommendations Tab">
+          <p>Auto-generated when a primary garage's accept rate drops below 75% and a better
+            alternative exists in the same zone chain (10%+ higher accept rate, 10+ calls minimum).</p>
+          <p><span className="text-slate-300">Impact metrics:</span></p>
+          <p><span className="text-white">Cascades Avoided</span> = calls that would no longer need to cascade if the swap is made.</p>
+          <p><span className="text-white">Time Saved</span> = cascades avoided x 8 min per cascade step.</p>
+          <p><span className="text-white">CNW Avoided</span> = estimated cancellations prevented (based on zone's CNW rate).</p>
+        </Section>
+
+        <Section title="How Calculations Work">
+          <p><span className="text-slate-300">Primary Garage:</span> The first real garage in the priority matrix chain
+            (skipping placeholders like "LS - LOCKSMITH REQUIRED" or "000-" entries).</p>
+          <p><span className="text-slate-300">Accept Rate:</span> Primary accepted calls / (primary accepted + total declines).
+            Uses ERS_Spotting_Number__c to identify primary accepts — when the spotting number matches the
+            garage's rank in the zone chain, they accepted as primary.</p>
+          <p><span className="text-slate-300">Data Source:</span> 5 parallel Salesforce queries: all SAs for the period,
+            decline reasons (aggregate), cancellation reasons (aggregate), priority matrix configuration,
+            and hourly decline pattern (aggregate).</p>
+          <p><span className="text-slate-300">Caching:</span> Past months are cached for 24 hours (data is immutable).
+            Current month is refreshed every 15 minutes.</p>
+        </Section>
+      </div>
+    </div>
+  )
+}
+
+
 function RecommendationsTab({ recommendations }) {
   if (!recommendations.length) {
     return (
@@ -457,12 +558,17 @@ function RecommendationsTab({ recommendations }) {
                 }`}>{r.confidence === 'high' ? 'High Confidence' : 'Medium'}</span>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3 flex-wrap">
                 <span className="text-red-400">{r.current_primary}</span>
-                <span className="text-slate-600">({r.current_accept_pct}% accept)</span>
+                <span className="text-slate-600">({r.current_accept_pct}% accept{r.current_satisfaction != null ? `, ${r.current_satisfaction}% CSAT` : ''})</span>
                 <ArrowRight className="w-3 h-3 text-slate-600" />
                 <span className="text-emerald-400">{r.suggested_primary}</span>
-                <span className="text-slate-600">({r.suggested_accept_pct}% accept)</span>
+                <span className="text-slate-600">({r.suggested_accept_pct}% accept{r.suggested_satisfaction != null ? `, ${r.suggested_satisfaction}% CSAT` : ''})</span>
+                {r.suggested_satisfaction != null && r.current_satisfaction != null && r.suggested_satisfaction < r.current_satisfaction && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    Lower CSAT
+                  </span>
+                )}
               </div>
 
               {/* Impact cards */}
