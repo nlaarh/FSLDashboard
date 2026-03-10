@@ -596,13 +596,22 @@ function HowItWorks({ onClose }) {
         {/* Projection Logic */}
         <div>
           <h3 className="text-sm font-semibold text-white mb-1">How Projections Are Calculated</h3>
-          <p className="text-slate-400 mb-2">The system runs a <strong className="text-slate-300">heap-based FIFO simulation</strong> for each garage, per call type:</p>
-          <ol className="list-decimal list-inside space-y-1 text-slate-400">
-            <li><strong className="text-slate-300">Idle drivers</strong> — If a driver matching this call type is idle, the projected PTA uses the garage's PTA setting scaled by type (Tow: 1.0x, Winch: 0.75x, Battery: 0.65x, Light: 0.7x). This represents dispatch + travel time only.</li>
-            <li><strong className="text-slate-300">Busy drivers</strong> — The system estimates each busy driver's remaining time (based on cycle time minus time already on-site), then simulates draining the queue. Each driver finishes their current job, picks up the next queued call, and so on.</li>
-            <li><strong className="text-slate-300">Queue depth</strong> — Unassigned SAs are counted as queued calls. Assigned (but not yet arrived) SAs count toward the driver's current workload, not the queue.</li>
-            <li><strong className="text-slate-300">Buffer</strong> — A dispatch + travel buffer is added to each call (Tow: 30 min, others: 25 min) to account for the time between a new call arriving and the driver actually reaching the member.</li>
-          </ol>
+          <div className="space-y-2">
+            <div>
+              <p className="text-slate-300 font-medium text-[11px] mb-1">Fleet Garages (Internal Drivers)</p>
+              <p className="text-slate-400 mb-1">Uses a <strong className="text-slate-300">heap-based FIFO simulation</strong> per call type:</p>
+              <ol className="list-decimal list-inside space-y-1 text-slate-400">
+                <li><strong className="text-slate-300">Idle drivers</strong> — If a driver matching this call type is idle, projected PTA uses the garage's setting scaled by type (Tow: 1.0x, Winch: 0.75x, Battery: 0.65x, Light: 0.7x).</li>
+                <li><strong className="text-slate-300">Busy drivers</strong> — Estimates each driver's remaining time (cycle time minus time on-site), then simulates draining the queue. Each driver finishes their job, picks up the next queued call, and so on.</li>
+                <li><strong className="text-slate-300">Queue depth</strong> — Unassigned SAs are queued calls. Assigned SAs count toward the driver's current workload.</li>
+                <li><strong className="text-slate-300">Buffer</strong> — Dispatch + travel buffer added (Tow: 30 min, others: 25 min).</li>
+              </ol>
+            </div>
+            <div>
+              <p className="text-slate-300 font-medium text-[11px] mb-1">Contractor Garages (Towbook)</p>
+              <p className="text-slate-400">Uses the <strong className="text-slate-300">actual PTA from live Service Appointments</strong> (<code className="text-brand-400 bg-slate-800 px-1 rounded">ERS_PTA__c</code>). This is the real promise the dispatch system gave the member. If a garage has open SAs, the projected PTA = average of their ERS_PTA__c values. If no open SAs, falls back to the garage's PTA setting. Drivers are identified from the <code className="text-brand-400 bg-slate-800 px-1 rounded">Off_Platform_Driver__r</code> field on each SA.</p>
+            </div>
+          </div>
         </div>
 
         {/* Driver Skill Hierarchy */}
@@ -638,11 +647,12 @@ function HowItWorks({ onClose }) {
                 <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-slate-700/50 text-slate-500">Contractor</span>
               </div>
               <ul className="text-[10px] text-slate-500 space-y-0.5 list-disc list-inside">
-                <li>External garages (Towbook) — no vehicle login visibility</li>
-                <li>Driver count = unique drivers seen on today's calls</li>
-                <li>Shows drivers seen today + currently active on calls</li>
-                <li>Projection uses garage's PTA setting (no queue simulation)</li>
-                <li>Individual driver names from Off-Platform Driver field</li>
+                <li>External garages dispatched via Towbook</li>
+                <li>Drivers identified from Off_Platform_Driver__r on each SA</li>
+                <li>"Drivers seen today" = unique drivers on today's SAs</li>
+                <li>"Active drivers" = currently on a dispatched call</li>
+                <li>Projected PTA = actual ERS_PTA__c from live SAs (not simulated)</li>
+                <li>Falls back to PTA setting when no open SAs</li>
               </ul>
             </div>
           </div>
