@@ -1,12 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, RefreshCw, ArrowRightLeft, TrendingDown, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, X, Calendar, ArrowRight } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowRightLeft, TrendingDown, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, X, ArrowRight } from 'lucide-react'
 import { fetchMatrixHealth } from '../api'
-
-const PERIODS = [
-  { key: '2026-01', label: 'January 2026' },
-  { key: '2026-02', label: 'February 2026' },
-  { key: 'current', label: 'This Month' },
-]
 
 function pctBadge(val, threshold, inverse = false) {
   if (val == null) return <span className="text-slate-600 text-xs">N/A</span>
@@ -228,7 +222,6 @@ export default function MatrixAdvisor() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [period, setPeriod] = useState('2026-02')
   const [expandedRec, setExpandedRec] = useState(null)
   const [expandedZone, setExpandedZone] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
@@ -238,7 +231,7 @@ export default function MatrixAdvisor() {
     setLoading(true)
     setError(null)
     try {
-      const d = await fetchMatrixHealth(period)
+      const d = await fetchMatrixHealth('last_month')
       setData(d)
       if (d.recommendations?.length > 0) setExpandedRec(0)
     } catch {
@@ -246,7 +239,7 @@ export default function MatrixAdvisor() {
     } finally {
       setLoading(false)
     }
-  }, [period])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -297,16 +290,11 @@ export default function MatrixAdvisor() {
             title="How it works">
             <HelpCircle className="w-4 h-4" />
           </button>
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg p-1">
-            {PERIODS.map(p => (
-              <button key={p.key} onClick={() => setPeriod(p.key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  period === p.key ? 'bg-brand-600/20 text-brand-300' : 'text-slate-500 hover:text-white'
-                }`}>
-                <Calendar className="w-3 h-3 inline mr-1 -mt-0.5" />{p.label}
-              </button>
-            ))}
-          </div>
+          {data?.period && (
+            <span className="text-xs text-slate-500 bg-slate-800/60 px-3 py-1.5 rounded-lg">
+              Last updated: {new Date(data.period.start).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </span>
+          )}
           <button onClick={load} className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-all">
             <RefreshCw className="w-4 h-4" />
           </button>

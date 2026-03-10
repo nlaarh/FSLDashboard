@@ -2396,21 +2396,32 @@ def pta_advisor():
                     else:
                         projected_min = _DEFAULT_PTA.get(call_type, 45)
                 elif capable_busy:
-                    # Simulate: busy drivers become free, serve queued calls, then our new call
-                    heap = [d['remaining_min'] for d in capable_busy]
-                    heapq.heapify(heap)
+                    # For Towbook garages: we only see a fraction of their drivers
+                    # (those currently on an assigned SA). If many drivers were seen
+                    # today but few are currently busy, simulation with just the
+                    # visible busy drivers produces inflated PTAs. Fall back to the
+                    # PTA setting which reflects the garage's actual capacity.
+                    tb_seen = len(tb_drivers_seen) if not has_fleet_drivers else 0
+                    tb_busy = len([d for d in capable_busy if d.get('towbook')])
+                    if not has_fleet_drivers and tb_seen > tb_busy * 3 and current_min:
+                        # Many more drivers exist than we can see — trust PTA setting
+                        projected_min = current_min
+                    else:
+                        # Simulate: busy drivers become free, serve queued calls, then our new call
+                        heap = [d['remaining_min'] for d in capable_busy]
+                        heapq.heapify(heap)
 
-                    # Only UNASSIGNED open calls are true queue items
-                    # (assigned SAs are already in the driver's remaining time)
-                    for oc in open_sas:
-                        if any(_can_serve(d['tier'], oc['tier']) for d in capable_busy):
-                            t = heapq.heappop(heap)
-                            cycle = _CYCLE_TIMES.get(oc['tier'], 40)
-                            heapq.heappush(heap, t + cycle)
+                        # Only UNASSIGNED open calls are true queue items
+                        # (assigned SAs are already in the driver's remaining time)
+                        for oc in open_sas:
+                            if any(_can_serve(d['tier'], oc['tier']) for d in capable_busy):
+                                t = heapq.heappop(heap)
+                                cycle = _CYCLE_TIMES.get(oc['tier'], 40)
+                                heapq.heappush(heap, t + cycle)
 
-                    # Our new call is next
-                    next_free = heapq.heappop(heap) if heap else 0
-                    projected_min = round(next_free + travel)
+                        # Our new call is next
+                        next_free = heapq.heappop(heap) if heap else 0
+                        projected_min = round(next_free + travel)
                 else:
                     # No capable drivers for this call type
                     if not has_fleet_drivers and current_min:
