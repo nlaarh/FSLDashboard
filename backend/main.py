@@ -2410,15 +2410,20 @@ def pta_advisor():
                         projected_min = _DEFAULT_PTA.get(call_type, 45)
                 elif capable_busy:
                     if not has_fleet_drivers:
-                        # Towbook garage: use ERS_PTA__c from live SAs — the actual
-                        # promise the dispatch system gave the member.
-                        live_ptas = [oc['pta_min'] for oc in all_open if oc.get('pta_min')]
-                        if live_ptas:
-                            projected_min = round(sum(live_ptas) / len(live_ptas))
-                        elif current_min:
-                            projected_min = current_min
+                        # Towbook garage: use ERS_PTA__c from live SAs matching
+                        # THIS call type — different types have different PTAs.
+                        # Fall back to all types, then setting, then default.
+                        type_ptas = [oc['pta_min'] for oc in all_open
+                                     if oc.get('pta_min') and oc.get('tier') == call_type]
+                        if type_ptas:
+                            projected_min = round(sum(type_ptas) / len(type_ptas))
                         else:
-                            projected_min = _DEFAULT_PTA.get(call_type, 45)
+                            # No live SAs of this type → use PTA setting or default
+                            if current_min:
+                                type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
+                                projected_min = round(current_min * type_scale.get(call_type, 1.0))
+                            else:
+                                projected_min = _DEFAULT_PTA.get(call_type, 45)
                     else:
                         # Fleet garage: simulate — busy drivers become free,
                         # serve queued calls, then our new call
@@ -2434,13 +2439,15 @@ def pta_advisor():
                         next_free = heapq.heappop(heap) if heap else 0
                         projected_min = round(next_free + travel)
                 else:
-                    # No capable drivers — Towbook: use live PTA or setting
+                    # No capable drivers — Towbook: use type-matched PTA or setting
                     if not has_fleet_drivers:
-                        live_ptas = [oc['pta_min'] for oc in all_open if oc.get('pta_min')]
-                        if live_ptas:
-                            projected_min = round(sum(live_ptas) / len(live_ptas))
+                        type_ptas = [oc['pta_min'] for oc in all_open
+                                     if oc.get('pta_min') and oc.get('tier') == call_type]
+                        if type_ptas:
+                            projected_min = round(sum(type_ptas) / len(type_ptas))
                         elif current_min:
-                            projected_min = current_min
+                            type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
+                            projected_min = round(current_min * type_scale.get(call_type, 1.0))
                         else:
                             projected_min = _DEFAULT_PTA.get(call_type, 45)
                     else:
