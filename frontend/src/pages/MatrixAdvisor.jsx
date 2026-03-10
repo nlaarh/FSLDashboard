@@ -187,7 +187,7 @@ function HowItWorks({ onClose }) {
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/80 p-6 mb-6">
       <div className="flex items-start justify-between mb-4">
-        <h3 className="text-white font-semibold">How Matrix Advisor Works</h3>
+        <h3 className="text-white font-semibold">How Territory Matrix Insight Works</h3>
         <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-4 h-4" /></button>
       </div>
       <div className="space-y-3 text-sm text-slate-400 leading-relaxed">
@@ -279,7 +279,7 @@ export default function MatrixAdvisor() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <ArrowRightLeft className="w-6 h-6 text-brand-400" />
-            Priority Matrix Insight
+            Territory Matrix Insight
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             Recommendations to optimize zone-to-garage assignments — reviewed {today}
