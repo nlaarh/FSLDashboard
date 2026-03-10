@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, Loader2, Clock, AlertTriangle, ArrowUp, ArrowDown, Check, Minus, Truck, Zap, Wrench, ChevronDown, ChevronUp, Shield, Anchor } from 'lucide-react'
+import { RefreshCw, Loader2, Clock, AlertTriangle, ArrowUp, ArrowDown, Check, Minus, Truck, Zap, Wrench, ChevronDown, ChevronUp, Shield, Anchor, HelpCircle, X } from 'lucide-react'
 import { fetchPtaAdvisor, refreshPtaAdvisor, adminGetSettings, adminUpdateSettings } from '../api'
 
 const TIER_ICONS = {
@@ -33,6 +33,7 @@ export default function PtaAdvisor() {
   const [pinAuthed, setPinAuthed] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState(900)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const intervalRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -163,6 +164,11 @@ export default function PtaAdvisor() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowHelp(!showHelp)}
+            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            title="How it works">
+            <HelpCircle className="w-4 h-4" />
+          </button>
           <button onClick={() => setShowSettings(!showSettings)}
             className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
             title="Settings (PIN required)">
@@ -227,6 +233,9 @@ export default function PtaAdvisor() {
           )}
         </div>
       )}
+
+      {/* How It Works panel */}
+      {showHelp && <HowItWorks onClose={() => setShowHelp(false)} />}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -511,6 +520,169 @@ function GarageRow({ garage: g, expanded, onToggle }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+
+function HowItWorks({ onClose }) {
+  return (
+    <div className="glass rounded-xl border border-slate-700/50 p-5 relative">
+      <button onClick={onClose}
+        className="absolute top-3 right-3 p-1 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors">
+        <X className="w-4 h-4" />
+      </button>
+
+      <div className="flex items-center gap-2 mb-4">
+        <HelpCircle className="w-5 h-5 text-brand-400" />
+        <h2 className="text-base font-bold text-white">How PTA Advisor Works</h2>
+      </div>
+
+      <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
+        {/* What is PTA */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">What is PTA?</h3>
+          <p className="text-slate-400">
+            <strong className="text-slate-300">Promised Time to Arrival (PTA)</strong> is the time promised to the member when they call for roadside assistance.
+            Each garage has a PTA setting in Salesforce (<code className="text-brand-400 bg-slate-800 px-1 rounded">ERS_Service_Appointment_PTA__c</code>) that Mulesoft quotes to members.
+            This page projects what the <em>actual</em> wait time would be right now, and compares it to the current setting.
+          </p>
+        </div>
+
+        {/* 4 Call Types */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">4 Call Types</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="bg-slate-800/50 rounded-lg p-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Truck className="w-3.5 h-3.5 text-brand-400" />
+                <span className="font-semibold text-white">Tow</span>
+              </div>
+              <p className="text-[10px] text-slate-500">Tow, Flat Bed, Wheel Lift. Cycle: 115 min. Buffer: 30 min.</p>
+            </div>
+            <div className="bg-slate-800/50 rounded-lg p-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Anchor className="w-3.5 h-3.5 text-purple-400" />
+                <span className="font-semibold text-white">Winch</span>
+              </div>
+              <p className="text-[10px] text-slate-500">Winch Out recovery. Cycle: 40 min. Buffer: 25 min.</p>
+            </div>
+            <div className="bg-slate-800/50 rounded-lg p-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold text-white">Battery</span>
+              </div>
+              <p className="text-[10px] text-slate-500">Battery, Jumpstart. Cycle: 38 min. Buffer: 25 min.</p>
+            </div>
+            <div className="bg-slate-800/50 rounded-lg p-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Wrench className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-semibold text-white">Light</span>
+              </div>
+              <p className="text-[10px] text-slate-500">Tire, Lockout, Fuel, etc. Cycle: 33 min. Buffer: 25 min.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Projection Logic */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">How Projections Are Calculated</h3>
+          <p className="text-slate-400 mb-2">The system runs a <strong className="text-slate-300">heap-based FIFO simulation</strong> for each garage, per call type:</p>
+          <ol className="list-decimal list-inside space-y-1 text-slate-400">
+            <li><strong className="text-slate-300">Idle drivers</strong> — If a driver matching this call type is idle, the projected PTA uses the garage's PTA setting scaled by type (Tow: 1.0x, Winch: 0.75x, Battery: 0.65x, Light: 0.7x). This represents dispatch + travel time only.</li>
+            <li><strong className="text-slate-300">Busy drivers</strong> — The system estimates each busy driver's remaining time (based on cycle time minus time already on-site), then simulates draining the queue. Each driver finishes their current job, picks up the next queued call, and so on.</li>
+            <li><strong className="text-slate-300">Queue depth</strong> — Unassigned SAs are counted as queued calls. Assigned (but not yet arrived) SAs count toward the driver's current workload, not the queue.</li>
+            <li><strong className="text-slate-300">Buffer</strong> — A dispatch + travel buffer is added to each call (Tow: 30 min, others: 25 min) to account for the time between a new call arriving and the driver actually reaching the member.</li>
+          </ol>
+        </div>
+
+        {/* Driver Skill Hierarchy */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Driver Skill Hierarchy</h3>
+          <p className="text-slate-400 mb-2">Drivers are classified by their truck capabilities. Skills overlap — higher-tier drivers can cover lower-tier calls:</p>
+          <div className="bg-slate-800/50 rounded-lg p-3 font-mono text-[10px] text-slate-400">
+            <div><span className="text-brand-400">Tow driver</span> → can do: Tow, Winch, Light, Battery</div>
+            <div><span className="text-emerald-400">Light driver</span> → can do: Winch, Light, Battery</div>
+            <div><span className="text-amber-400">Battery driver</span> → can do: Battery only</div>
+          </div>
+          <p className="text-slate-500 mt-1">An idle tow driver can cover a battery call. This cross-skill capability is factored into projections.</p>
+        </div>
+
+        {/* Fleet vs Contractor */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Fleet vs Contractor Garages</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-brand-500/10 text-brand-400 border border-brand-500/20">Fleet</span>
+              </div>
+              <ul className="text-[10px] text-slate-500 space-y-0.5 list-disc list-inside">
+                <li>Internal AAA drivers with real-time GPS</li>
+                <li>Driver count = logged into a vehicle (Asset table)</li>
+                <li>Shows idle/busy counts and tow-capable driver count</li>
+                <li>Full queue simulation with skill-based projection</li>
+                <li>If no drivers for a call type → shows "No Drivers"</li>
+              </ul>
+            </div>
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-slate-700/50 text-slate-500">Contractor</span>
+              </div>
+              <ul className="text-[10px] text-slate-500 space-y-0.5 list-disc list-inside">
+                <li>External garages (Towbook) — no vehicle login visibility</li>
+                <li>Driver count = unique drivers seen on today's calls</li>
+                <li>Shows drivers seen today + currently active on calls</li>
+                <li>Projection uses garage's PTA setting (no queue simulation)</li>
+                <li>Individual driver names from Off-Platform Driver field</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* Recommendations */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Recommendation Labels</h3>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(REC_STYLES).map(([key, s]) => (
+              <div key={key} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border ${s.bg} ${s.border}`}>
+                <span className={s.text}>{s.icon}</span>
+                <span className={`text-[10px] font-medium ${s.text}`}>{s.label}</span>
+                <span className="text-[10px] text-slate-500">
+                  {key === 'increase' && '— projected > setting, PTA too optimistic'}
+                  {key === 'decrease' && '— projected < setting, PTA could be lowered'}
+                  {key === 'ok' && '— projected ≈ setting, within tolerance'}
+                  {key === 'no_coverage' && '— Fleet garage, no drivers for this type'}
+                  {key === 'no_setting' && '— no PTA configured in Salesforce'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Reading the Cards */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Reading the Garage Cards</h3>
+          <ul className="text-slate-400 space-y-1 list-disc list-inside">
+            <li><strong className="text-slate-300">PTA pills</strong> — Each call type shows: projected time / current setting. Color = recommendation.</li>
+            <li><strong className="text-slate-300">~Xm avg</strong> — Average projected PTA across all call types for that garage.</li>
+            <li><strong className="text-slate-300">Queue depth</strong> — Unassigned SAs waiting for dispatch at this garage.</li>
+            <li><strong className="text-slate-300">Expanded view</strong> — Click a garage to see per-type breakdown, delta from setting, and individual driver queue details.</li>
+            <li><strong className="text-slate-300">Driver Queue</strong> — Shows each busy driver, their skill tier, current job(s), and estimated time remaining.</li>
+          </ul>
+        </div>
+
+        {/* Data Sources */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Data Sources (5 Parallel Salesforce Queries)</h3>
+          <ol className="list-decimal list-inside space-y-0.5 text-slate-500 text-[10px]">
+            <li>Today's ServiceAppointments (with Off-Platform Driver names for Towbook)</li>
+            <li>AssignedResource records (driver-to-SA assignments)</li>
+            <li>Asset table (Fleet drivers logged into vehicles + truck capabilities)</li>
+            <li>ServiceTerritoryMember (driver-to-garage assignments)</li>
+            <li>ERS_Service_Appointment_PTA__c (current PTA settings per garage)</li>
+          </ol>
+        </div>
+      </div>
     </div>
   )
 }

@@ -67,6 +67,10 @@ export const refreshPtaAdvisor = (pin) => api.post('/pta-advisor/refresh', null,
 export const adminGetSettings = (pin) => api.get('/admin/settings', pinHeader(pin)).then(r => r.data)
 export const adminUpdateSettings = (pin, data) => api.put('/admin/settings', data, pinHeader(pin)).then(r => r.data)
 
+// Matrix Advisor
+export const fetchMatrixHealth = (period = 'last_month') =>
+  api.get(`/matrix/health?period=${period}`).then(r => r.data)
+
 // Admin (PIN-protected)
 const pinHeader = (pin) => ({ headers: { 'X-Admin-Pin': pin } })
 export const adminVerify = (pin) => api.post('/admin/verify', null, pinHeader(pin)).then(r => r.data)
