@@ -285,10 +285,10 @@ export default function MatrixAdvisor() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <ArrowRightLeft className="w-6 h-6 text-brand-400" />
-            Matrix Advisor
+            Priority Matrix Insight
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Priority matrix adjustment recommendations — reviewed {today}
+            Recommendations to optimize zone-to-garage assignments — reviewed {today}
           </p>
         </div>
         <div className="flex items-center gap-3">

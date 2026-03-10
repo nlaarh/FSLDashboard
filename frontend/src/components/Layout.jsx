@@ -78,7 +78,7 @@ export default function Layout() {
               }`}
             >
               <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />
-              Matrix
+              Priority Matrix
             </Link>
           </div>
           <div className="ml-auto flex items-center gap-4">
