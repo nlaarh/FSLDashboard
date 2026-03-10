@@ -41,7 +41,13 @@ function RecommendationCard({ rec, expanded, onToggle }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-white font-semibold">{zone}</span>
+            <span className="text-white font-semibold">Zone {zone}</span>
+            <span className="text-slate-600">—</span>
+            <span className="text-red-400 font-medium">{current_primary}</span>
+            <span className="text-slate-500 text-xs">({current_accept_pct}% accept)</span>
+            <ArrowRight className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-emerald-400 font-medium">{suggested_primary}</span>
+            <span className="text-slate-500 text-xs">({suggested_accept_pct}% accept)</span>
             {confidence === 'high' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium uppercase">High confidence</span>
             )}
@@ -52,14 +58,9 @@ function RecommendationCard({ rec, expanded, onToggle }) {
             )}
           </div>
           <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">
-            <span className="text-red-400 font-medium">{current_primary}</span> is the current primary garage but only accepts{' '}
-            <span className="text-red-400 font-semibold">{current_accept_pct}%</span> of calls.{' '}
-            <span className="text-emerald-400 font-medium">{suggested_primary}</span> accepts{' '}
-            <span className="text-emerald-400 font-semibold">{suggested_accept_pct}%</span>{' '}
-            — that's <span className="text-white font-semibold">+{improvePct}%</span> better.
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Swapping would avoid ~<span className="text-brand-300 font-medium">{impact.cascades_avoided}</span> cascades
+            Current primary only accepts <span className="text-red-400 font-semibold">{current_accept_pct}%</span> of calls.{' '}
+            Swapping to <span className="text-emerald-400 font-medium">{suggested_primary}</span> would improve acceptance by{' '}
+            <span className="text-white font-semibold">+{improvePct}%</span>, avoid ~<span className="text-brand-300 font-medium">{impact.cascades_avoided}</span> cascades,
             and save ~<span className="text-brand-300 font-medium">{Math.round(impact.minutes_saved / 60)}</span> hours of member wait time per month.
           </p>
         </div>
@@ -156,8 +157,8 @@ function ZoneHealthRow({ zone, expanded, onToggle }) {
     <div className={`rounded-lg border ${healthy ? 'border-slate-800' : 'border-amber-500/20'} bg-slate-900/40 overflow-hidden`}>
       <button onClick={onToggle} className="w-full text-left px-4 py-3 flex items-center gap-3 text-sm">
         <div className={`w-2 h-2 rounded-full flex-shrink-0 ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-        <span className="text-slate-300 font-medium flex-1 truncate">{name}</span>
-        <span className="text-slate-500 text-xs hidden sm:inline">{primary_garage}</span>
+        <span className="text-slate-300 font-medium w-24 flex-shrink-0">{name}</span>
+        <span className="text-slate-400 text-xs flex-1 truncate">{primary_garage}</span>
         <span className="w-14 text-right">{pctBadge(primary_accept_pct, 75)}</span>
         <span className="w-14 text-right text-slate-400 text-xs">{primary_volume?.toLocaleString() || '—'}</span>
         <span className="w-10 text-right">{pctBadge(cascade_pct, 20, true)}</span>
@@ -361,8 +362,8 @@ export default function MatrixAdvisor() {
         {/* Column headers */}
         <div className="flex items-center gap-3 px-4 py-2 text-[10px] text-slate-600 uppercase tracking-wider">
           <span className="w-2" />
-          <span className="flex-1">Zone</span>
-          <span className="text-xs hidden sm:inline text-slate-600 flex-shrink-0">Primary Garage</span>
+          <span className="w-24 flex-shrink-0">Zone</span>
+          <span className="flex-1">Primary Garage</span>
           <span className="w-14 text-right">Accept</span>
           <span className="w-14 text-right">Volume</span>
           <span className="w-10 text-right">Cascade</span>
