@@ -7,7 +7,7 @@ import QueueBoard from './pages/QueueBoard'
 import Forecast from './pages/Forecast'
 import PtaAdvisor from './pages/PtaAdvisor'
 import Admin from './pages/Admin'
-import MatrixAdvisor from './pages/MatrixAdvisor'
+// import MatrixAdvisor from './pages/MatrixAdvisor'
 
 export default function App() {
   return (
@@ -19,7 +19,7 @@ export default function App() {
         <Route path="/queue" element={<QueueBoard />} />
         <Route path="/pta" element={<PtaAdvisor />} />
         <Route path="/forecast" element={<Forecast />} />
-        <Route path="/matrix" element={<MatrixAdvisor />} />
+        {/* <Route path="/matrix" element={<MatrixAdvisor />} /> */}
         <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
