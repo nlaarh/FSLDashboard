@@ -144,7 +144,7 @@ function buildInsights(perf) {
 
   // Completion
   if (completion.pct < 80) {
-    insights.push({ type: 'critical', text: `Only ${completion.pct}% completion — ${100 - completion.pct}% of calls lost to cancellations/no-shows.` })
+    insights.push({ type: 'critical', text: `Only ${completion.pct}% completion — ${+(100 - completion.pct).toFixed(1)}% of calls lost to cancellations/no-shows.` })
     actions.push({ priority: 'HIGH', text: 'Investigate cancellation reasons. Member canceling (too slow) or facility declining?' })
   } else if (completion.pct < 92) {
     insights.push({ type: 'warn', text: `Completion rate ${completion.pct}% — below 95% target.` })
@@ -160,7 +160,7 @@ function buildInsights(perf) {
       actions.push({ priority: 'HIGH', text: `Close the ${rt.median - 45}-min gap: closest-driver dispatch + reduce queue wait.` })
     } else if (rt.median > 45) {
       insights.push({ type: 'warn', text: `Median response ${rt.median} min — ${rt.median - 45} min over target. ${rt.under_45_pct}% under 45 min.` })
-      actions.push({ priority: 'HIGH', text: `Need ${100 - rt.under_45_pct}% more calls under 45 min. Focus on dispatch queue time.` })
+      actions.push({ priority: 'HIGH', text: `Need ${+(100 - rt.under_45_pct).toFixed(1)}% more calls under 45 min. Focus on dispatch queue time.` })
     } else {
       insights.push({ type: 'good', text: `Median response ${rt.median} min — meeting 45-min target.` })
     }
@@ -169,8 +169,8 @@ function buildInsights(perf) {
     }
   }
 
-  // PTA accuracy
-  if (pts_ata) {
+  // PTA accuracy (promised vs actual arrival)
+  if (pts_ata && pts_ata.on_time_pct != null) {
     if (pts_ata.late_pct > 50) {
       insights.push({ type: 'critical', text: `${pts_ata.late_pct}% of calls arrived late vs. promised ETA (avg ${pts_ata.avg_delta > 0 ? '+' : ''}${pts_ata.avg_delta} min).` })
       actions.push({ priority: 'HIGH', text: 'Dispatch promising unrealistic ETAs. Review PTA values at dispatch time.' })
@@ -183,7 +183,7 @@ function buildInsights(perf) {
 
   // Acceptance
   if (acceptance.primary_total > 0 && acceptance.primary_pct < 70) {
-    insights.push({ type: 'critical', text: `Only ${acceptance.primary_pct}% primary acceptance — declining ${100 - acceptance.primary_pct}% of auto-dispatched work.` })
+    insights.push({ type: 'critical', text: `Only ${acceptance.primary_pct}% primary acceptance — declining ${+(100 - acceptance.primary_pct).toFixed(1)}% of auto-dispatched work.` })
     actions.push({ priority: 'HIGH', text: 'Identify top decline reasons. Driver availability? Truck mismatch?' })
   }
 
@@ -345,8 +345,10 @@ export default function GarageDashboard({ garageId, garageName }) {
   const { insights, actions } = perf ? buildInsights(perf) : { insights: [], actions: [] }
   const rd = decomp?.response_decomposition
   const leaderboard = decomp?.driver_leaderboard || []
+  const missingTruckIdCount = decomp?.missing_truck_id_count || 0
   const declines = decomp?.decline_analysis
   const cancels = decomp?.cancel_analysis
+  const isTowbook = decomp?.garage_type === 'towbook' || scorecard?.garage_type === 'towbook'
 
   const anyLoading = loading.perf || loading.scorecard || loading.score || loading.decomp
   const isFullLoading = loading.perf && !perf
@@ -492,16 +494,19 @@ export default function GarageDashboard({ garageId, garageName }) {
               definition={perf.definitions?.completion_of_accepted} defId="completion_accepted" activeDef={activeDef} setActiveDef={setActiveDef} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
-            <MetricCard label="Median Response" value={perf.response_time.median ? `${perf.response_time.median} min` : 'N/A'} icon={Clock}
-              sub={perf.response_time.total > 0 ? `${perf.response_time.under_45_pct}% under 45 min` : 'Towbook — no arrival data'}
+            <MetricCard label={perf.response_time.metric === 'PTA (promised)' ? 'Median PTA' : 'Median Response'} value={perf.response_time.median ? `${perf.response_time.median} min` : 'N/A'} icon={Clock}
+              sub={perf.response_time.total > 0 ? `${perf.response_time.under_45_pct}% under 45 min${perf.response_time.metric === 'PTA (promised)' ? ' · PTA' : ''}` : 'No arrival data this period'}
               color={perf.response_time.median && perf.response_time.median <= 45 ? 'text-emerald-400' : perf.response_time.median && perf.response_time.median <= 70 ? 'text-amber-400' : !perf.response_time.median ? 'text-slate-500' : 'text-red-400'}
               border={perf.response_time.median && perf.response_time.median <= 45 ? 'border-emerald-800/30' : !perf.response_time.median ? 'border-slate-700/30' : 'border-red-800/30'}
               target="45 min" met={perf.response_time.median && perf.response_time.median <= 45}
               definition={perf.definitions?.median_response} defId="median_response" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard label="ETA Accuracy" value={perf.pts_ata ? `${perf.pts_ata.on_time_pct}%` : 'N/A'} icon={Target}
-              sub={perf.pts_ata ? `avg ${perf.pts_ata.avg_delta > 0 ? '+' : ''}${perf.pts_ata.avg_delta} min vs promise` : perf.response_time.total === 0 ? 'Towbook — no arrival data' : ''}
-              color={perf.pts_ata && perf.pts_ata.on_time_pct >= 70 ? 'text-emerald-400' : perf.pts_ata ? 'text-red-400' : 'text-slate-500'}
-              border={perf.pts_ata && perf.pts_ata.on_time_pct >= 70 ? 'border-emerald-800/30' : !perf.pts_ata ? 'border-slate-700/30' : 'border-red-800/30'}
+            <MetricCard
+              label="ETA Accuracy"
+              value={perf.pts_ata?.on_time_pct != null ? `${perf.pts_ata.on_time_pct}%` : 'N/A'}
+              icon={Target}
+              sub={perf.pts_ata?.on_time_pct != null ? `avg ${perf.pts_ata.avg_delta > 0 ? '+' : ''}${perf.pts_ata.avg_delta} min vs promise` : perf.response_time.total === 0 ? 'No arrival data this period' : ''}
+              color={perf.pts_ata?.on_time_pct >= 70 ? 'text-emerald-400' : perf.pts_ata?.on_time_pct != null ? 'text-red-400' : 'text-slate-500'}
+              border={perf.pts_ata?.on_time_pct >= 70 ? 'border-emerald-800/30' : 'border-slate-700/30'}
               definition={perf.definitions?.eta_accuracy} defId="eta_accuracy" activeDef={activeDef} setActiveDef={setActiveDef} />
             <MetricCard label="Acceptance" value={`${perf.acceptance.primary_pct}%`} icon={Users}
               sub={`${perf.acceptance.primary_accepted} / ${perf.acceptance.primary_total} auto`}
@@ -522,8 +527,7 @@ export default function GarageDashboard({ garageId, garageName }) {
               <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
               <div className="text-sm font-semibold text-slate-400">Response Time Data Unavailable</div>
               <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                This garage dispatches via Towbook. Towbook does not report real-time driver arrival,
-                so response time, ETA accuracy, and time decomposition cannot be calculated.
+                No completed SAs with arrival timestamps found for this period.
                 Completion rate, volume, acceptance, and satisfaction metrics are still available above.
               </div>
             </div>
@@ -533,7 +537,7 @@ export default function GarageDashboard({ garageId, garageName }) {
             {/* Response Time Buckets */}
             <div className="glass rounded-xl p-5 space-y-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
-                <Clock className="w-4 h-4 text-brand-400" /> Response Time Breakdown
+                <Clock className="w-4 h-4 text-brand-400" /> {perf.response_time.metric === 'PTA (promised)' ? 'PTA Breakdown (Towbook)' : 'Response Time Breakdown'}
               </h3>
               <BucketGrid buckets={[
                 { label: '< 45 min', count: perf.response_time.under_45, pct: perf.response_time.under_45_pct },
@@ -560,8 +564,8 @@ export default function GarageDashboard({ garageId, garageName }) {
                 </div>
               </div>
 
-              {/* PTA accuracy */}
-              {perf.pts_ata && (
+              {/* PTA accuracy — Fleet: Promise vs Actual; Towbook: PTA distribution */}
+              {perf.pts_ata && perf.pts_ata.on_time_pct != null && (
                 <div className="pt-3 border-t border-slate-800/60">
                   <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Promise vs Actual</div>
                   <div className="flex gap-3">
@@ -626,7 +630,7 @@ export default function GarageDashboard({ garageId, garageName }) {
                           <span className="text-sm font-bold text-white">{totalAvg} min</span>
                         </div>
                         <div className="text-[10px] text-slate-600 text-center">
-                          Based on {rd.sample_size.toLocaleString()} Field Services calls (Towbook excluded)
+                          Based on {rd.sample_size.toLocaleString()} completed calls (all dispatch methods)
                         </div>
                       </>
                     )
@@ -713,7 +717,9 @@ export default function GarageDashboard({ garageId, garageName }) {
             {scorecard && (
               <div className="glass rounded-xl p-5 space-y-4">
                 <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
-                  <Truck className="w-4 h-4 text-brand-400" /> Fleet & Volume
+                  <Truck className="w-4 h-4 text-brand-400" />
+                  {isTowbook ? 'Contractors & Volume' : 'Fleet & Volume'}
+                  {isTowbook && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium">TOWBOOK</span>}
                 </h3>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
@@ -721,8 +727,10 @@ export default function GarageDashboard({ garageId, garageName }) {
                     <div className="text-[10px] text-slate-400">Trucks</div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-slate-300">{scorecard.fleet.total_members}</div>
-                    <div className="text-[10px] text-slate-400">Drivers</div>
+                    <div className="text-2xl font-bold text-slate-300">
+                      {isTowbook ? (scorecard.fleet.total_contractors || scorecard.fleet.total_trucks || 0) : scorecard.fleet.total_members}
+                    </div>
+                    <div className="text-[10px] text-slate-400">{isTowbook ? 'Contractors' : 'Drivers'}</div>
                   </div>
                   <div className="bg-red-950/20 rounded-lg p-2 text-center border border-red-800/20">
                     <div className="text-lg font-bold text-red-400">{scorecard.fleet.tow_trucks || 0}</div>
@@ -780,15 +788,19 @@ export default function GarageDashboard({ garageId, garageName }) {
               {leaderboard.length > 0 && (
                 <div className="glass rounded-xl p-5 lg:col-span-2">
                   <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm mb-3">
-                    <Award className="w-4 h-4 text-amber-400" /> Driver Leaderboard
-                    <span className="text-[10px] text-slate-500 font-normal ml-auto">Ranked by avg response time</span>
+                    <Award className="w-4 h-4 text-amber-400" />
+                    {isTowbook ? 'Contractor Leaderboard' : 'Driver Leaderboard'}
+                    {isTowbook && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium">TOWBOOK</span>}
+                    <span className="text-[10px] text-slate-500 font-normal ml-auto">
+                      {isTowbook ? 'Ranked by volume · Response = PTA (promised)' : 'Ranked by avg response time'}
+                    </span>
                   </h3>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="text-slate-500 border-b border-slate-800">
                           <th className="text-left py-2 px-2 w-8">#</th>
-                          <th className="text-left py-2 px-2">Driver</th>
+                          <th className="text-left py-2 px-2">{isTowbook ? 'Contractor' : 'Driver'}</th>
                           <th className="text-right py-2 px-2">Calls</th>
                           <th className="text-right py-2 px-2">Avg Response</th>
                           <th className="text-right py-2 px-2">Median</th>
@@ -806,7 +818,9 @@ export default function GarageDashboard({ garageId, garageName }) {
                                 {i + 1}
                               </span>
                             </td>
-                            <td className="py-1.5 px-2 text-white font-medium">{d.name}</td>
+                            <td className="py-1.5 px-2 text-white font-medium">
+                              {d.name}
+                            </td>
                             <td className="py-1.5 px-2 text-right text-slate-400">{d.total_calls}</td>
                             <td className={clsx('py-1.5 px-2 text-right font-bold',
                               d.avg_response_min && d.avg_response_min <= 45 ? 'text-emerald-400' :
@@ -822,6 +836,11 @@ export default function GarageDashboard({ garageId, garageName }) {
                         ))}
                       </tbody>
                     </table>
+                    {isTowbook && missingTruckIdCount > 0 && (
+                      <p className="text-[10px] text-slate-500 mt-2 px-1">
+                        {missingTruckIdCount} call{missingTruckIdCount > 1 ? 's' : ''} missing driver info — not shown in leaderboard
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -948,11 +967,13 @@ export default function GarageDashboard({ garageId, garageName }) {
                 <div key={i} className={clsx('flex items-start gap-2 rounded-lg p-2.5 text-xs',
                   ins.type === 'critical' ? 'bg-red-950/30 border border-red-800/30' :
                   ins.type === 'warn' ? 'bg-amber-950/30 border border-amber-800/30' :
+                  ins.type === 'info' ? 'bg-brand-950/20 border border-brand-800/20' :
                   'bg-emerald-950/20 border border-emerald-800/20')}>
                   {ins.type === 'critical' ? <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" /> :
                    ins.type === 'warn' ? <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" /> :
+                   ins.type === 'info' ? <AlertTriangle className="w-3.5 h-3.5 text-brand-400 mt-0.5 shrink-0" /> :
                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />}
-                  <span className={ins.type === 'critical' ? 'text-red-200' : ins.type === 'warn' ? 'text-amber-200' : 'text-emerald-200'}>
+                  <span className={ins.type === 'critical' ? 'text-red-200' : ins.type === 'warn' ? 'text-amber-200' : ins.type === 'info' ? 'text-brand-200' : 'text-emerald-200'}>
                     {ins.text}
                   </span>
                 </div>
@@ -992,9 +1013,34 @@ export default function GarageDashboard({ garageId, garageName }) {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {[
-                  { num: 1, title: 'Deploy Full Fleet', desc: `${scorecard.fleet.total_members} drivers on the books. Ensure all on the road at peak.`, impact: 'Eliminates queue wait' },
-                  { num: 2, title: 'Dispatch Closest Driver', desc: 'System picks closest only ~26% of the time. Fix dispatch logic.', impact: 'Saves 5-10 min/call' },
-                  { num: 3, title: 'Reduce Drop-Off Time', desc: 'Garage drop-off takes 43 min (med 38). 10 min cut = ~10% more tow capacity.', impact: 'Frees driver capacity' },
+                  {
+                    num: 1,
+                    title: isTowbook ? 'Maximize Contractor Coverage' : 'Deploy Full Fleet',
+                    desc: isTowbook
+                      ? `${scorecard.fleet.total_contractors || scorecard.fleet.total_trucks || 0} contractor trucks active. Monitor decline rates and PTA compliance.`
+                      : `${scorecard.fleet.total_members} drivers on the books (${scorecard.fleet.tow_drivers} tow, ${scorecard.fleet.battery_light_drivers} battery/light). Ensure all on the road at peak.`,
+                    impact: isTowbook ? 'Reduces decline-driven delays' : 'Eliminates queue wait',
+                  },
+                  {
+                    num: 2,
+                    title: 'Hit 45-Min PTA Target',
+                    desc: scorecard.sla.pta_compliance_45min >= 100
+                      ? 'All PTAs promised within 45 min — maintain this standard.'
+                      : `Only ${scorecard.sla.pta_compliance_45min}% of PTAs promised ≤45 min. ${scorecard.sla.median_pta_promised ? `Median PTA: ${scorecard.sla.median_pta_promised} min.` : ''} Tighten dispatch promises.`,
+                    impact: scorecard.sla.pta_compliance_45min >= 100 ? 'On target' : 'Reduces member wait expectations',
+                  },
+                  {
+                    num: 3,
+                    title: 'Close Response Gap',
+                    desc: scorecard.sla.actual_median_response && scorecard.sla.actual_median_response > 45
+                      ? `Median response is ${scorecard.sla.actual_median_response} min — ${scorecard.sla.gap_vs_target} min over target. Only ${scorecard.sla.actual_under_45min_pct}% under 45 min.`
+                      : scorecard.sla.actual_median_response
+                        ? `Median response ${scorecard.sla.actual_median_response} min — meeting 45-min target. ${scorecard.sla.actual_under_45min_pct}% under 45 min.`
+                        : 'Not enough completed calls to measure response time.',
+                    impact: scorecard.sla.actual_median_response && scorecard.sla.actual_median_response > 45
+                      ? `Closing the ${scorecard.sla.gap_vs_target}-min gap`
+                      : 'Maintain current performance',
+                  },
                 ].map(l => (
                   <div key={l.num} className="bg-slate-800/40 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">

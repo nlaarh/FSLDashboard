@@ -214,6 +214,47 @@ function HowItWorks({ onClose }) {
           Review each recommendation — check the accept rate improvement, time saved, and CSAT scores before acting.
           This should be reviewed monthly after each period closes.
         </div>
+        <div className="border-t border-slate-700/50 pt-3 mt-3">
+          <span className="text-brand-300 font-semibold">Metric Calculations:</span>
+          <div className="overflow-x-auto mt-2">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="border-b border-slate-700/50">
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold text-[10px] uppercase">Metric</th>
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold text-[10px] uppercase">Formula</th>
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold text-[10px] uppercase">Salesforce Fields</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-400">
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Zone Chain</td>
+                  <td className="py-1.5 px-2">Ordered list of garages assigned to each dispatch zone, ranked by priority (1 = primary).</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ERS_Territory_Priority_Matrix__c</code> — ERS_Parent_Service_Territory__c (zone), ERS_Spotted_Territory__c (garage), ERS_Sort_Order__c (rank)</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Acceptance Rate</td>
+                  <td className="py-1.5 px-2">COUNT(SAs without decline reason) ÷ COUNT(all SAs for this garage in this zone) × 100. Primary = ERS_Spotting_Number__c = 1 in the zone chain.</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.ERS_Spotting_Number__c</code>, <code className="text-brand-300 bg-slate-800 px-1 rounded">.ERS_Facility_Decline_Reason__c</code></td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Cascades Avoided</td>
+                  <td className="py-1.5 px-2">Estimated calls that would NOT cascade if the suggested garage were primary. = (suggested_accept_pct − current_accept_pct) × primary_volume ÷ 100.</td>
+                  <td className="py-1.5 px-2">Derived from acceptance rates + zone volume</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Minutes Saved</td>
+                  <td className="py-1.5 px-2">cascades_avoided × 8 min (estimated delay per cascade step).</td>
+                  <td className="py-1.5 px-2">Derived calculation</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 px-2 text-slate-300">Satisfaction (CSAT)</td>
+                  <td className="py-1.5 px-2">COUNT("Totally Satisfied") ÷ COUNT(all surveys) × 100, matched by WorkOrder number.</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">Survey_Result__c.ERS_Overall_Satisfaction__c</code>, <code className="text-brand-300 bg-slate-800 px-1 rounded">.ERS_Work_Order_Number__c</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   )

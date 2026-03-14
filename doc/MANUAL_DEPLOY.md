@@ -101,6 +101,7 @@ Set in Azure Portal > Configuration > Application settings:
 | `SF_SECURITY_TOKEN` | Salesforce security token |
 | `ADMIN_USER` | App login username (default: admin) |
 | `ADMIN_PASSWORD` | App login password |
+| `GITHUB_TOKEN` | GitHub PAT (repo scope) for user-reported issues |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (Oryx builds Python deps) |
 | `ENABLE_ORYX_BUILD` | `true` |
 
@@ -215,6 +216,24 @@ az webapp config appsettings list --name fslapp-nyaaa \
   --resource-group rg-nlaaroubi-sbx-eus2-001 --query "[?name=='SCM_DO_BUILD_DURING_DEPLOYMENT']"
 ```
 
+### Frontend changes not showing after deploy (stale JS bundle)
+
+Oryx merges new files but does NOT delete old ones. If `index.html` on the server still points to an old JS bundle:
+
+1. Check what bundle the server references:
+   ```bash
+   curl --netrc-file /tmp/.netrc_kudu \
+     "https://fslapp-nyaaa.scm.azurewebsites.net/api/vfs/site/wwwroot/static/index.html" \
+     | grep -o 'index-[^"]*\.js'
+   ```
+2. Upload the correct `index.html`:
+   ```bash
+   curl --netrc-file /tmp/.netrc_kudu -X PUT \
+     "https://fslapp-nyaaa.scm.azurewebsites.net/api/vfs/site/wwwroot/static/index.html" \
+     -H "If-Match: *" --data-binary @backend/static/index.html
+   ```
+3. Restart the app: `az webapp restart --name fslapp-nyaaa --resource-group rg-nlaaroubi-sbx-eus2-001`
+
 ### GitHub Actions deploy step fails
 
 1. Check the run log: https://github.com/nlaarh/FSLDashboard/actions
@@ -236,3 +255,13 @@ az webapp config appsettings list --name fslapp-nyaaa \
 5. **Azure Entra ID auth is separate** - Currently disabled. The app has its own login (admin/password). To re-enable SSO, configure it in Portal > Authentication.
 
 6. **Don't restart during deploy** - Azure's Oryx restarts the SCM container during builds. Running config changes or restarts simultaneously causes "Deployment stopped due to SCM container restart" errors. Wait for deploy to finish first.
+
+7. **Oryx does NOT clean old static assets** - When the React build produces new hashed filenames (e.g. `index-DsLyw2KL.js`), Oryx merges files on top of existing ones without deleting the old bundle. The `index.html` in the zip may reference the new file, but if the old `index.html` persists on disk, the app serves stale code. Fix: after deploy, use Kudu VFS API to verify/overwrite `static/index.html`, or delete the `static/assets/` folder before deploying:
+   ```bash
+   # Delete old static assets via Kudu before deploy
+   curl --netrc-file /tmp/.netrc_kudu -X DELETE \
+     "https://fslapp-nyaaa.scm.azurewebsites.net/api/vfs/site/wwwroot/static/assets/?recursive=true" \
+     -H "If-Match: *"
+   ```
+
+8. **Map tiles use CARTO (not Stadia Maps)** - Stadia Maps requires a paid API key. The app uses free CARTO dark basemap tiles (`basemaps.cartocdn.com/dark_all`). Do not switch back to Stadia without an API key.

@@ -83,8 +83,24 @@ def authenticate(username: str, password: str) -> dict | None:
             "username": username,
             "name": user.get("name", username),
             "role": user.get("role", "viewer"),
+            "email": user.get("email", ""),
         }
     return None
+
+
+def get_user(username: str) -> dict | None:
+    """Get a single user (without password). Returns None if not found."""
+    users = _load_users()
+    u = users.get(username)
+    if not u:
+        return None
+    return {
+        "username": username,
+        "name": u.get("name", username),
+        "role": u.get("role", "viewer"),
+        "email": u.get("email", ""),
+        "active": u.get("active", True),
+    }
 
 
 def list_users() -> list[dict]:
@@ -96,13 +112,14 @@ def list_users() -> list[dict]:
             "username": username,
             "name": u.get("name", username),
             "role": u.get("role", "viewer"),
+            "email": u.get("email", ""),
             "active": u.get("active", True),
             "created": u.get("created"),
         })
     return sorted(result, key=lambda u: u["username"])
 
 
-def create_user(username: str, password: str, name: str, role: str = "viewer") -> dict:
+def create_user(username: str, password: str, name: str, role: str = "viewer", email: str = "") -> dict:
     """Create a new user. Raises ValueError if exists."""
     users = _load_users()
     if username in users:
@@ -111,17 +128,18 @@ def create_user(username: str, password: str, name: str, role: str = "viewer") -
     users[username] = {
         "name": name,
         "role": role,
+        "email": email,
         "password_hash": h,
         "salt": salt,
         "created": time.time(),
         "active": True,
     }
     _save_users(users)
-    return {"username": username, "name": name, "role": role}
+    return {"username": username, "name": name, "role": role, "email": email}
 
 
 def update_user(username: str, name: str = None, role: str = None,
-                password: str = None, active: bool = None) -> dict:
+                password: str = None, active: bool = None, email: str = None) -> dict:
     """Update user fields. Raises ValueError if not found."""
     users = _load_users()
     if username not in users:
@@ -133,6 +151,8 @@ def update_user(username: str, name: str = None, role: str = None,
         u["role"] = role
     if active is not None:
         u["active"] = active
+    if email is not None:
+        u["email"] = email
     if password is not None:
         h, salt = _hash_password(password)
         u["password_hash"] = h

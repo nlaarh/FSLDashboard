@@ -90,7 +90,7 @@ function buildInsights(data, garageName) {
   // Completion rate
   const compPct = completion.pct
   if (compPct < 80) {
-    insights.push({ type: 'critical', text: `Only ${compPct}% of calls are completed — ${100 - compPct}% are being lost to cancellations or no-shows.` })
+    insights.push({ type: 'critical', text: `Only ${compPct}% of calls are completed — ${+(100 - compPct).toFixed(1)}% are being lost to cancellations or no-shows.` })
     actions.push({ priority: 'HIGH', text: 'Investigate cancellation reasons. Is it the member canceling (too slow) or the facility declining?' })
   } else if (compPct < 92) {
     insights.push({ type: 'warn', text: `Completion rate is ${compPct}% — slightly below the 95% target.` })
@@ -108,7 +108,7 @@ function buildInsights(data, garageName) {
       actions.push({ priority: 'HIGH', text: `Close the ${median - 45}-min gap: add available drivers during peak hours and enforce closest-driver dispatch.` })
     } else if (median > 45) {
       insights.push({ type: 'warn', text: `Median response is ${median} min — ${median - 45} min over target. ${under45}% of calls are delivered within 45 min.` })
-      actions.push({ priority: 'HIGH', text: `To hit 45-min ATA: need ${100 - under45}% more calls under 45 min. Focus on reducing dispatch queue time.` })
+      actions.push({ priority: 'HIGH', text: `To hit 45-min ATA: need ${+(100 - under45).toFixed(1)}% more calls under 45 min. Focus on reducing dispatch queue time.` })
     } else {
       insights.push({ type: 'good', text: `Median response time is ${median} min — meeting the 45-min ATA target. ${under45}% of calls delivered within 45 min.` })
     }
@@ -118,8 +118,8 @@ function buildInsights(data, garageName) {
     }
   }
 
-  // PTS-ATA accuracy
-  if (pts_ata) {
+  // PTS-ATA accuracy (promised vs actual arrival)
+  if (pts_ata && pts_ata.on_time_pct != null) {
     const latePct = pts_ata.late_pct
     const avgDelta = pts_ata.avg_delta
     if (latePct > 50) {
@@ -137,10 +137,10 @@ function buildInsights(data, garageName) {
   if (acceptance.primary_total > 0) {
     const primPct = acceptance.primary_pct
     if (primPct < 70) {
-      insights.push({ type: 'critical', text: `Only ${primPct}% acceptance rate on auto-dispatched (primary) calls — facility is declining ${100 - primPct}% of system-assigned work.` })
+      insights.push({ type: 'critical', text: `Only ${primPct}% acceptance rate on auto-dispatched (primary) calls — facility is declining ${+(100 - primPct).toFixed(1)}% of system-assigned work.` })
       actions.push({ priority: 'HIGH', text: 'Identify top decline reasons for primary calls. Driver availability? Truck capability mismatch? Shift coverage gaps?' })
     } else if (primPct < 88) {
-      insights.push({ type: 'warn', text: `${primPct}% acceptance on primary (auto-assigned) calls. ${100 - primPct}% decline rate is above the 5-10% normal range.` })
+      insights.push({ type: 'warn', text: `${primPct}% acceptance on primary (auto-assigned) calls. ${+(100 - primPct).toFixed(1)}% decline rate is above the 5-10% normal range.` })
       actions.push({ priority: 'MED', text: 'Review primary call decline reasons with facility manager.' })
     }
   }
@@ -200,6 +200,7 @@ function DecompositionPanel({ garageId, start, end }) {
   const leaderboard = data?.driver_leaderboard || []
   const declines = data?.decline_analysis
   const cancels = data?.cancel_analysis
+  const isTowbook = data?.garage_type === 'towbook'
 
   return (
     <div className="glass rounded-xl overflow-hidden">
@@ -292,14 +293,15 @@ function DecompositionPanel({ garageId, start, end }) {
               {leaderboard.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                    Driver Leaderboard (by avg response time)
+                    {isTowbook ? 'Contractor Leaderboard (by volume)' : 'Driver Leaderboard (by avg response time)'}
+                    {isTowbook && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium normal-case">Towbook</span>}
                   </h4>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="text-slate-500 border-b border-slate-800">
                           <th className="text-left py-1.5 px-2">#</th>
-                          <th className="text-left py-1.5 px-2">Driver</th>
+                          <th className="text-left py-1.5 px-2">{isTowbook ? 'Contractor Truck' : 'Driver'}</th>
                           <th className="text-right py-1.5 px-2">Calls</th>
                           <th className="text-right py-1.5 px-2">Avg Resp</th>
                           <th className="text-right py-1.5 px-2">Med Resp</th>
@@ -528,17 +530,17 @@ export default function Performance({ garageId, garageName }) {
               color={data.completion.pct >= 95 ? 'text-emerald-400' : data.completion.pct >= 80 ? 'text-amber-400' : 'text-red-400'}
               border={data.completion.pct >= 95 ? 'border-emerald-800/30' : data.completion.pct >= 80 ? 'border-amber-800/30' : 'border-red-800/30'}
               icon={CheckCircle2} />
-            <KPI label="Median Response"
+            <KPI label={data.response_time.metric === 'PTA (promised)' ? 'Median PTA' : 'Median Response'}
               value={data.response_time.median ? `${data.response_time.median} min` : 'N/A'}
-              sub={`${data.response_time.under_45_pct}% under 45 min`}
+              sub={`${data.response_time.under_45_pct}% under 45 min${data.response_time.metric === 'PTA (promised)' ? ' · PTA' : ''}`}
               color={data.response_time.median <= 45 ? 'text-emerald-400' : data.response_time.median <= 70 ? 'text-amber-400' : 'text-red-400'}
               border={data.response_time.median <= 45 ? 'border-emerald-800/30' : data.response_time.median <= 70 ? 'border-amber-800/30' : 'border-red-800/30'}
               icon={Clock} />
-            <KPI label="ETA Accuracy (PTS-ATA)"
-              value={data.pts_ata ? `${data.pts_ata.on_time_pct}%` : 'N/A'}
-              sub={data.pts_ata ? `avg ${data.pts_ata.avg_delta > 0 ? '+' : ''}${data.pts_ata.avg_delta} min vs promise` : 'No PTA data'}
-              color={data.pts_ata && data.pts_ata.on_time_pct >= 70 ? 'text-emerald-400' : data.pts_ata && data.pts_ata.on_time_pct >= 50 ? 'text-amber-400' : 'text-red-400'}
-              border={data.pts_ata && data.pts_ata.on_time_pct >= 70 ? 'border-emerald-800/30' : 'border-red-800/30'}
+            <KPI label={data.pts_ata?.metric === 'PTA (promised)' ? 'Avg PTA Promised' : 'ETA Accuracy (PTS-ATA)'}
+              value={data.pts_ata?.on_time_pct != null ? `${data.pts_ata.on_time_pct}%` : data.pts_ata?.avg_pta != null ? `${data.pts_ata.avg_pta} min` : 'N/A'}
+              sub={data.pts_ata?.on_time_pct != null ? `avg ${data.pts_ata.avg_delta > 0 ? '+' : ''}${data.pts_ata.avg_delta} min vs promise` : data.pts_ata?.metric === 'PTA (promised)' ? 'Towbook — no real arrival data' : 'No PTA data'}
+              color={data.pts_ata?.on_time_pct >= 70 ? 'text-emerald-400' : data.pts_ata?.on_time_pct != null ? 'text-red-400' : data.pts_ata?.avg_pta != null ? 'text-brand-400' : 'text-slate-500'}
+              border={data.pts_ata?.on_time_pct >= 70 ? 'border-emerald-800/30' : data.pts_ata?.avg_pta != null ? 'border-brand-800/30' : 'border-red-800/30'}
               icon={Target} />
             <KPI label="Primary Acceptance"
               value={`${data.acceptance.primary_pct}%`}
@@ -595,7 +597,7 @@ export default function Performance({ garageId, garageName }) {
             {/* Response Time Buckets */}
             <div className="glass rounded-xl p-5 space-y-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-brand-400" /> Response Time Breakdown
+                <Clock className="w-4 h-4 text-brand-400" /> {data.response_time.metric === 'PTA (promised)' ? 'PTA Breakdown (Towbook)' : 'Response Time Breakdown'}
               </h3>
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <div className="text-center bg-emerald-950/30 border border-emerald-800/20 rounded-xl p-3">
@@ -634,12 +636,12 @@ export default function Performance({ garageId, garageName }) {
               </div>
             </div>
 
-            {/* PTS-ATA Accuracy */}
+            {/* PTS-ATA Accuracy / Towbook PTA Distribution */}
             <div className="glass rounded-xl p-5 space-y-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2">
-                <Target className="w-4 h-4 text-brand-400" /> PTS-ATA (Promise vs Actual)
+                <Target className="w-4 h-4 text-brand-400" /> {data.pts_ata?.metric === 'PTA (promised)' ? 'PTA Distribution (Towbook)' : 'PTS-ATA (Promise vs Actual)'}
               </h3>
-              {data.pts_ata ? (
+              {data.pts_ata?.on_time_pct != null ? (
                 <>
                   <div className="flex gap-3">
                     <div className="flex-1 text-center bg-emerald-950/20 border border-emerald-800/20 rounded-xl p-3">
@@ -673,6 +675,23 @@ export default function Performance({ garageId, garageName }) {
                   <div className="text-[10px] text-slate-500 pt-1">
                     Based on {data.pts_ata.total.toLocaleString()} completed SAs with valid ETA data.
                     Positive = arrived after promised time.
+                  </div>
+                </>
+              ) : data.pts_ata?.metric === 'PTA (promised)' ? (
+                <>
+                  <div className="flex gap-3">
+                    <div className="flex-1 text-center bg-brand-950/20 border border-brand-800/20 rounded-xl p-3">
+                      <div className="text-xl font-bold text-brand-400">{data.pts_ata.median_pta ?? '?'}</div>
+                      <div className="text-[10px] text-slate-400">Median PTA (min)</div>
+                    </div>
+                    <div className="flex-1 text-center bg-brand-950/20 border border-brand-800/20 rounded-xl p-3">
+                      <div className="text-xl font-bold text-brand-400">{data.pts_ata.avg_pta ?? '?'}</div>
+                      <div className="text-[10px] text-slate-400">Avg PTA (min)</div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-500 pt-2">
+                    Towbook garage — actual arrival time is unavailable (bulk-updated at midnight).
+                    PTA = promised time to member at dispatch. Based on {data.pts_ata.total?.toLocaleString()} completed SAs.
                   </div>
                 </>
               ) : (
@@ -785,12 +804,14 @@ export default function Performance({ garageId, garageName }) {
                   'flex items-start gap-3 rounded-lg p-3 text-sm',
                   ins.type === 'critical' ? 'bg-red-950/30 border border-red-800/30' :
                   ins.type === 'warn'     ? 'bg-amber-950/30 border border-amber-800/30' :
+                  ins.type === 'info'     ? 'bg-brand-950/20 border border-brand-800/20' :
                                            'bg-emerald-950/20 border border-emerald-800/20'
                 )}>
                   {ins.type === 'critical' ? <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" /> :
                    ins.type === 'warn'     ? <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" /> :
+                   ins.type === 'info'     ? <AlertTriangle className="w-4 h-4 text-brand-400 mt-0.5 shrink-0" /> :
                                             <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />}
-                  <span className={ins.type === 'critical' ? 'text-red-200' : ins.type === 'warn' ? 'text-amber-200' : 'text-emerald-200'}>
+                  <span className={ins.type === 'critical' ? 'text-red-200' : ins.type === 'warn' ? 'text-amber-200' : ins.type === 'info' ? 'text-brand-200' : 'text-emerald-200'}>
                     {ins.text}
                   </span>
                 </div>

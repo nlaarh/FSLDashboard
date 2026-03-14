@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth } from '../api'
 import { getMapConfig } from '../mapStyles'
 import {
   Loader2, RefreshCw, Radio, CheckCircle2, AlertTriangle,
@@ -95,27 +95,33 @@ function makeWeatherMarkerIcon(s) {
   })
 }
 
-function makeGarageIcon(isPrimary, isTowbook) {
+function makeGarageIcon(primaryZones, secondaryZones, isTowbook) {
+  const isPrimary = primaryZones > 0
+  const badge = isPrimary
+    ? `<div style="position:absolute;top:-8px;right:-8px;min-width:14px;height:14px;background:#22c55e;border:1.5px solid #0f172a;border-radius:7px;font-size:8px;font-weight:800;color:#fff;display:flex;align-items:center;justify-content:center;padding:0 2px;line-height:1">P${primaryZones > 1 ? primaryZones : ''}</div>`
+    : secondaryZones > 0
+    ? `<div style="position:absolute;top:-8px;right:-8px;min-width:14px;height:14px;background:#f59e0b;border:1.5px solid #0f172a;border-radius:7px;font-size:8px;font-weight:800;color:#fff;display:flex;align-items:center;justify-content:center;padding:0 2px;line-height:1">S${secondaryZones > 1 ? secondaryZones : ''}</div>`
+    : ''
   if (isTowbook) {
-    // Towbook = wrench/garage icon in orange tones
     const color = isPrimary ? '#f97316' : '#78716c'
     return L.divIcon({
       className: '',
       iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12],
-      html: `<div style="width:20px;height:20px;background:${color}22;border:2px solid ${color};border-radius:50%;display:flex;align-items:center;justify-content:center">
+      html: `<div style="position:relative;width:20px;height:20px;background:${color}22;border:2px solid ${color};border-radius:50%;display:flex;align-items:center;justify-content:center">
         <svg width="10" height="10" viewBox="0 0 16 16" fill="${color}">
           <path d="M14.7 6.3a1 1 0 0 0 0-1.4l-3.6-3.6a1 1 0 0 0-1.4 0L8.3 2.7 6.6 1H4v2.6l1.7 1.7-5.4 5.4a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l5.4-5.4 1.7 1.7H14v-2.6l-1.7-1.7z"/>
         </svg>
+        ${badge}
       </div>`,
     })
   }
-  // Fleet = square garage icon in green tones
   const color = isPrimary ? '#22c55e' : '#64748b'
   return L.divIcon({
     className: '',
     iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -10],
-    html: `<div style="width:16px;height:16px;background:${color}22;border:2px solid ${color};border-radius:3px;display:flex;align-items:center;justify-content:center">
+    html: `<div style="position:relative;width:16px;height:16px;background:${color}22;border:2px solid ${color};border-radius:3px;display:flex;align-items:center;justify-content:center">
       <div style="width:6px;height:6px;background:${color};border-radius:1px"></div>
+      ${badge}
     </div>`,
   })
 }
@@ -209,6 +215,10 @@ export default function CommandCenter() {
   const [allGarages, setAllGarages] = useState([])
   const [layerLoading, setLayerLoading] = useState({})
 
+  // ── Scheduler insights + GPS health (1-hour refresh)
+  const [schedulerData, setSchedulerData] = useState(null)
+  const [gpsHealth, setGpsHealth] = useState(null)
+
   // ── Filters
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -235,6 +245,16 @@ export default function CommandCenter() {
     const iv = setInterval(load, REFRESH_MS)
     return () => clearInterval(iv)
   }, [load])
+  // Scheduler insights — today's data, refresh every hour
+  const loadScheduler = useCallback(() => {
+    fetchSchedulerInsights().then(setSchedulerData).catch(() => {})
+    fetchGpsHealth().then(setGpsHealth).catch(() => {})
+  }, [])
+  useEffect(() => { loadScheduler() }, [loadScheduler])
+  useEffect(() => {
+    const iv = setInterval(loadScheduler, 3600_000)
+    return () => clearInterval(iv)
+  }, [loadScheduler])
   useEffect(() => {
     const t = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000)
     return () => clearInterval(t)
@@ -458,14 +478,19 @@ export default function CommandCenter() {
           {layers.garages && allGarages.filter(g => g.dispatch_method !== 'Towbook').map(g => {
             if (!g.lat || !g.lon) return null
             return (
-              <Marker key={`garage-${g.id}`} position={[g.lat, g.lon]} icon={makeGarageIcon(g.primary_zones > 0, false)}>
+              <Marker key={`garage-${g.id}`} position={[g.lat, g.lon]} icon={makeGarageIcon(g.primary_zones || 0, g.secondary_zones || 0, false)}>
                 <Tooltip direction="top" offset={[0, -10]} sticky className="cc-tooltip">
                   <div style={{ fontSize: 11, lineHeight: 1.5, minWidth: 160 }}>
                     <div style={{ fontWeight: 700, fontSize: 12 }}>{g.name}</div>
                     {g.address && <div style={{ color: '#94a3b8', fontSize: 10 }}>{g.address}</div>}
                     <div style={{ color: '#22c55e', fontSize: 10 }}>Fleet (Field Services)</div>
                     {g.phone && <div style={{ fontSize: 10 }}>{fmtPhone(g.phone)}</div>}
-                    <div style={{ color: '#94a3b8', fontSize: 10 }}>P: {g.primary_zones} · S: {g.secondary_zones} zones</div>
+                    <div style={{ fontSize: 10, marginTop: 2 }}>
+                      {g.primary_zones > 0 && <span style={{ color: '#22c55e', fontWeight: 700 }}>Primary: {g.primary_zones} zones</span>}
+                      {g.primary_zones > 0 && g.secondary_zones > 0 && <span style={{ color: '#475569' }}> · </span>}
+                      {g.secondary_zones > 0 && <span style={{ color: '#f59e0b', fontWeight: 600 }}>Secondary: {g.secondary_zones} zones</span>}
+                      {!g.primary_zones && !g.secondary_zones && <span style={{ color: '#64748b' }}>No matrix zones</span>}
+                    </div>
                   </div>
                 </Tooltip>
               </Marker>
@@ -476,14 +501,19 @@ export default function CommandCenter() {
           {layers.towbook && allGarages.filter(g => g.dispatch_method === 'Towbook').map(g => {
             if (!g.lat || !g.lon) return null
             return (
-              <Marker key={`tb-${g.id}`} position={[g.lat, g.lon]} icon={makeGarageIcon(g.primary_zones > 0, true)}>
+              <Marker key={`tb-${g.id}`} position={[g.lat, g.lon]} icon={makeGarageIcon(g.primary_zones || 0, g.secondary_zones || 0, true)}>
                 <Tooltip direction="top" offset={[0, -12]} sticky className="cc-tooltip">
                   <div style={{ fontSize: 11, lineHeight: 1.5, minWidth: 160 }}>
                     <div style={{ fontWeight: 700, fontSize: 12 }}>{g.name}</div>
                     {g.address && <div style={{ color: '#94a3b8', fontSize: 10 }}>{g.address}</div>}
                     <div style={{ color: '#f97316', fontSize: 10 }}>Towbook (Contractor)</div>
                     {g.phone && <div style={{ fontSize: 10 }}>{fmtPhone(g.phone)}</div>}
-                    <div style={{ color: '#94a3b8', fontSize: 10 }}>P: {g.primary_zones} · S: {g.secondary_zones} zones</div>
+                    <div style={{ fontSize: 10, marginTop: 2 }}>
+                      {g.primary_zones > 0 && <span style={{ color: '#22c55e', fontWeight: 700 }}>Primary: {g.primary_zones} zones</span>}
+                      {g.primary_zones > 0 && g.secondary_zones > 0 && <span style={{ color: '#475569' }}> · </span>}
+                      {g.secondary_zones > 0 && <span style={{ color: '#f59e0b', fontWeight: 600 }}>Secondary: {g.secondary_zones} zones</span>}
+                      {!g.primary_zones && !g.secondary_zones && <span style={{ color: '#64748b' }}>No matrix zones</span>}
+                    </div>
                   </div>
                 </Tooltip>
               </Marker>
@@ -534,6 +564,21 @@ export default function CommandCenter() {
                 <StatChip icon={Radio} label="Open" value={summary.total_open} color="text-blue-400" />
                 <StatChip icon={CheckCircle2} label="Done" value={summary.total_completed} color="text-emerald-400" />
                 <StatChip label="Total" value={summary.total_sas} color="text-slate-300" />
+                {(summary.over_capacity > 0 || summary.busy > 0) && (
+                  <>
+                    <Div />
+                    {summary.over_capacity > 0 && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-red-950/60 text-red-400 border border-red-800/40">
+                        {summary.over_capacity} Over Cap
+                      </div>
+                    )}
+                    {summary.busy > 0 && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-950/50 text-amber-400 border border-amber-800/40">
+                        {summary.busy} Busy
+                      </div>
+                    )}
+                  </>
+                )}
                 <Div />
                 {/* Demand indicator */}
                 {demand.trend && (
@@ -860,6 +905,11 @@ export default function CommandCenter() {
           </div>
         </div>
 
+        {/* ── Dispatch Insights (bottom-right, collapsible) ────── */}
+        {schedulerData && (
+          <DispatchInsightsPanel data={schedulerData} gpsHealth={gpsHealth} ccData={data} />
+        )}
+
         {error && (
           <div className="absolute top-16 right-4 z-[1000] bg-red-950/90 border border-red-800/50
                           rounded-xl px-4 py-2 text-sm text-red-300 shadow-xl max-w-xs">{error}</div>
@@ -988,6 +1038,167 @@ function LegendSmall({ color, label }) {
   </span>
 }
 
+function MiniDonut({ pct, size = 56, stroke = 6, autoColor = '#6366f1', manualColor = '#334155' }) {
+  const r = (size - stroke) / 2
+  const circ = 2 * Math.PI * r
+  const autoLen = circ * (pct / 100)
+  return (
+    <svg width={size} height={size} className="block">
+      {/* Manual (background) */}
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={manualColor} strokeWidth={stroke} />
+      {/* Auto (foreground) */}
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={autoColor} strokeWidth={stroke}
+        strokeDasharray={`${autoLen} ${circ - autoLen}`}
+        strokeDashoffset={circ / 4} strokeLinecap="round"
+        className="transition-all duration-700" />
+      {/* Center text */}
+      <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="central"
+        className="fill-white text-[11px] font-bold">{pct}%</text>
+    </svg>
+  )
+}
+
+function DispatchInsightsPanel({ data, gpsHealth, ccData }) {
+  const [open, setOpen] = useState(true)
+  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, manual_closest_pct, manual_closest_eval, towbook_closest_pct, towbook_closest_eval, dispatchers, total, fleet_total } = data
+  return (
+    <div className="absolute bottom-14 right-3 z-[999] w-[240px] pointer-events-auto"
+         style={{ maxHeight: 'calc(100vh - 140px)' }}>
+      <div className={clsx('bg-slate-900/95 backdrop-blur-xl border border-slate-600/40 shadow-2xl flex flex-col',
+        open ? 'rounded-xl' : 'rounded-xl')}>
+        {/* Header — always visible, click to toggle */}
+        <button onClick={() => setOpen(o => !o)}
+          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-800/95 transition-colors rounded-t-xl flex-shrink-0">
+          <Zap className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="text-[10px] font-bold text-white uppercase tracking-wide flex-1 text-left">Dispatch Insights</span>
+          <span className="text-[9px] text-slate-500">{fleet_total || total} fleet{towbook_count ? ` · ${towbook_count} TB` : ''}</span>
+          {open ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronUp className="w-3 h-3 text-slate-400" />}
+        </button>
+        {/* Scrollable body */}
+        {open && (
+          <div className="overflow-y-auto overscroll-contain border-t border-slate-800/60"
+               style={{ maxHeight: 'calc(100vh - 200px)' }}>
+            <div className="px-3 py-2.5 space-y-2.5">
+              {/* Donut + labels */}
+              <div className="flex items-center gap-3">
+                <MiniDonut pct={auto_pct} />
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />
+                    <span className="text-[10px] text-slate-300 flex-1">System</span>
+                    <span className="text-[11px] font-bold text-white">{auto_count}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                    <span className="text-[10px] text-slate-300 flex-1">Dispatcher</span>
+                    <span className="text-[11px] font-bold text-white">{manual_count}</span>
+                  </div>
+                </div>
+              </div>
+              {/* Closest driver — donut + split by system vs dispatcher */}
+              {(auto_closest_pct != null || manual_closest_pct != null) && (
+                <div className="pt-2 border-t border-slate-800/60">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Navigation className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                    <span className="text-[9px] text-slate-500 uppercase tracking-wider">Sent Closest Driver</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {auto_closest_pct != null && (
+                      <div className="text-center">
+                        <MiniDonut pct={auto_closest_pct} size={48} stroke={5} autoColor="#22c55e" manualColor="#1e293b" />
+                        <div className="text-[8px] text-indigo-400 mt-0.5">System</div>
+                        <div className="text-[7px] text-slate-600">{auto_closest_eval} eval</div>
+                      </div>
+                    )}
+                    {manual_closest_pct != null && (
+                      <div className="text-center">
+                        <MiniDonut pct={manual_closest_pct} size={48} stroke={5} autoColor="#f59e0b" manualColor="#1e293b" />
+                        <div className="text-[8px] text-amber-500/70 mt-0.5">Dispatcher</div>
+                        <div className="text-[7px] text-slate-600">{manual_closest_eval} eval</div>
+                      </div>
+                    )}
+                    {towbook_closest_pct != null && (
+                      <div className="text-center">
+                        <MiniDonut pct={towbook_closest_pct} size={48} stroke={5} autoColor="#e879f9" manualColor="#1e293b" />
+                        <div className="text-[8px] text-fuchsia-400/70 mt-0.5">Towbook</div>
+                        <div className="text-[7px] text-slate-600">{towbook_closest_eval} eval</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* Comparison stats */}
+              <div className="pt-2 border-t border-slate-800/60 grid grid-cols-3 gap-1.5">
+                <InsightStat label="Avg Response" auto={auto_avg_response != null ? `${auto_avg_response}m` : '—'} manual={manual_avg_response != null ? `${manual_avg_response}m` : '—'} />
+                <InsightStat label="Dispatch Speed" auto={auto_avg_speed != null ? `${auto_avg_speed}m` : '—'} manual={manual_avg_speed != null ? `${manual_avg_speed}m` : '—'} />
+                <InsightStat label="45-min SLA" auto={auto_sla != null ? `${auto_sla}%` : '—'} manual={manual_sla != null ? `${manual_sla}%` : '—'} />
+              </div>
+              {/* Top dispatchers */}
+              {dispatchers && dispatchers.length > 0 && (
+                <div className="pt-2 border-t border-slate-800/60">
+                  <div className="text-[8px] text-slate-500 uppercase tracking-wider mb-1">Top Dispatchers</div>
+                  {dispatchers.map((d, i) => (
+                    <div key={i} className="flex items-center justify-between text-[10px]">
+                      <span className="text-slate-400 truncate mr-2">{d.name}</span>
+                      <span className="text-white font-semibold">{d.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {total === 0 && (
+                <div className="text-[10px] text-slate-600 text-center py-2">No fleet dispatches yet today</div>
+              )}
+              {/* Over-Capacity Garages */}
+              {(() => {
+                const overCap = (ccData?.territories || []).filter(t => t.capacity === 'over' || t.capacity === 'busy')
+                if (overCap.length === 0) return null
+                return (
+                  <div className="pt-2 border-t border-slate-800/60">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <AlertCircle className="w-3 h-3 text-red-400 flex-shrink-0" />
+                      <span className="text-[9px] text-slate-500 uppercase tracking-wider">Capacity Alerts</span>
+                    </div>
+                    <div className="space-y-1">
+                      {overCap.sort((a, b) => (b.open / Math.max(b.avail_drivers, 0.1)) - (a.open / Math.max(a.avail_drivers, 0.1))).slice(0, 6).map(t => (
+                        <div key={t.id} className="flex items-center gap-1.5 text-[10px]">
+                          <span className={clsx('px-1 py-0.5 rounded text-[7px] font-bold uppercase',
+                            t.capacity === 'over' ? 'bg-red-950/60 text-red-400' : 'bg-amber-950/50 text-amber-400'
+                          )}>{t.capacity === 'over' ? 'Over' : 'Busy'}</span>
+                          <span className="text-slate-300 truncate flex-1">{t.name}</span>
+                          <span className="text-slate-500 whitespace-nowrap">{t.open}op/{t.avail_drivers}drv</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+              <div className="text-[8px] text-slate-600 text-center pt-1">
+                Fleet · {data.is_fallback ? 'Last 24h' : 'Today'} · 1h refresh
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InsightStat({ label, auto, manual }) {
+  return (
+    <div className="text-center">
+      <div className="text-[8px] text-slate-500 uppercase tracking-wider mb-0.5">{label}</div>
+      <div className="flex items-center justify-center gap-1">
+        <span className="text-[7px] text-indigo-400/70">Sys</span>
+        <span className="text-[10px] font-bold text-indigo-400">{auto}</span>
+      </div>
+      <div className="flex items-center justify-center gap-1">
+        <span className="text-[7px] text-amber-500/50">Dsp</span>
+        <span className="text-[10px] font-medium text-amber-500/70">{manual}</span>
+      </div>
+    </div>
+  )
+}
+
 function SuggestionCard({ s }) {
   const config = {
     escalate:   { icon: AlertCircle, color: 'bg-red-950/40 border-red-800/30', iconColor: 'text-red-400', badge: 'ESCALATE' },
@@ -1042,6 +1253,9 @@ function TerritoryCard({ t, onFocus, onNavigate }) {
         <span className="text-[11px] text-blue-400 font-medium">{t.open} open</span>
         <span className="text-[11px] text-emerald-400">{t.completed} done</span>
         <span className="text-[11px] text-slate-500">{t.total} total</span>
+        {t.avail_drivers != null && <span className="text-[10px] text-slate-500">{t.avail_drivers} drv</span>}
+        {t.capacity === 'over' && <span className="text-[8px] font-bold uppercase px-1 py-0.5 rounded bg-red-950/60 text-red-400 border border-red-800/30">Over Cap</span>}
+        {t.capacity === 'busy' && <span className="text-[8px] font-bold uppercase px-1 py-0.5 rounded bg-amber-950/50 text-amber-400 border border-amber-800/30">Busy</span>}
       </div>
       <div className="flex items-center gap-3 mt-1 ml-4">
         {t.sla_pct != null && (

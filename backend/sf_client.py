@@ -315,3 +315,38 @@ def sf_query_all(soql: str) -> list[dict]:
             break
         records.extend(result.get('records', []))
     return records
+
+
+def get_towbook_on_location(sa_ids: list[str]) -> dict[str, str]:
+    """Fetch real arrival timestamps for Towbook SAs from ServiceAppointmentHistory.
+
+    Towbook ActualStartTime is a fake future estimate. The REAL arrival is the
+    CreatedDate of the history row where Status changed to 'On Location'.
+
+    Args:
+        sa_ids: List of ServiceAppointment IDs (Towbook SAs only)
+
+    Returns:
+        Dict mapping SA ID -> ISO datetime string of 'On Location' timestamp
+    """
+    if not sa_ids:
+        return {}
+
+    result = {}
+    # Process in batches of 200 to stay within SOQL IN clause limits
+    for i in range(0, len(sa_ids), 200):
+        batch = sa_ids[i:i + 200]
+        id_list = "','".join(batch)
+        rows = sf_query_all(f"""
+            SELECT ServiceAppointmentId, NewValue, CreatedDate
+            FROM ServiceAppointmentHistory
+            WHERE ServiceAppointmentId IN ('{id_list}')
+              AND Field = 'Status'
+            ORDER BY ServiceAppointmentId, CreatedDate ASC
+        """)
+        for r in rows:
+            if r.get('NewValue') == 'On Location':
+                sid = r['ServiceAppointmentId']
+                if sid not in result:  # first On Location wins
+                    result[sid] = r['CreatedDate']
+    return result

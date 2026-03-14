@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchGarages, fetchOpsTerritories } from '../api'
 import { clsx } from 'clsx'
@@ -6,7 +6,7 @@ import {
   Search, Calendar, BarChart3, Map,
   AlertTriangle, Clock, CheckCircle2, ChevronUp, ChevronDown,
   Activity, Flame, RefreshCw, ChevronRight, X,
-  Phone, MapPin, Zap, Circle,
+  Phone, MapPin, Zap, Circle, Users,
 } from 'lucide-react'
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
@@ -43,16 +43,16 @@ function MiniBar({ pct, color }) {
 
 // ── Column definitions (for ? tooltips) ──────────────────────────────────────
 const COL_DEFS = {
-  name:          'Garage / territory name from Salesforce ServiceTerritory.',
-  city:          'City from the territory address.',
-  open:          'SAs currently in Dispatched or Assigned status — still waiting for a driver.',
-  total:         'Total Service Appointments created today for this garage (all statuses).',
-  completion:    'Completed SAs / Total SAs today. Measures how many dispatched calls this garage actually finished.',
-  pct_primary:   '1st Call %: When this garage is rank 1 (primary) for the call zone in the priority matrix, what % were completed? If no priority matrix data, uses overall completion rate.',
-  pct_secondary: '2nd+ Call %: Completion rate for calls where this garage was rank 2 or higher (backup). These are calls declined by the primary garage.',
-  avg_pta:       'Average Promised Time of Arrival (ERS_PTA__c) in minutes — the ETA given to the member at dispatch.',
-  resp_time:     'Average actual response time. For Field Services: CreatedDate → ActualStartTime. For Towbook-only garages: estimated from PTA (no real arrival data). "actual (N)" = N Field Services calls measured.',
-  max_wait:      'Longest current wait time among open SAs (Dispatched/Assigned). High values indicate a stuck or delayed call.',
+  name:          'ServiceTerritory.Name — the garage/territory name in Salesforce.',
+  city:          'ServiceTerritory.City — city from the territory address.',
+  open:          'COUNT(ServiceAppointment.Id) WHERE ServiceAppointment.Status IN (\'Dispatched\',\'Assigned\') AND ServiceAppointment.ServiceTerritoryId = this garage AND ServiceAppointment.CreatedDate = today. These are SAs still waiting for a driver.',
+  total:         'COUNT(ServiceAppointment.Id) WHERE ServiceAppointment.ServiceTerritoryId = this garage AND ServiceAppointment.CreatedDate = today. Includes all statuses.',
+  completion:    'COUNT(ServiceAppointment.Status = \'Completed\') ÷ Total × 100. Uses ServiceAppointment.Status to identify completed calls.',
+  pct_primary:   '1st Call Completion: calls where ServiceAppointment.ERS_Spotting_Number__c = 1 (rank 1 = primary in ERS_Territory_Priority_Matrix__c zone chain). completion = COUNT(Status = \'Completed\') ÷ COUNT(ERS_Spotting_Number__c = 1) × 100.',
+  pct_secondary: '2nd+ Call Completion: calls where ServiceAppointment.ERS_Spotting_Number__c > 1 (backup — received after primary declined via cascade). completion = COUNT(Status = \'Completed\') ÷ COUNT(ERS_Spotting_Number__c > 1) × 100.',
+  avg_pta:       'AVG(ServiceAppointment.ERS_PTA__c) WHERE ServiceAppointment.ERS_PTA__c > 0 AND ServiceAppointment.ERS_PTA__c < 999 AND ServiceAppointment.CreatedDate = today. ERS_PTA__c = minutes promised to the member at dispatch.',
+  resp_time:     'AVG(ServiceAppointment.ActualStartTime − ServiceAppointment.CreatedDate) in minutes, for Completed SAs today. Includes both Field Services and Towbook dispatches.',
+  max_wait:      'MAX(NOW() − ServiceAppointment.CreatedDate) WHERE ServiceAppointment.Status IN (\'Dispatched\',\'Assigned\'). Longest current wait among open SAs — high values = stuck/delayed call.',
 }
 
 // ── Sort header ───────────────────────────────────────────────────────────────
@@ -321,11 +321,14 @@ export default function Dashboard() {
         completion:   live?.completion_rate   ?? null,
         avg_pta:      live?.avg_pta           ?? null,
         avg_ata:      live?.avg_ata           ?? null,
+        pta_sample:   live?.pta_sample_size   ?? 0,
         ata_sample:   live?.ata_sample_size   ?? 0,
         resp_time:    live?.resp_time         ?? null,
         resp_source:  live?.resp_source       ?? null,
         avg_wait:     live?.avg_wait          ?? 0,
         max_wait:     live?.max_wait          ?? 0,
+        avail_drivers: live?.avail_drivers    ?? null,
+        capacity:     live?.capacity          ?? null,
         pct_primary:  live?.pct_primary_completion  ?? null,
         primary_n:    live?.primary_total    ?? 0,
         pct_secondary: live?.pct_secondary_completion ?? null,
@@ -371,6 +374,8 @@ export default function Dashboard() {
     : null
   const ptaVals  = active.map(r => r.avg_pta).filter(Boolean)
   const fleetPta = ptaVals.length ? Math.round(ptaVals.reduce((s, v) => s + v, 0) / ptaVals.length) : null
+  const overCap  = active.filter(r => r.capacity === 'over').length
+  const busyCap  = active.filter(r => r.capacity === 'busy').length
 
   const minAgo = lastUpdate
     ? Math.round((new Date() - lastUpdate) / 60000)
@@ -396,20 +401,24 @@ export default function Dashboard() {
       </div>
 
       {/* ── Summary KPIs ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         <KPI label="Active Today" value={active.length}
           sub={`of ${garages.length} territories`} icon={Activity} />
-        <KPI label="🔴 Critical" value={critical}
+        <KPI label="Critical" value={critical}
           sub={critical > 0 ? 'Need immediate action' : 'All clear'}
           color={critical > 0 ? 'text-red-400' : 'text-emerald-400'}
           icon={Flame} urgent={critical > 0} />
-        <KPI label="🟡 Behind" value={behind}
+        <KPI label="Behind" value={behind}
           sub="Slow but not critical"
           color={behind > 0 ? 'text-amber-400' : 'text-slate-500'}
           icon={AlertTriangle} />
         <KPI label="Open Right Now" value={totalOpen}
           sub="across all territories" icon={Phone}
           color={totalOpen > 20 ? 'text-red-400' : 'text-white'} />
+        <KPI label="Over Capacity" value={overCap > 0 ? `${overCap} garage${overCap > 1 ? 's' : ''}` : 'None'}
+          sub={busyCap > 0 ? `${busyCap} more busy` : 'All garages staffed'}
+          color={overCap > 0 ? 'text-red-400' : 'text-emerald-400'}
+          icon={Users} urgent={overCap > 0} />
         <KPI label="Fleet Avg PTA" value={fleetPta != null ? `${fleetPta} min` : '—'}
           sub="Avg promise to member"
           color={fleetPta && fleetPta <= 60 ? 'text-emerald-400' : fleetPta && fleetPta <= 90 ? 'text-amber-400' : 'text-red-400'}
@@ -454,7 +463,8 @@ export default function Dashboard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="w-2 px-0" />   {/* status border */}
+                <th className="w-2 px-0" />{/* status border */}
+                <th className="px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-8">#</th>
                 <Th label="Garage"     col="name"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="City"       col="city"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="Open"       col="open"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
@@ -477,6 +487,7 @@ export default function Dashboard() {
               {garLoading && [...Array(10)].map((_, i) => (
                 <tr key={i}>
                   <td className="w-1 py-3 bg-slate-700/30" />
+                  <td className="px-2 py-3"><div className="skeleton h-3 rounded w-4" /></td>
                   {[...Array(10)].map((__, j) => (
                     <td key={j} className="px-3 py-3.5">
                       <div className={clsx('skeleton h-3.5 rounded', j === 0 ? 'w-40' : 'w-16')} />
@@ -485,14 +496,13 @@ export default function Dashboard() {
                 </tr>
               ))}
 
-              {!garLoading && sorted.map(r => {
+              {!garLoading && sorted.map((r, idx) => {
                 const sm = statusMeta[r.status] || statusMeta.inactive
                 const isExpanded = expanded === r.id
 
                 return (
-                  <>
-                    <tr key={r.id}
-                      onClick={() => setExpanded(isExpanded ? null : r.id)}
+                  <Fragment key={r.id}>
+                    <tr onClick={() => setExpanded(isExpanded ? null : r.id)}
                       className={clsx(
                         'cursor-pointer transition-colors group',
                         isExpanded
@@ -502,43 +512,59 @@ export default function Dashboard() {
 
                       {/* Status left border */}
                       <td className={clsx('w-1 p-0 border-l-2', sm.border)} />
+                      <td className="px-2 py-2 align-top text-[10px] text-slate-500 text-right">{idx + 1}</td>
 
                       {/* Name */}
-                      <td className="px-3 py-3">
-                        <div className="font-semibold text-white text-sm leading-tight max-w-[200px] truncate">
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-semibold text-white text-sm leading-tight max-w-[280px] truncate flex items-center gap-1.5">
                           {r.name}
+                          {r.primary_zones > 0 && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-emerald-950/40 text-emerald-400 border border-emerald-800/30">Primary</span>
+                          )}
+                          {!r.primary_zones && r.secondary_zones > 0 && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-amber-950/40 text-amber-400 border border-amber-800/30">Secondary</span>
+                          )}
+                          {r.capacity === 'over' && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-red-950/60 text-red-400 border border-red-800/30 animate-pulse">Over Cap</span>
+                          )}
+                          {r.capacity === 'busy' && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-amber-950/50 text-amber-400 border border-amber-800/30">Busy</span>
+                          )}
                         </div>
-                        {r.status !== 'inactive' && r.status !== 'good' && (
-                          <div className={clsx('text-[10px] font-medium mt-0.5', sm.text)}>
-                            {r.status === 'critical' ? '⚠ Needs attention' : 'Falling behind'}
-                          </div>
-                        )}
+                        <div className={clsx('text-[10px] font-medium mt-0.5 h-3.5', sm.text)}>
+                          {r.status === 'critical' ? '⚠ Needs attention' : r.status === 'behind' ? 'Falling behind' : '\u00A0'}
+                        </div>
                       </td>
 
                       {/* City */}
-                      <td className="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">
+                      <td className="px-3 py-3 align-top text-xs text-slate-500 whitespace-nowrap">
                         {r.city ?? '—'}
                       </td>
 
                       {/* Open */}
-                      <td className="px-3 py-3">
+                      <td className="px-3 py-3 align-top">
                         {r.hasLive
-                          ? <span className={clsx(
-                              'inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full text-xs font-bold',
-                              r.open > 5  ? 'bg-red-950/60 text-red-300 ring-1 ring-red-700/40' :
-                              r.open > 0  ? 'bg-amber-950/50 text-amber-300' :
-                                            'text-slate-600'
-                            )}>{r.open}</span>
+                          ? <div>
+                              <span className={clsx(
+                                'inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full text-xs font-bold',
+                                r.open > 5  ? 'bg-red-950/60 text-red-300 ring-1 ring-red-700/40' :
+                                r.open > 0  ? 'bg-amber-950/50 text-amber-300' :
+                                              'text-slate-600'
+                              )}>{r.open}</span>
+                              {r.avail_drivers != null && (
+                                <div className="text-[10px] text-slate-600 mt-0.5">{r.avail_drivers} drv</div>
+                              )}
+                            </div>
                           : <span className="text-slate-700 text-xs">—</span>}
                       </td>
 
                       {/* Total today */}
-                      <td className="px-3 py-3 text-slate-300 font-medium">
+                      <td className="px-3 py-3 align-top text-slate-300 font-medium">
                         {r.hasLive ? r.total : <span className="text-slate-700 text-xs">—</span>}
                       </td>
 
                       {/* Completion % */}
-                      <td className="px-3 py-3">
+                      <td className="px-3 py-3 align-top">
                         {r.completion != null
                           ? <div>
                               <span className={clsx('font-bold', compColor(r.completion))}>
@@ -551,76 +577,79 @@ export default function Dashboard() {
                       </td>
 
                       {/* 1st Call % (primary) */}
-                      <td className="px-3 py-3">
-                        {r.pct_primary != null
-                          ? <div>
-                              <span className={clsx('font-bold',
-                                r.pct_primary >= 80 ? 'text-emerald-400' : r.pct_primary >= 60 ? 'text-amber-400' : 'text-red-400')}>
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-bold leading-tight">
+                          {r.pct_primary != null
+                            ? <span className={r.pct_primary >= 80 ? 'text-emerald-400' : r.pct_primary >= 60 ? 'text-amber-400' : 'text-red-400'}>
                                 {r.pct_primary}%
                               </span>
-                              <div className="text-[10px] text-slate-600">{r.primary_n} calls</div>
-                            </div>
-                          : <span className="text-slate-700 text-xs">—</span>}
+                            : <span className="text-slate-700 text-xs">—</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-600 h-3.5">{r.primary_n ? `${r.primary_n} calls` : '\u00A0'}</div>
                       </td>
 
                       {/* 2nd+ Call % (secondary) */}
-                      <td className="px-3 py-3">
-                        {r.pct_secondary != null
-                          ? <div>
-                              <span className={clsx('font-bold',
-                                r.pct_secondary >= 80 ? 'text-emerald-400' : r.pct_secondary >= 60 ? 'text-amber-400' : 'text-red-400')}>
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-bold leading-tight">
+                          {r.pct_secondary != null
+                            ? <span className={r.pct_secondary >= 80 ? 'text-emerald-400' : r.pct_secondary >= 60 ? 'text-amber-400' : 'text-red-400'}>
                                 {r.pct_secondary}%
                               </span>
-                              <div className="text-[10px] text-slate-600">{r.secondary_n} calls</div>
-                            </div>
-                          : <span className="text-slate-700 text-xs">—</span>}
+                            : <span className="text-slate-700 text-xs">—</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-600 h-3.5">{r.secondary_n ? `${r.secondary_n} calls` : '\u00A0'}</div>
                       </td>
 
                       {/* Avg PTA (Promise) */}
-                      <td className="px-3 py-3">
-                        {r.avg_pta != null
-                          ? <div>
-                              <span className={clsx('font-bold',
-                                r.avg_pta <= 60 ? 'text-emerald-400' : r.avg_pta <= 90 ? 'text-amber-400' : 'text-red-400')}>
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-bold leading-tight">
+                          {r.avg_pta != null
+                            ? <span className={r.avg_pta <= 60 ? 'text-emerald-400' : r.avg_pta <= 90 ? 'text-amber-400' : 'text-red-400'}>
                                 {r.avg_pta} min
                               </span>
-                            </div>
-                          : <span className="text-slate-700 text-xs">—</span>}
+                            : <span className="text-slate-700 text-xs">—</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-600 h-3.5">{r.pta_sample ? `${r.pta_sample} promised` : '\u00A0'}</div>
                       </td>
 
                       {/* Avg ATA (actual response time) */}
-                      <td className="px-3 py-3">
-                        {r.resp_time != null
-                          ? <div>
-                              <span className={clsx('font-bold', respColor(r.resp_time))}>
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-bold leading-tight">
+                          {r.resp_time != null
+                            ? <span className={respColor(r.resp_time)}>
                                 {r.resp_time} min
                               </span>
-                              <div className="text-[10px] text-slate-600">
-                                {r.resp_source === 'ata' ? `actual (${r.ata_sample})` : 'est. (PTA)'}
-                              </div>
-                            </div>
-                          : <span className="text-slate-700 text-xs">—</span>}
+                            : <span className="text-slate-700 text-xs">—</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-600 h-3.5">
+                          {r.resp_time != null
+                            ? (r.resp_source === 'ata' ? `actual (${r.ata_sample})` : 'est. (PTA)')
+                            : '\u00A0'}
+                        </div>
                       </td>
 
                       {/* Max wait */}
-                      <td className="px-3 py-3">
-                        {r.max_wait > 0
-                          ? <span className={waitColor(r.max_wait)}>{r.max_wait} min</span>
-                          : <span className="text-slate-700 text-xs">—</span>}
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-bold leading-tight">
+                          {r.max_wait > 0
+                            ? <span className={waitColor(r.max_wait)}>{r.max_wait} min</span>
+                            : <span className="text-slate-700 text-xs">—</span>}
+                        </div>
+                        <div className="h-3.5">{'\u00A0'}</div>
                       </td>
 
                       {/* Quick actions */}
-                      <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                      <td className="px-3 py-3 align-top" onClick={e => e.stopPropagation()}>
                         <QuickActions id={r.id} name={r.name} onNav={onNav} />
                       </td>
                     </tr>
 
                     {/* Expanded row */}
                     {isExpanded && (
-                      <ExpandedRow key={`${r.id}-exp`} row={r} onNav={onNav}
+                      <ExpandedRow row={r} onNav={onNav}
                         onClose={() => setExpanded(null)} />
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>

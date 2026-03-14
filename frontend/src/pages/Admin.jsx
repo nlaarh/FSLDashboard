@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, Users, UserPlus, Edit3, Trash, Eye, Radio } from 'lucide-react'
-import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions } from '../api'
+import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, Users, UserPlus, Edit3, Trash, Eye, Radio, Bot, Save } from 'lucide-react'
+import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions, adminGetSettings, adminUpdateSettings, fetchChatbotModels } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 
 const ROLES = ['admin', 'supervisor', 'viewer']
@@ -23,6 +23,15 @@ export default function Admin() {
   const [userForm, setUserForm] = useState({ username: '', password: '', name: '', role: 'viewer' })
   const [userError, setUserError] = useState('')
   const [userSaving, setUserSaving] = useState(false)
+
+  // AI Assistant config state
+  const [aiProvider, setAiProvider] = useState('')
+  const [aiApiKey, setAiApiKey] = useState('')
+  const [aiPrimaryModel, setAiPrimaryModel] = useState('')
+  const [aiFallbackModel, setAiFallbackModel] = useState('')
+  const [aiModelCatalog, setAiModelCatalog] = useState({})
+  const [aiSaving, setAiSaving] = useState(false)
+  const [aiSaved, setAiSaved] = useState(false)
 
   const verify = async () => {
     setAuthError('')
@@ -60,15 +69,61 @@ export default function Admin() {
     } catch { /* ignore */ }
   }, [authed, pin])
 
+  // Load AI config + model catalog on auth
+  const loadAiConfig = useCallback(async () => {
+    if (!authed) return
+    try {
+      const [settings, rawCatalog] = await Promise.all([
+        adminGetSettings(pin),
+        fetchChatbotModels(),
+      ])
+      // Normalize catalog: convert old {low:{id,label}, mid:...} to [{id,label,tier},...] if needed
+      const catalog = {}
+      for (const [prov, val] of Object.entries(rawCatalog || {})) {
+        if (Array.isArray(val)) {
+          catalog[prov] = val
+        } else {
+          // Old format: {low: {id, label}, mid: ..., high: ...}
+          catalog[prov] = [
+            { id: val.low?.id || '', label: val.low?.label || '', tier: 'fast' },
+            { id: val.mid?.id || '', label: val.mid?.label || '', tier: 'balanced' },
+            { id: val.high?.id || '', label: val.high?.label || '', tier: 'reasoning' },
+          ].filter(m => m.id)
+        }
+      }
+      setAiModelCatalog(catalog)
+      const cb = settings.chatbot || {}
+      setAiProvider(cb.provider || '')
+      setAiApiKey(cb.api_key || '')
+      // Support both new (primary_model) and old (models.mid) settings
+      setAiPrimaryModel(cb.primary_model || cb.models?.mid || cb.models?.high || '')
+      setAiFallbackModel(cb.fallback_model || cb.models?.low || '')
+    } catch { /* ignore */ }
+  }, [authed, pin])
+
+  const saveAiConfig = async () => {
+    setAiSaving(true)
+    setAiSaved(false)
+    try {
+      await adminUpdateSettings(pin, {
+        chatbot: { provider: aiProvider, api_key: aiApiKey, primary_model: aiPrimaryModel, fallback_model: aiFallbackModel },
+      })
+      setAiSaved(true)
+      setTimeout(() => setAiSaved(false), 3000)
+    } catch { /* ignore */ }
+    finally { setAiSaving(false) }
+  }
+
   useEffect(() => {
     if (authed) {
       refresh()
       loadUsers()
       loadSessions()
+      loadAiConfig()
       const id = setInterval(() => { refresh(); loadSessions() }, 5000)
       return () => clearInterval(id)
     }
-  }, [authed, refresh, loadUsers, loadSessions])
+  }, [authed, refresh, loadUsers, loadSessions, loadAiConfig])
 
   const handleFlush = async (type, fn) => {
     setFlushing(type)
@@ -203,6 +258,9 @@ export default function Admin() {
           </button>
           <div className="text-xs text-slate-600 flex items-center gap-1">
             <Server className="w-3 h-3" /> Uptime: {uptimeStr}
+          </div>
+          <div className="px-2 py-0.5 rounded-md bg-brand-600/20 border border-brand-500/30 text-[10px] font-mono text-brand-400">
+            v1.00
           </div>
         </div>
       </div>
@@ -390,6 +448,123 @@ export default function Admin() {
             ))}
           </div>
           <p className="text-[10px] text-slate-600 mt-3">Changes apply to all maps immediately. Preference saved in browser.</p>
+        </div>
+      </div>
+
+      {/* ── AI Assistant Config ── */}
+      <div className="glass rounded-xl overflow-hidden">
+        <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
+          <Bot className="w-4 h-4 text-brand-400" />
+          <h2 className="text-sm font-semibold text-white">AI Help Assistant</h2>
+          {aiSaved && <span className="text-[10px] text-emerald-400 ml-auto flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
+        </div>
+        <div className="p-4 space-y-5">
+          <p className="text-[11px] text-slate-500">Configure the AI chatbot in the Help Center. Pick a provider, enter your API key, then choose a primary model and an optional fallback.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Left column: Provider + API Key */}
+            <div className="space-y-4">
+              {/* Provider dropdown */}
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">Provider</label>
+                <div className="relative">
+                  <select value={aiProvider} onChange={e => {
+                    const p = e.target.value
+                    setAiProvider(p)
+                    setAiApiKey('')
+                    const cat = Array.isArray(aiModelCatalog[p]) ? aiModelCatalog[p] : []
+                    const balanced = cat.find(m => m.tier === 'balanced')
+                    const fast = cat.find(m => m.tier === 'fast')
+                    setAiPrimaryModel(balanced?.id || cat[0]?.id || '')
+                    setAiFallbackModel(fast?.id || '')
+                  }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 pr-8
+                               focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
+                    <option value="">-- Select Provider --</option>
+                    <option value="openai">OpenAI (GPT)</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="google">Google (Gemini)</option>
+                  </select>
+                  <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                </div>
+              </div>
+
+              {/* API Key */}
+              {aiProvider && (
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">API Key</label>
+                  <input value={aiApiKey} onChange={e => setAiApiKey(e.target.value)}
+                    type="password" placeholder={`Enter your ${aiProvider} API key...`}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 font-mono" />
+                  <p className="text-[10px] text-slate-600 mt-1">
+                    {aiProvider === 'openai' && 'Get your key at platform.openai.com/api-keys'}
+                    {aiProvider === 'anthropic' && 'Get your key at console.anthropic.com/settings/keys'}
+                    {aiProvider === 'google' && 'Get your key at aistudio.google.com/apikey'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Right column: Primary + Fallback model */}
+            {aiProvider && (
+              <div className="space-y-4">
+                {/* Primary Model */}
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">
+                    Primary Model <span className="text-brand-400">(required)</span>
+                  </label>
+                  <div className="relative">
+                    <select value={aiPrimaryModel} onChange={e => setAiPrimaryModel(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 pr-8
+                                 focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
+                      <option value="">-- Select Model --</option>
+                      {(aiModelCatalog[aiProvider] || []).map(m => (
+                        <option key={m.id} value={m.id}>{m.label} ({m.tier})</option>
+                      ))}
+                    </select>
+                    <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                  </div>
+                  <p className="text-[10px] text-slate-600 mt-1">Used for all chatbot questions</p>
+                </div>
+
+                {/* Fallback Model */}
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">
+                    Fallback Model <span className="text-slate-600">(optional)</span>
+                  </label>
+                  <div className="relative">
+                    <select value={aiFallbackModel} onChange={e => setAiFallbackModel(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 pr-8
+                                 focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
+                      <option value="">-- None --</option>
+                      {(aiModelCatalog[aiProvider] || []).filter(m => m.id !== aiPrimaryModel).map(m => (
+                        <option key={m.id} value={m.id}>{m.label} ({m.tier})</option>
+                      ))}
+                    </select>
+                    <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                  </div>
+                  <p className="text-[10px] text-slate-600 mt-1">If primary fails, this model takes over automatically</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Save button */}
+          {aiProvider && (
+            <div className="flex items-center gap-3 pt-1">
+              <button onClick={saveAiConfig} disabled={aiSaving || !aiApiKey || !aiPrimaryModel}
+                className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-40 rounded-lg text-xs font-semibold text-white transition-colors">
+                {aiSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {aiSaving ? 'Saving...' : 'Save AI Configuration'}
+              </button>
+              {aiPrimaryModel && (
+                <span className="text-[10px] text-slate-600">
+                  Primary: <span className="text-slate-400 font-mono">{aiPrimaryModel}</span>
+                  {aiFallbackModel && <> / Fallback: <span className="text-slate-400 font-mono">{aiFallbackModel}</span></>}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

@@ -6,7 +6,7 @@ All data live from Salesforce (parallel SOQL).
 
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 from cache import cached_query
 
 # ── Dimension weights ────────────────────────────────────────────────────────
@@ -70,16 +70,15 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                   AND WorkType.Name != 'Tow Drop-Off'
                 GROUP BY Status
             """),
-            # Individual: only Field Services completed with ActualStartTime
-            # (Towbook ActualStartTime is bulk-updated at midnight — not real arrival)
+            # Individual completed SAs for response time analysis
             completed=lambda: sf_query_all(f"""
-                SELECT CreatedDate, SchedStartTime, ActualStartTime, ERS_PTA__c
+                SELECT Id, CreatedDate, SchedStartTime, ActualStartTime,
+                       ERS_PTA__c, ERS_Dispatch_Method__c
                 FROM ServiceAppointment
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND CreatedDate >= {since}
                   AND Status = 'Completed'
-                  AND ActualStartTime != null
-                  AND ERS_Dispatch_Method__c = 'Field Services'
+                  AND WorkType.Name != 'Tow Drop-Off'
                 ORDER BY CreatedDate DESC
                 LIMIT 500
             """),
@@ -123,24 +122,51 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         completed_sas = data['completed']
 
         # SLA Hit Rate + Median Response (from individual completed SAs)
+        # Towbook ActualStartTime is a fake future estimate. Real arrival is
+        # the 'On Location' status change from ServiceAppointmentHistory.
+        # Fleet garages use ActualStartTime directly.
+        tb_count = sum(1 for s in completed_sas if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
+        is_towbook = tb_count > len(completed_sas) * 0.5
+
+        # Fetch real on-location timestamps for Towbook SAs
+        towbook_ids = [s['Id'] for s in completed_sas
+                       if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook' and s.get('Id')]
+        towbook_on_loc = get_towbook_on_location(towbook_ids) if towbook_ids else {}
+
         response_times = []
         for s in completed_sas:
             created = _parse_dt(s.get('CreatedDate'))
-            started = _parse_dt(s.get('ActualStartTime'))
-            if created and started:
-                diff = (started - created).total_seconds() / 60
-                if 0 < diff < 1440:
-                    response_times.append(diff)
+            dispatch_method = (s.get('ERS_Dispatch_Method__c') or '')
 
-        under_45 = sum(1 for r in response_times if r <= 45)
-        sla_hit_rate = under_45 / max(len(response_times), 1)
-        median_response = sorted(response_times)[len(response_times) // 2] if response_times else None
+            if dispatch_method == 'Towbook':
+                # Towbook: use real on-location time from history
+                on_loc_str = towbook_on_loc.get(s.get('Id'))
+                on_loc = _parse_dt(on_loc_str)
+                if created and on_loc:
+                    diff = (on_loc - created).total_seconds() / 60
+                    if 0 < diff < 1440:
+                        response_times.append(diff)
+            else:
+                # Fleet: use ActualStartTime
+                started = _parse_dt(s.get('ActualStartTime'))
+                if created and started:
+                    diff = (started - created).total_seconds() / 60
+                    if 0 < diff < 1440:
+                        response_times.append(diff)
+
+        effective_times = response_times  # Used for SLA and median below
+
+        under_45 = sum(1 for r in effective_times if r <= 45)
+        sla_hit_rate = under_45 / max(len(effective_times), 1)
+        median_response = sorted(effective_times)[len(effective_times) // 2] if effective_times else None
 
         # Completion Rate
         completion_rate = completed_count / max(total, 1)
 
         # PTA Accuracy (from individual completed SAs)
         # Measures: did the driver arrive within the promised PTA window?
+        # Towbook: use real on-location time from history.
+        # Fleet: use ActualStartTime.
         pta_values = []
         pta_accurate = 0
         pta_evaluated = 0
@@ -149,8 +175,13 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
             if pta is not None:
                 pv = float(pta)
                 pta_values.append(pv)
+                dispatch_method = (s.get('ERS_Dispatch_Method__c') or '')
                 created = _parse_dt(s.get('CreatedDate'))
-                started = _parse_dt(s.get('ActualStartTime'))
+                if dispatch_method == 'Towbook':
+                    on_loc_str = towbook_on_loc.get(s.get('Id'))
+                    started = _parse_dt(on_loc_str)
+                else:
+                    started = _parse_dt(s.get('ActualStartTime'))
                 if created and started:
                     diff = (started - created).total_seconds() / 60
                     if 0 < diff < 480:
@@ -165,6 +196,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         cnw_rate = cnw_count / max(total, 1)
 
         # Dispatch Speed (from individual completed SAs)
+        # SchedStartTime is set by the scheduler, not Towbook — usable for both
         dispatch_times = []
         for s in completed_sas:
             created = _parse_dt(s.get('CreatedDate'))
@@ -276,11 +308,12 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         return {
             'composite': composite,
             'grade': grade,
+            'garage_type': 'towbook' if is_towbook else 'fleet',
             'dimensions': dimensions,
             'sample_sizes': {
                 'total_sas': total,
                 'completed': completed_count,
-                'with_response_time': len(response_times),
+                'with_response_time': len(effective_times),
                 'with_pta': len(pta_values),
                 'with_dispatch_time': len(dispatch_times),
                 'surveys': total_surveys,

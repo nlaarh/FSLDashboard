@@ -1,0 +1,1818 @@
+{
+  "entities": [
+    {
+      "name": "ServiceAppointment",
+      "label": "Service Appointment",
+      "description": "The core record for every roadside assistance call. Each time a member calls AAA for help, a Service Appointment (SA) is created. It tracks the full lifecycle: creation, dispatch, driver arrival, job completion, and any cancellations or declines. This is the primary object for all metrics.",
+      "category": "Core Operations",
+      "sfType": "standard"
+    },
+    {
+      "name": "ServiceTerritory",
+      "label": "Service Territory (Garage)",
+      "description": "Represents a garage or service territory — the physical facility where drivers are based. Each garage has assigned drivers, zone coverage, and a facility account. Garages are ranked by composite score and graded A–F.",
+      "category": "Core Operations",
+      "sfType": "standard"
+    },
+    {
+      "name": "WorkType",
+      "label": "Work Type",
+      "description": "Defines the type of roadside service: Tow, Battery, Tire, Lockout, Locksmith, Winch Out, Fuel/Miscellaneous, PVS, Jumpstart, or Tow Drop-Off. Determines which driver skills are required and affects metric calculations (Tow Drop-Off is excluded from counts).",
+      "category": "Core Operations",
+      "sfType": "standard"
+    },
+    {
+      "name": "WorkOrder",
+      "label": "Work Order",
+      "description": "Parent record that groups one or more Service Appointments together. The Work Order Number is the key used to link customer satisfaction surveys back to specific calls. Each SA belongs to one Work Order.",
+      "category": "Core Operations",
+      "sfType": "standard"
+    },
+    {
+      "name": "ServiceResource",
+      "label": "Service Resource (Driver/Truck)",
+      "description": "Represents a driver or truck in the fleet. For internal fleet: this is the actual driver with their GPS location from the FSL mobile app. For Towbook contractors: may represent a truck identifier. Tracks real-time location, skills, and driver type.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "ServiceTerritoryMember",
+      "label": "Territory Membership",
+      "description": "Junction object linking a driver (ServiceResource) to a garage (ServiceTerritory). A driver can belong to multiple territories as primary or secondary. Used to count fleet size per garage and determine which drivers can be assigned to calls in that territory.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "Skill",
+      "label": "Skill",
+      "description": "Defines a capability that drivers can have: Tow, Flat Bed, Battery, Tire, Lockout, etc. Skills determine which call types a driver is qualified to handle. Used in driver recommendation and cascade logic.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "ServiceResourceSkill",
+      "label": "Driver Skill Assignment",
+      "description": "Junction object linking a driver (ServiceResource) to a skill (Skill). Each row means 'this driver can perform this type of service.' Used to classify drivers as tow-capable, light-service-capable, or battery-capable for dispatch matching.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "AssignedResource",
+      "label": "Assigned Resource",
+      "description": "Junction object that records which driver was assigned to which Service Appointment. Created when a driver is dispatched to a call. Used to build the Driver Leaderboard — linking individual driver performance to specific calls and timing data.",
+      "category": "Dispatch & Assignment",
+      "sfType": "standard"
+    },
+    {
+      "name": "ServiceAppointmentHistory",
+      "label": "SA History (Audit Trail)",
+      "description": "Standard Salesforce field history tracking for Service Appointments. Records every field change with old value, new value, and timestamp. Critical for two purposes: (1) determining 1st Call vs 2nd+ Call by tracking territory assignment sequence, (2) capturing real Towbook arrival times via 'On Location' status transitions.",
+      "category": "Audit & History",
+      "sfType": "standard"
+    },
+    {
+      "name": "ERS_Territory_Priority_Matrix__c",
+      "label": "Territory Priority Matrix",
+      "description": "Custom object defining the zone cascade chain — which garages serve which zones, in what priority order, and for which work types. When a call comes in from a zone, the system dispatches to the Priority 1 garage first. If that garage declines, it cascades to Priority 2, then 3, etc.",
+      "category": "Territory & Cascade",
+      "sfType": "custom"
+    },
+    {
+      "name": "Survey_Result__c",
+      "label": "Customer Satisfaction Survey",
+      "description": "Custom object storing post-service customer surveys from Qualtrics. Sent to members after their call is completed. Matched back to the garage via Work Order Number. Surveys can arrive days after the call, so recent periods may have incomplete survey data.",
+      "category": "Member Satisfaction",
+      "sfType": "custom"
+    },
+    {
+      "name": "Account",
+      "label": "Facility Account",
+      "description": "Standard Salesforce Account record representing the garage's business entity. Linked to ServiceTerritory via ERS_Facility_Account__r. Provides the garage phone number and account-level dispatch method classification.",
+      "category": "Core Operations",
+      "sfType": "standard"
+    },
+    {
+      "name": "FSL__Polygon__c",
+      "label": "Territory Polygon (Boundary)",
+      "description": "Managed package object storing the geographic boundary of each territory as KML data. Each polygon defines the physical area a garage covers on the map. Used to render territory boundaries on the Command Center map layer.",
+      "category": "Geography",
+      "sfType": "managed"
+    },
+    {
+      "name": "FSL__Scheduling_Policy__c",
+      "label": "Scheduling Policy",
+      "description": "Managed package object defining the rules and goals used by the FSL optimization engine when auto-dispatching calls. Includes work rules (constraints) and service goals (optimization objectives) that determine how calls are assigned to drivers.",
+      "category": "Scheduling",
+      "sfType": "managed"
+    },
+    {
+      "name": "SkillRequirement",
+      "label": "Skill Requirement",
+      "description": "Junction object linking a WorkType to the Skills required to perform it. For example, a 'Tow' work type requires the 'Tow' skill and optionally 'Flat Bed.' Used by the dispatch engine and simulator to determine which drivers are qualified for a given call type.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "Asset",
+      "label": "Asset (ERS Truck)",
+      "description": "Represents a physical truck in the fleet. Filtered by RecordType 'ERS Truck' to get only roadside assistance vehicles. Links to a driver via ERS_Driver__c and carries truck capabilities (tow, flatbed, light service). Used to match truck capabilities to call requirements in dispatch recommendations and the Command Center map.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "Shift",
+      "label": "Driver Shift",
+      "description": "Records a driver's scheduled work shift — start time, end time, assigned territory, and status. Used to determine driver availability for dispatch recommendations and capacity planning. A driver is only considered available if they have an active shift covering the current time window.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "ResourceAbsence",
+      "label": "Resource Absence",
+      "description": "Records when a driver is unavailable — vacation, sick leave, training, truck maintenance, etc. An absence overlapping the current time means the driver cannot be dispatched. Used alongside Shift records to build the complete picture of driver availability.",
+      "category": "Fleet & Resources",
+      "sfType": "standard"
+    },
+    {
+      "name": "ERS_Service_Appointment_PTA__c",
+      "label": "PTA Configuration",
+      "description": "Custom object storing the configured PTA (Promised Time of Arrival) values per territory and work type. Defines how many minutes should be promised to the member based on the garage and service type. Used by the PTA Advisor page to compare configured PTA targets against actual performance.",
+      "category": "PTA / ETA Promise",
+      "sfType": "custom"
+    },
+    {
+      "name": "FSL__Scheduling_Policy_Goal__c",
+      "label": "Scheduling Policy Goal",
+      "description": "Junction object linking a Scheduling Policy to a Service Goal with a weight. Each policy can have multiple optimization goals (e.g., minimize travel time, maximize resource utilization) with different weights that control how the FSL engine prioritizes trade-offs during auto-dispatch.",
+      "category": "Scheduling",
+      "sfType": "managed"
+    },
+    {
+      "name": "FSL__Service_Goal__c",
+      "label": "Service Goal",
+      "description": "Defines an optimization objective for the FSL scheduling engine — e.g., 'Minimize Travel', 'Maximize Resource Utilization', 'Prioritize By Priority.' Referenced by Scheduling Policy Goals with assigned weights.",
+      "category": "Scheduling",
+      "sfType": "managed"
+    },
+    {
+      "name": "FSL__Scheduling_Policy_Work_Rule__c",
+      "label": "Scheduling Policy Work Rule",
+      "description": "Junction object linking a Scheduling Policy to a Work Rule. Defines which constraints (work rules) apply under each scheduling policy.",
+      "category": "Scheduling",
+      "sfType": "managed"
+    },
+    {
+      "name": "FSL__Work_Rule__c",
+      "label": "Work Rule",
+      "description": "Defines a constraint for the FSL scheduling engine — e.g., 'Match Skills', 'Match Territory', 'Working Hours', 'Maximum Travel Distance.' Work rules prevent invalid assignments (a driver without tow capability won't be assigned a tow call).",
+      "category": "Scheduling",
+      "sfType": "managed"
+    }
+  ],
+
+  "fields": [
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Id",
+      "label": "Record ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique Salesforce record ID for the Service Appointment. This is the primary key used in all joins, lookups, and API references throughout the application.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["All pages"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "AppointmentNumber",
+      "label": "Appointment Number",
+      "type": "Auto-Number",
+      "custom": false,
+      "description": "Human-readable appointment number (e.g., SA-00012345). This is the number displayed to users in the SA lookup, queue board, and detail views. Auto-generated by Salesforce when the record is created.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Command Center SA Lookup", "Queue Board", "Garage Detail"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "CreatedDate",
+      "label": "Call Created Time",
+      "type": "DateTime",
+      "custom": false,
+      "description": "The exact moment AAA received the member's roadside assistance call and created the Service Appointment in Salesforce. This is when the clock starts ticking for ALL response time calculations. Every metric that measures 'how long the member waited' starts from this timestamp. ATA (Actual Time of Arrival) = ActualStartTime minus CreatedDate.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Response Time", "SLA Hit Rate", "ATA", "Dispatch Speed", "PTA Accuracy", "All dashboards"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Status",
+      "label": "SA Status",
+      "type": "Picklist",
+      "custom": false,
+      "description": "Current lifecycle status of the service call. Possible values: 'Dispatched' (driver assigned, en route to member), 'Assigned' (waiting for a driver), 'Completed' (job finished successfully), 'Canceled' (call cancelled before service), 'Cancel Call - Service Not En Route' (cancelled before driver departed), 'Cancel Call - Service En Route' (cancelled after driver departed), 'Unable to Complete' (driver arrived but couldn't finish), 'No-Show' (member not at location). Status drives completion rate calculations and open call counts.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Completion Rate", "Open Calls", "All dashboards"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ServiceTerritoryId",
+      "label": "Assigned Garage (Territory)",
+      "type": "Lookup → ServiceTerritory",
+      "custom": false,
+      "description": "The garage/territory currently assigned to handle this call. This determines which garage's metrics are affected by this call. When a call is dispatched, it is assigned to a specific garage. If that garage declines and the call cascades to another garage, this field is updated to the new garage.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["All garage-level metrics", "Territory grouping", "Cascade tracking"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "WorkTypeId",
+      "label": "Work Type Reference",
+      "type": "Lookup → WorkType",
+      "custom": false,
+      "description": "Links this Service Appointment to the type of service needed (Tow, Battery, Tire, Lockout, etc.). The work type determines which drivers are qualified to handle the call and affects cascade logic. 'Tow Drop-Off' work type triggers automatic exclusion from all response time and count metrics.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Volume by Type", "Driver Skill Matching", "Cascade", "Metric exclusion (Tow Drop-Off)"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "SchedStartTime",
+      "label": "Scheduled Start (Dispatch Time)",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When a driver was scheduled or assigned to respond to this call. Set by the FSL optimization engine during auto-dispatch, or manually by a dispatcher. Used to decompose the member's total wait time: 'Dispatch Queue' = time from CreatedDate to SchedStartTime (how long the call sat before someone was assigned). 'Travel Time' = SchedStartTime to ActualStartTime (how long the driver took to reach the member).",
+      "fleetContractor": "Fleet primarily",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Dispatch Speed", "Response Time Decomposition"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "SchedEndTime",
+      "label": "Scheduled End Time",
+      "type": "DateTime",
+      "custom": false,
+      "description": "Projected end time for the service call, calculated by adding the estimated duration to SchedStartTime. Used by the scheduling engine for capacity planning but not directly shown in app metrics.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Scheduling engine"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ActualStartTime",
+      "label": "Driver Arrival Time",
+      "type": "DateTime",
+      "custom": false,
+      "description": "The moment the driver physically arrived at the member's location. For Fleet drivers: set when the driver taps 'Arrived' in the FSL mobile app — this is the real, precise arrival time. For Towbook contractors: written by the 'Integrations Towbook' system user at completion as a future-projected estimate, NOT the real arrival. For Towbook, the actual arrival is captured in ServiceAppointmentHistory when Status changes to 'On Location'. This is the END of the clock for response time: ATA = ActualStartTime minus CreatedDate.",
+      "fleetContractor": "Both (different behavior)",
+      "category": "Arrival & Completion",
+      "usedIn": ["ATA", "SLA Hit Rate", "Response Time", "PTA Accuracy", "Driver Leaderboard", "On-Site Duration"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ActualEndTime",
+      "label": "Job Completion Time",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the driver finished the roadside service and marked the Service Appointment as complete. Used to calculate on-site duration (how long the driver spent helping the member): On-Site Duration = ActualEndTime minus ActualStartTime. Also used for total call duration: ActualEndTime minus CreatedDate.",
+      "fleetContractor": "Both",
+      "category": "Arrival & Completion",
+      "usedIn": ["On-Site Duration", "Response Decomposition", "Driver Leaderboard"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Latitude",
+      "label": "Member Location (Latitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "GPS latitude of the member's stranded location — where they are waiting for roadside help. Used for map display (pin on the Command Center map) and distance calculations when recommending the nearest available driver.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Command Center Map", "Dispatch Map", "Driver Recommendations"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Longitude",
+      "label": "Member Location (Longitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "GPS longitude of the member's stranded location. Works with Latitude to pinpoint the exact location on the map and calculate straight-line distance to available drivers.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Command Center Map", "Dispatch Map", "Driver Recommendations"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Street",
+      "label": "Member Street Address",
+      "type": "Text",
+      "custom": false,
+      "description": "Street address component of the member's stranded location (e.g., '123 Main St'). Displayed in SA detail views and the queue board to help dispatchers identify the call location.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Garage Detail", "Queue Board"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "City",
+      "label": "Member City",
+      "type": "Text",
+      "custom": false,
+      "description": "City where the member is stranded. Part of the full address shown in detail views.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Garage Detail", "Queue Board"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "State",
+      "label": "Member State",
+      "type": "Text",
+      "custom": false,
+      "description": "State where the member is stranded.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Garage Detail"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "PostalCode",
+      "label": "Member Zip Code",
+      "type": "Text",
+      "custom": false,
+      "description": "Postal/ZIP code of the member's stranded location.",
+      "fleetContractor": "Both",
+      "category": "Call Creation",
+      "usedIn": ["Garage Detail"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_PTA__c",
+      "label": "PTA — Promised Time of Arrival (Minutes)",
+      "type": "Number",
+      "custom": true,
+      "description": "The number of minutes promised to the member at dispatch time — 'we'll have someone there in X minutes.' For Fleet: calculated by the FSL optimization engine based on driver distance and availability. For Towbook: entered by the Towbook dispatcher (often a rough estimate). Values of 0 mean 'field not populated' and 999+ mean 'no ETA given.' Both are sentinel values excluded from PTA accuracy calculations. Valid range: 1–998 minutes.",
+      "fleetContractor": "Both (different source)",
+      "category": "PTA / ETA Promise",
+      "usedIn": ["Avg PTA", "PTA Accuracy", "ETA Accuracy", "PTA Advisor", "PTA-ATA Delta"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_PTA_Due__c",
+      "label": "PTA Due Timestamp",
+      "type": "DateTime",
+      "custom": true,
+      "description": "The absolute timestamp when the driver was promised to arrive. Calculated as CreatedDate plus ERS_PTA__c minutes. Displayed in the Queue Board to show which calls are approaching or have passed their PTA deadline — helping dispatchers prioritize calls that are about to miss their promised time.",
+      "fleetContractor": "Both",
+      "category": "PTA / ETA Promise",
+      "usedIn": ["Queue Board (PTA due indicator)"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Dispatch_Method__c",
+      "label": "Dispatch Method",
+      "type": "Picklist",
+      "custom": true,
+      "description": "Identifies whether the call was handled by the internal fleet or an external contractor. 'Field Services' = internal fleet driver dispatched via the FSL optimization engine. 'Towbook' = external contractor dispatched via the Towbook system. This field is a Salesforce formula field set automatically at dispatch time. Determines the Fleet/Contractor badge shown on the garage dashboard and drives the dispatch mix pie chart.",
+      "fleetContractor": "Distinguishes Fleet from Contractor",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Dispatch Mix", "Fleet/Contractor badge", "Garage Dashboard"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Auto_Assign__c",
+      "label": "Auto-Assigned Flag",
+      "type": "Checkbox",
+      "custom": true,
+      "description": "True means the Service Appointment was automatically dispatched by the FSL optimization engine to the primary (first-choice) garage for the zone. False or null means it was manually dispatched, is a secondary/backup dispatch, or was sent via Towbook. Used to split acceptance rates into 'Primary' (auto-assigned, 1st choice) vs 'Secondary' (manual/backup) categories. Note: this field has known reliability issues and is cross-validated with SA History data.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Acceptance Rate (Primary vs Secondary)"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Parent_Territory__c",
+      "label": "Parent (Spotted) Territory",
+      "type": "Lookup → ServiceTerritory",
+      "custom": true,
+      "description": "The zone/territory where the member is physically stranded — the 'spotted zone.' This is NOT the garage assigned to handle the call; it's the geographic zone where the member's car broke down. Combined with the Territory Priority Matrix to determine if the assigned garage is the primary (rank 1) or backup (rank 2+) for that zone. Drives the '1st Call %' and '2nd+ Call %' metrics.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["1st Call %", "2nd+ Call %", "Primary/Secondary labels"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Facility_Decline_Reason__c",
+      "label": "Facility Decline Reason",
+      "type": "Picklist",
+      "custom": true,
+      "description": "If a garage declined this call, this field captures why — e.g., 'No Trucks Available', 'Out of Service Area', 'Driver Unavailable.' A non-null value means the garage declined the call. When a garage declines, the call cascades to the next garage in the zone chain, adding delay for the member. Used for acceptance rate calculations, decline analysis charts, and the decline rate in the composite scorer.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Acceptance Rate", "Decline Analysis", "Decline Rate (Scorer)", "Cascade tracking"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Cancellation_Reason__c",
+      "label": "Cancellation Reason",
+      "type": "Picklist",
+      "custom": true,
+      "description": "If the call was cancelled, this field captures the reason. The key value is 'Member Could Not Wait%' — this means the member gave up waiting for the driver and cancelled the call themselves. A high 'Could Not Wait' rate is a direct indicator of member frustration and long response times. Other values like 'Duplicate Call', 'Problem Resolved' are shown in the cancellation breakdown chart.",
+      "fleetContractor": "Both",
+      "category": "Cancellation",
+      "usedIn": ["Could Not Wait Rate", "Cancel Analysis chart"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Spotting_Number__c",
+      "label": "Spotting Number",
+      "type": "Number",
+      "custom": true,
+      "description": "Legacy field that records which position this SA was in the dispatch sequence. A value of 1 means the call was sent to this garage first (1st call). A value greater than 1 means the call was cascaded from another garage (2nd+ call). Used as a fallback for 1st Call vs 2nd+ Call classification when SA History records are unavailable.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["1st Call % (fallback method)"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Off_Platform_Truck_Id__c",
+      "label": "Towbook Truck ID",
+      "type": "Text",
+      "custom": true,
+      "description": "Identifier for the Towbook contractor's truck assigned to this call. Only populated for Towbook-dispatched calls (ERS_Dispatch_Method__c = 'Towbook'). Used internally to track which contractor truck handled the service.",
+      "fleetContractor": "Contractor only",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Towbook tracking"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "Off_Platform_Driver__c",
+      "label": "Towbook Driver Reference",
+      "type": "Lookup → ServiceResource",
+      "custom": true,
+      "description": "Links to the ServiceResource record for the Towbook contractor driver. Only populated for Towbook-dispatched calls. The related record (Off_Platform_Driver__r.Name) provides the contractor driver's display name.",
+      "fleetContractor": "Contractor only",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Towbook driver identification"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Dispatched_Geolocation__Latitude__s",
+      "label": "Dispatch Geolocation (Latitude)",
+      "type": "Number (Geolocation)",
+      "custom": true,
+      "description": "GPS latitude recorded at the time of dispatch. May differ from the member's reported location (Latitude field) if the dispatch location was adjusted or the member moved.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Dispatch location tracking"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "ERS_Dispatched_Geolocation__Longitude__s",
+      "label": "Dispatch Geolocation (Longitude)",
+      "type": "Number (Geolocation)",
+      "custom": true,
+      "description": "GPS longitude recorded at the time of dispatch.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Dispatch location tracking"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "FSL__Duration_In_Minutes__c",
+      "label": "Estimated Job Duration",
+      "type": "Number",
+      "custom": true,
+      "description": "FSL managed package field estimating how many minutes the on-site service will take. Used by the scheduling engine for capacity planning and driver scheduling optimization.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine", "Capacity planning"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "FSL__Schedule_Mode__c",
+      "label": "Schedule Mode",
+      "type": "Picklist",
+      "custom": true,
+      "description": "FSL managed package field indicating how this SA was scheduled — automatic optimization, manual dispatch, or emergency override.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    },
+    {
+      "entity": "ServiceAppointment",
+      "entityLabel": "Service Appointment",
+      "apiName": "FSL__Auto_Schedule__c",
+      "label": "Auto-Schedule Flag",
+      "type": "Checkbox",
+      "custom": true,
+      "description": "FSL managed package flag indicating whether this SA is eligible for automatic scheduling by the FSL optimization engine.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    },
+
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "Id",
+      "label": "Territory Record ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique Salesforce record ID for the garage/territory. Used as the primary key for all garage-level data grouping and API lookups.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["All garage pages"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "Name",
+      "label": "Garage Name",
+      "type": "Text",
+      "custom": false,
+      "description": "Display name of the garage/territory (e.g., 'Tonawanda Towing', 'AAA Buffalo Fleet'). Shown in the garage list table, all page headers, map labels, and dropdown selectors throughout the app.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Garage Operations table", "All headers", "Map labels"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "IsActive",
+      "label": "Active Flag",
+      "type": "Checkbox",
+      "custom": false,
+      "description": "Whether this territory is currently active. Only active territories (IsActive = true) are shown in the app. Inactive territories are filtered out of all queries.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Territory filtering"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "Latitude",
+      "label": "Garage Location (Latitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "GPS latitude of the garage facility's physical location. Used to place the garage pin on the Command Center map and calculate distances from the garage to open calls.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Command Center Map", "Garage Map Markers"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "Longitude",
+      "label": "Garage Location (Longitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "GPS longitude of the garage facility.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Command Center Map", "Garage Map Markers"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "Street",
+      "label": "Garage Street Address",
+      "type": "Text",
+      "custom": false,
+      "description": "Street address of the garage facility.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Garage Operations table", "Garage Detail"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "City",
+      "label": "Garage City",
+      "type": "Text",
+      "custom": false,
+      "description": "City where the garage is located.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Garage Operations table"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "State",
+      "label": "Garage State",
+      "type": "Text",
+      "custom": false,
+      "description": "State where the garage is located.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Garage Operations table"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "PostalCode",
+      "label": "Garage Zip Code",
+      "type": "Text",
+      "custom": false,
+      "description": "Postal/ZIP code of the garage facility.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Garage Detail"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "ParentTerritoryId",
+      "label": "Parent Territory",
+      "type": "Lookup → ServiceTerritory",
+      "custom": false,
+      "description": "If this territory is a sub-territory, this links to its parent. Used to establish territory hierarchy in the Salesforce FSL framework.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Territory hierarchy"]
+    },
+    {
+      "entity": "ServiceTerritory",
+      "entityLabel": "Service Territory (Garage)",
+      "apiName": "ERS_Facility_Account__r",
+      "label": "Facility Account (Relationship)",
+      "type": "Lookup → Account",
+      "custom": true,
+      "description": "Links this garage territory to its Account record — the business entity of the garage. Through this relationship, the app accesses the garage's phone number (Account.Phone) and dispatch method classification (Account.Dispatch_Method__c).",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Command Center (Garage Layer)", "Ops Garages"]
+    },
+
+    {
+      "entity": "WorkType",
+      "entityLabel": "Work Type",
+      "apiName": "Id",
+      "label": "Work Type ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique ID for the work type record.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Internal lookups"]
+    },
+    {
+      "entity": "WorkType",
+      "entityLabel": "Work Type",
+      "apiName": "Name",
+      "label": "Service Type Name",
+      "type": "Text",
+      "custom": false,
+      "description": "The name of the service type: Tow, Battery, Tire, Lockout, Locksmith, Winch Out, Fuel / Miscellaneous, PVS, Jumpstart, or Tow Drop-Off. 'Tow Drop-Off' is the second leg of a tow — the truck dropping the car at the destination. It is excluded from ALL counts and response time calculations because the member's actual wait was measured on the Pick-Up SA. Work type also determines which driver skills are needed.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Volume by Type", "Driver Skill Matching", "Metric exclusion (Tow Drop-Off)", "All dashboards"]
+    },
+
+    {
+      "entity": "WorkOrder",
+      "entityLabel": "Work Order",
+      "apiName": "Id",
+      "label": "Work Order ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique ID for the Work Order.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Internal lookups"]
+    },
+    {
+      "entity": "WorkOrder",
+      "entityLabel": "Work Order",
+      "apiName": "WorkOrderNumber",
+      "label": "Work Order Number",
+      "type": "Auto-Number",
+      "custom": false,
+      "description": "Human-readable Work Order number (e.g., WO-00054321). This is the critical join key between calls and customer satisfaction surveys. When Qualtrics sends a survey, the response record (Survey_Result__c) stores this WO number as text — NOT a Salesforce lookup. The app matches surveys back to garages by joining on this number.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Satisfaction metrics (join key to Survey_Result__c)"]
+    },
+    {
+      "entity": "WorkOrder",
+      "entityLabel": "Work Order",
+      "apiName": "ServiceTerritoryId",
+      "label": "WO Territory",
+      "type": "Lookup → ServiceTerritory",
+      "custom": false,
+      "description": "The territory/garage associated with this Work Order. Used to filter Work Orders by garage when querying survey data.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Satisfaction query (filter WOs by garage)"]
+    },
+    {
+      "entity": "WorkOrder",
+      "entityLabel": "Work Order",
+      "apiName": "CreatedDate",
+      "label": "WO Created Date",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the Work Order was created. Used to sort and limit Work Order queries by date range.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Satisfaction query (date filter)"]
+    },
+
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "Id",
+      "label": "Driver/Truck ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique ID for the driver or truck resource.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver Leaderboard", "Dispatch Recommendations"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "Name",
+      "label": "Driver / Truck Name",
+      "type": "Text",
+      "custom": false,
+      "description": "Name of the driver or truck. For Fleet: the driver's actual name (e.g., 'John Smith'). For Towbook contractors: may be a truck identifier or company name. Displayed on the Driver Leaderboard showing per-driver performance metrics.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver Leaderboard", "Dispatch Recommendations", "Command Center (Drivers layer)"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "IsActive",
+      "label": "Active Driver Flag",
+      "type": "Checkbox",
+      "custom": false,
+      "description": "Whether this driver/truck is currently active in the system. Only active resources are considered for dispatch recommendations and fleet size counts.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver filtering", "Fleet size count"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "LastKnownLatitude",
+      "label": "Driver GPS (Latitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "Last known GPS latitude of the driver/truck. For Fleet: updated in real-time by the FSL mobile app as the driver moves. For Towbook: may not be available. Used to place driver pins on the Command Center map and calculate distance to open calls for dispatch recommendations.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver Recommendations", "Command Center Map (Drivers layer)"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "LastKnownLongitude",
+      "label": "Driver GPS (Longitude)",
+      "type": "Number (Geolocation)",
+      "custom": false,
+      "description": "Last known GPS longitude of the driver/truck.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver Recommendations", "Command Center Map (Drivers layer)"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "LastKnownLocationDate",
+      "label": "GPS Last Updated",
+      "type": "DateTime",
+      "custom": false,
+      "description": "Timestamp of when the driver's GPS position was last updated. Used to determine if a driver's location data is stale (e.g., if the FSL mobile app hasn't reported in hours, the location may be unreliable).",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver Recommendations (freshness check)"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "ERS_Driver_Type__c",
+      "label": "Driver Type",
+      "type": "Picklist",
+      "custom": true,
+      "description": "Classification of the driver — e.g., fleet driver, contractor, supervisor. Used to categorize resources and filter driver lists.",
+      "fleetContractor": "Distinguishes Fleet from Contractor",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver classification", "Resource filtering"]
+    },
+    {
+      "entity": "ServiceResource",
+      "entityLabel": "Service Resource (Driver/Truck)",
+      "apiName": "ResourceType",
+      "label": "Resource Type",
+      "type": "Picklist",
+      "custom": false,
+      "description": "Standard FSL field classifying the resource as Technician, Dispatcher, Crew, etc. Helps differentiate between field resources and office staff.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Resource filtering"]
+    },
+
+    {
+      "entity": "ServiceTerritoryMember",
+      "entityLabel": "Territory Membership",
+      "apiName": "ServiceResourceId",
+      "label": "Driver Reference",
+      "type": "Lookup → ServiceResource",
+      "custom": false,
+      "description": "Links to the driver/truck (ServiceResource) who belongs to this territory. This is one half of the junction: 'which driver is assigned to which garage.'",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Fleet size count", "Driver list per garage"]
+    },
+    {
+      "entity": "ServiceTerritoryMember",
+      "entityLabel": "Territory Membership",
+      "apiName": "ServiceTerritoryId",
+      "label": "Territory Reference",
+      "type": "Lookup → ServiceTerritory",
+      "custom": false,
+      "description": "Links to the garage/territory (ServiceTerritory) where this driver is based. This is the other half of the junction: 'which garage does this driver belong to.'",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Fleet size count", "Territory assignment"]
+    },
+    {
+      "entity": "ServiceTerritoryMember",
+      "entityLabel": "Territory Membership",
+      "apiName": "TerritoryType",
+      "label": "Membership Type",
+      "type": "Picklist",
+      "custom": false,
+      "description": "Whether this driver is a Primary or Secondary/Relocation member of the territory. Primary members are the garage's main drivers. Secondary members may serve multiple territories. Affects fleet size calculations and dispatch priority.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Fleet & Volume (Scorecard)", "Driver count", "Cascade eligibility"]
+    },
+
+    {
+      "entity": "Skill",
+      "entityLabel": "Skill",
+      "apiName": "Id",
+      "label": "Skill ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique ID for the skill definition.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Internal lookups"]
+    },
+    {
+      "entity": "Skill",
+      "entityLabel": "Skill",
+      "apiName": "MasterLabel",
+      "label": "Skill Name",
+      "type": "Text",
+      "custom": false,
+      "description": "Human-readable name of the skill: Tow, Flat Bed, Battery, Tire, Lockout, Locksmith, Winch Out, Fuel, Jumpstart, PVS. Used to classify which service types a driver can handle. The scheduling engine matches call work type to required skills when recommending drivers.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Cascade Opportunities", "Driver Tier Classification", "Skill matching"]
+    },
+
+    {
+      "entity": "ServiceResourceSkill",
+      "entityLabel": "Driver Skill Assignment",
+      "apiName": "ServiceResourceId",
+      "label": "Driver Reference",
+      "type": "Lookup → ServiceResource",
+      "custom": false,
+      "description": "Links to the driver who has this skill.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver skill matching"]
+    },
+    {
+      "entity": "ServiceResourceSkill",
+      "entityLabel": "Driver Skill Assignment",
+      "apiName": "SkillId",
+      "label": "Skill Reference",
+      "type": "Lookup → Skill",
+      "custom": false,
+      "description": "Links to the Skill that this driver possesses. Through this junction, the app determines: 'Driver A has skills [Tow, Battery, Tire]' and can match against the work type required for an open call.",
+      "fleetContractor": "Both",
+      "category": "Fleet & Resources",
+      "usedIn": ["Cascade Opportunities", "Driver capability matching"]
+    },
+
+    {
+      "entity": "AssignedResource",
+      "entityLabel": "Assigned Resource",
+      "apiName": "ServiceResourceId",
+      "label": "Assigned Driver",
+      "type": "Lookup → ServiceResource",
+      "custom": false,
+      "description": "The driver/truck assigned to a specific Service Appointment. Created when dispatch assigns a driver to a call. Used to build the Driver Leaderboard by linking individual calls to the driver who handled them.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Driver Leaderboard", "Dispatch Map"]
+    },
+    {
+      "entity": "AssignedResource",
+      "entityLabel": "Assigned Resource",
+      "apiName": "ServiceAppointmentId",
+      "label": "Assigned SA",
+      "type": "Lookup → ServiceAppointment",
+      "custom": false,
+      "description": "The Service Appointment this driver was assigned to. The other half of the junction linking a specific call to a specific driver.",
+      "fleetContractor": "Both",
+      "category": "Dispatch & Assignment",
+      "usedIn": ["Driver Leaderboard", "Call-to-driver mapping"]
+    },
+
+    {
+      "entity": "ServiceAppointmentHistory",
+      "entityLabel": "SA History (Audit Trail)",
+      "apiName": "ServiceAppointmentId",
+      "label": "Parent SA Reference",
+      "type": "Lookup → ServiceAppointment",
+      "custom": false,
+      "description": "The Service Appointment this history record belongs to. Multiple history records per SA track each field change over time.",
+      "fleetContractor": "Both",
+      "category": "Audit & History",
+      "usedIn": ["1st Call vs 2nd+ Call", "Towbook arrival detection"]
+    },
+    {
+      "entity": "ServiceAppointmentHistory",
+      "entityLabel": "SA History (Audit Trail)",
+      "apiName": "Field",
+      "label": "Changed Field Name",
+      "type": "Text",
+      "custom": false,
+      "description": "Which field was changed. Key values: 'ServiceTerritory' (territory assignment changed — used to track the sequence of garage assignments for 1st Call vs 2nd+ Call classification), 'Status' (lifecycle status changed — 'On Location' status change captures real Towbook driver arrival time).",
+      "fleetContractor": "Both",
+      "category": "Audit & History",
+      "usedIn": ["1st Call classification", "Towbook ATA"]
+    },
+    {
+      "entity": "ServiceAppointmentHistory",
+      "entityLabel": "SA History (Audit Trail)",
+      "apiName": "NewValue",
+      "label": "New Field Value",
+      "type": "Text",
+      "custom": false,
+      "description": "The new value after the field change. For territory changes: the ID of the newly assigned garage (first NewValue in sequence = 1st call garage). For status changes: the new status value (look for 'On Location' to capture Towbook real arrival timestamp).",
+      "fleetContractor": "Both",
+      "category": "Audit & History",
+      "usedIn": ["1st Call vs 2nd+ Call", "Towbook arrival time"]
+    },
+    {
+      "entity": "ServiceAppointmentHistory",
+      "entityLabel": "SA History (Audit Trail)",
+      "apiName": "OldValue",
+      "label": "Previous Field Value",
+      "type": "Text",
+      "custom": false,
+      "description": "The previous value before the field change. Used to see which garage had the call before the current one.",
+      "fleetContractor": "Both",
+      "category": "Audit & History",
+      "usedIn": ["Cascade tracking"]
+    },
+    {
+      "entity": "ServiceAppointmentHistory",
+      "entityLabel": "SA History (Audit Trail)",
+      "apiName": "CreatedDate",
+      "label": "Change Timestamp",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the field change occurred. For 'On Location' status changes on Towbook SAs, this timestamp IS the real driver arrival time — it's when the Towbook system reported the driver arrived at the member's location. More accurate than ActualStartTime for Towbook calls.",
+      "fleetContractor": "Both",
+      "category": "Audit & History",
+      "usedIn": ["Towbook ATA (real arrival)", "1st Call timing"]
+    },
+
+    {
+      "entity": "ERS_Territory_Priority_Matrix__c",
+      "entityLabel": "Territory Priority Matrix",
+      "apiName": "ERS_Parent_Service_Territory__c",
+      "label": "Parent Zone (Spotted Territory)",
+      "type": "Lookup → ServiceTerritory",
+      "custom": true,
+      "description": "The zone/territory where members can be stranded — the geographic area. Each zone has one or more garages assigned to serve it, ordered by priority. This is the zone, NOT the garage. Think of it as 'Zone A is served by Garage 1 (priority 1), Garage 2 (priority 2), Garage 3 (priority 3).'",
+      "fleetContractor": "Both",
+      "category": "Territory & Cascade",
+      "usedIn": ["Territory Matrix page", "Primary/Secondary labels", "1st Call / 2nd+ Call"]
+    },
+    {
+      "entity": "ERS_Territory_Priority_Matrix__c",
+      "entityLabel": "Territory Priority Matrix",
+      "apiName": "ERS_Spotted_Territory__c",
+      "label": "Serving Garage",
+      "type": "Lookup → ServiceTerritory",
+      "custom": true,
+      "description": "The garage assigned to serve this zone at this priority level. For example, if Tonawanda Towing is Priority 1 for Zone A, this field points to Tonawanda's ServiceTerritory record.",
+      "fleetContractor": "Both",
+      "category": "Territory & Cascade",
+      "usedIn": ["Territory Matrix page", "Cascade chain", "Primary/Secondary labels"]
+    },
+    {
+      "entity": "ERS_Territory_Priority_Matrix__c",
+      "entityLabel": "Territory Priority Matrix",
+      "apiName": "ERS_Priority__c",
+      "label": "Priority Rank",
+      "type": "Number",
+      "custom": true,
+      "description": "The priority ranking number for this garage in this zone. Priority 1 = first call (primary) — the system dispatches to this garage first. Priority 2 = second call (backup) — dispatched only if Priority 1 declines. Priority 3+ = further backups. Lower number = higher priority. A garage can be Priority 1 in some zones and Priority 2+ in others.",
+      "fleetContractor": "Both",
+      "category": "Territory & Cascade",
+      "usedIn": ["Primary/Secondary labels", "1st Call %", "2nd+ Call %", "Cascade chain order"]
+    },
+    {
+      "entity": "ERS_Territory_Priority_Matrix__c",
+      "entityLabel": "Territory Priority Matrix",
+      "apiName": "ERS_Worktype__c",
+      "label": "Work Type Filter",
+      "type": "Text",
+      "custom": true,
+      "description": "Which work types this priority assignment applies to (e.g., 'Tow', 'Battery/Light'). A garage may be the primary (Priority 1) for tow calls in a zone but secondary (Priority 2) for battery calls in the same zone. This allows work-type-specific cascade chains.",
+      "fleetContractor": "Both",
+      "category": "Territory & Cascade",
+      "usedIn": ["Territory Matrix page", "Work-type-specific cascade"]
+    },
+
+    {
+      "entity": "Survey_Result__c",
+      "entityLabel": "Customer Satisfaction Survey",
+      "apiName": "Id",
+      "label": "Survey Record ID",
+      "type": "ID (18-char)",
+      "custom": true,
+      "description": "Unique ID for the survey result record.",
+      "fleetContractor": "Both",
+      "category": "Member Satisfaction",
+      "usedIn": ["Internal lookups"]
+    },
+    {
+      "entity": "Survey_Result__c",
+      "entityLabel": "Customer Satisfaction Survey",
+      "apiName": "ERS_Overall_Satisfaction__c",
+      "label": "Overall Satisfaction Rating",
+      "type": "Picklist",
+      "custom": true,
+      "description": "The member's overall satisfaction rating from the post-service Qualtrics survey. Values: 'Totally Satisfied', 'Satisfied', 'Neither Satisfied nor Dissatisfied', 'Dissatisfied', 'Totally Dissatisfied'. AAA accreditation target is 82% 'Totally Satisfied' rate. This drives the Customer Satisfaction dimension of the composite score (15% weight).",
+      "fleetContractor": "Both",
+      "category": "Member Satisfaction",
+      "usedIn": ["Satisfaction %", "Garage Score (Satisfaction dimension)", "Scorecard"]
+    },
+    {
+      "entity": "Survey_Result__c",
+      "entityLabel": "Customer Satisfaction Survey",
+      "apiName": "ERS_Work_Order_Number__c",
+      "label": "Work Order Number (Survey Join Key)",
+      "type": "Text",
+      "custom": true,
+      "description": "The Work Order Number this survey corresponds to, stored as text (NOT a Salesforce lookup). This is the join key that links surveys back to specific calls and garages. The app queries Work Orders for a garage, collects WO numbers, then finds matching surveys. Surveys can arrive days or weeks after the call.",
+      "fleetContractor": "Both",
+      "category": "Member Satisfaction",
+      "usedIn": ["Satisfaction metrics (join key from surveys to garages)"]
+    },
+
+    {
+      "entity": "Account",
+      "entityLabel": "Facility Account",
+      "apiName": "Name",
+      "label": "Facility Business Name",
+      "type": "Text",
+      "custom": false,
+      "description": "Name of the garage's business entity/account. Accessed via ServiceTerritory.ERS_Facility_Account__r.Name.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Command Center (Garage Layer)"]
+    },
+    {
+      "entity": "Account",
+      "entityLabel": "Facility Account",
+      "apiName": "Phone",
+      "label": "Garage Phone Number",
+      "type": "Phone",
+      "custom": false,
+      "description": "Main phone number for the garage facility. Displayed in the Command Center garage info panel so dispatchers can call the garage directly.",
+      "fleetContractor": "Both",
+      "category": "Core Operations",
+      "usedIn": ["Command Center (Garage Layer)", "Ops Garages"]
+    },
+    {
+      "entity": "Account",
+      "entityLabel": "Facility Account",
+      "apiName": "Dispatch_Method__c",
+      "label": "Account Dispatch Method",
+      "type": "Picklist",
+      "custom": true,
+      "description": "Account-level classification of how this garage primarily dispatches: internal fleet, Towbook contractor, or hybrid. Different from the per-SA ERS_Dispatch_Method__c which records how each individual call was dispatched. This is the garage's default/primary method.",
+      "fleetContractor": "Distinguishes Fleet from Contractor",
+      "category": "Core Operations",
+      "usedIn": ["Command Center (Garage Layer)", "Ops Garages"]
+    },
+
+    {
+      "entity": "FSL__Polygon__c",
+      "entityLabel": "Territory Polygon (Boundary)",
+      "apiName": "Id",
+      "label": "Polygon ID",
+      "type": "ID (18-char)",
+      "custom": true,
+      "description": "Unique ID for the polygon record.",
+      "fleetContractor": "Both",
+      "category": "Geography",
+      "usedIn": ["Map boundary queries"]
+    },
+    {
+      "entity": "FSL__Polygon__c",
+      "entityLabel": "Territory Polygon (Boundary)",
+      "apiName": "Name",
+      "label": "Polygon Name",
+      "type": "Text",
+      "custom": true,
+      "description": "Name of the territory polygon, typically matching the territory name.",
+      "fleetContractor": "Both",
+      "category": "Geography",
+      "usedIn": ["Map labels"]
+    },
+    {
+      "entity": "FSL__Polygon__c",
+      "entityLabel": "Territory Polygon (Boundary)",
+      "apiName": "FSL__Service_Territory__c",
+      "label": "Territory Reference",
+      "type": "Lookup → ServiceTerritory",
+      "custom": true,
+      "description": "Links this polygon boundary to its parent ServiceTerritory/garage. Multiple polygons can belong to one territory if the garage covers non-contiguous areas.",
+      "fleetContractor": "Both",
+      "category": "Geography",
+      "usedIn": ["Command Center Map (territory boundaries)"]
+    },
+    {
+      "entity": "FSL__Polygon__c",
+      "entityLabel": "Territory Polygon (Boundary)",
+      "apiName": "FSL__Color__c",
+      "label": "Polygon Color",
+      "type": "Text",
+      "custom": true,
+      "description": "Display color for the polygon boundary on the map (hex or color name).",
+      "fleetContractor": "Both",
+      "category": "Geography",
+      "usedIn": ["Command Center Map (boundary styling)"]
+    },
+    {
+      "entity": "FSL__Polygon__c",
+      "entityLabel": "Territory Polygon (Boundary)",
+      "apiName": "FSL__KML__c",
+      "label": "KML Boundary Data",
+      "type": "Long Text",
+      "custom": true,
+      "description": "The geographic boundary definition in KML format. Contains the polygon coordinates that define the territory's coverage area. Parsed and rendered as a map overlay on the Command Center.",
+      "fleetContractor": "Both",
+      "category": "Geography",
+      "usedIn": ["Command Center Map (territory boundary rendering)"]
+    },
+
+    {
+      "entity": "FSL__Scheduling_Policy__c",
+      "entityLabel": "Scheduling Policy",
+      "apiName": "Id",
+      "label": "Policy ID",
+      "type": "ID (18-char)",
+      "custom": true,
+      "description": "Unique ID for the scheduling policy.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Static lookup tables"]
+    },
+    {
+      "entity": "FSL__Scheduling_Policy__c",
+      "entityLabel": "Scheduling Policy",
+      "apiName": "Name",
+      "label": "Policy Name",
+      "type": "Text",
+      "custom": true,
+      "description": "Name of the scheduling policy (e.g., 'ERS Emergency Policy'). The FSL optimization engine uses this policy's rules and goals when auto-scheduling calls.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+    {
+      "entity": "FSL__Scheduling_Policy__c",
+      "entityLabel": "Scheduling Policy",
+      "apiName": "LastModifiedDate",
+      "label": "Policy Last Modified",
+      "type": "DateTime",
+      "custom": true,
+      "description": "When the scheduling policy was last updated. Used to detect if scheduling rules have changed.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Static table sync"]
+    },
+
+    {
+      "entity": "SkillRequirement",
+      "entityLabel": "Skill Requirement",
+      "apiName": "RelatedRecordId",
+      "label": "Related Work Type",
+      "type": "Lookup → WorkType",
+      "custom": false,
+      "description": "Links to the WorkType that requires this skill. For example, the 'Tow' WorkType has a SkillRequirement pointing to it, requiring drivers to have the 'Tow' skill.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Dispatch Simulator", "Driver Recommendations"]
+    },
+    {
+      "entity": "SkillRequirement",
+      "entityLabel": "Skill Requirement",
+      "apiName": "SkillId",
+      "label": "Required Skill",
+      "type": "Lookup → Skill",
+      "custom": false,
+      "description": "Links to the Skill record that is required. Together with RelatedRecordId, this row says 'work type X requires skill Y.'",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Dispatch Simulator", "Driver Recommendations"]
+    },
+    {
+      "entity": "SkillRequirement",
+      "entityLabel": "Skill Requirement",
+      "apiName": "Skill.MasterLabel",
+      "label": "Skill Name (via relationship)",
+      "type": "Text (related field)",
+      "custom": false,
+      "description": "The human-readable name of the required skill (e.g., 'Tow', 'Battery', 'Flat Bed'). Accessed through the Skill relationship rather than a direct field.",
+      "fleetContractor": "Fleet primarily",
+      "category": "Fleet & Resources",
+      "usedIn": ["Dispatch Simulator"]
+    },
+
+    {
+      "entity": "Asset",
+      "entityLabel": "Asset (ERS Truck)",
+      "apiName": "Name",
+      "label": "Truck Name/Number",
+      "type": "Text",
+      "custom": false,
+      "description": "Display name or unit number of the truck (e.g., 'Truck 101', 'Unit FB-3'). Shown in the Command Center map and driver detail views.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Command Center Map", "Driver Details"]
+    },
+    {
+      "entity": "Asset",
+      "entityLabel": "Asset (ERS Truck)",
+      "apiName": "ERS_Driver__c",
+      "label": "Assigned Driver",
+      "type": "Lookup → ServiceResource",
+      "custom": true,
+      "description": "The driver currently assigned to this truck. Only trucks with a non-null driver are considered active and available for dispatch. Links the physical vehicle to the driver operating it.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Command Center Map", "Dispatch Recommendations"]
+    },
+    {
+      "entity": "Asset",
+      "entityLabel": "Asset (ERS Truck)",
+      "apiName": "ERS_Truck_Capabilities__c",
+      "label": "Truck Capabilities",
+      "type": "Multi-Select Picklist",
+      "custom": true,
+      "description": "What types of service this truck can perform — tow, flatbed, light service, battery, etc. Used alongside driver skills to determine if a truck+driver combo can handle a specific call type.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Dispatch Recommendations", "Command Center Map"]
+    },
+    {
+      "entity": "Asset",
+      "entityLabel": "Asset (ERS Truck)",
+      "apiName": "ERS_LegacyTruckID__c",
+      "label": "Legacy Truck ID",
+      "type": "Text",
+      "custom": true,
+      "description": "Legacy identifier for the truck from the previous dispatch system. Used for cross-referencing with historical data and external systems.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Internal tracking"]
+    },
+    {
+      "entity": "Asset",
+      "entityLabel": "Asset (ERS Truck)",
+      "apiName": "RecordType.Name",
+      "label": "Record Type",
+      "type": "Text (related field)",
+      "custom": false,
+      "description": "Filtered to 'ERS Truck' to select only roadside assistance vehicles from the Asset table. Other record types (general assets, equipment) are excluded.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Query filter"]
+    },
+
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "Id",
+      "label": "Shift Record ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique Salesforce record ID for the shift.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Shift lookups"]
+    },
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "ServiceResourceId",
+      "label": "Driver",
+      "type": "Lookup → ServiceResource",
+      "custom": false,
+      "description": "The driver who is working this shift. Links the shift time window to a specific driver.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability", "Capacity planning"]
+    },
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "StartTime",
+      "label": "Shift Start",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the driver's shift begins. The driver is considered available for dispatch only during the window between StartTime and EndTime.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability", "Capacity planning"]
+    },
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "EndTime",
+      "label": "Shift End",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the driver's shift ends.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability", "Capacity planning"]
+    },
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "StatusCategory",
+      "label": "Shift Status",
+      "type": "Picklist",
+      "custom": false,
+      "description": "Current status of the shift (e.g., Confirmed, Tentative, Published). Determines if the shift counts toward available capacity.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability"]
+    },
+    {
+      "entity": "Shift",
+      "entityLabel": "Driver Shift",
+      "apiName": "ServiceTerritoryId",
+      "label": "Shift Territory",
+      "type": "Lookup → ServiceTerritory",
+      "custom": false,
+      "description": "Which garage/territory this shift is assigned to. A driver may have shifts at different garages on different days.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Territory capacity", "Shift scheduling"]
+    },
+
+    {
+      "entity": "ResourceAbsence",
+      "entityLabel": "Resource Absence",
+      "apiName": "Id",
+      "label": "Absence Record ID",
+      "type": "ID (18-char)",
+      "custom": false,
+      "description": "Unique Salesforce record ID for the absence.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Absence lookups"]
+    },
+    {
+      "entity": "ResourceAbsence",
+      "entityLabel": "Resource Absence",
+      "apiName": "ResourceId",
+      "label": "Absent Driver",
+      "type": "Lookup → ServiceResource",
+      "custom": false,
+      "description": "The driver who is absent. Any overlapping absence makes a driver unavailable for dispatch.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability"]
+    },
+    {
+      "entity": "ResourceAbsence",
+      "entityLabel": "Resource Absence",
+      "apiName": "Start",
+      "label": "Absence Start",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the absence begins.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability"]
+    },
+    {
+      "entity": "ResourceAbsence",
+      "entityLabel": "Resource Absence",
+      "apiName": "End",
+      "label": "Absence End",
+      "type": "DateTime",
+      "custom": false,
+      "description": "When the absence ends. The driver becomes available again after this time.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Driver availability"]
+    },
+    {
+      "entity": "ResourceAbsence",
+      "entityLabel": "Resource Absence",
+      "apiName": "Type",
+      "label": "Absence Type",
+      "type": "Picklist",
+      "custom": false,
+      "description": "Reason for the absence — vacation, sick leave, training, truck maintenance, personal, etc.",
+      "fleetContractor": "Fleet only",
+      "category": "Fleet & Resources",
+      "usedIn": ["Absence reporting"]
+    },
+
+    {
+      "entity": "ERS_Service_Appointment_PTA__c",
+      "entityLabel": "PTA Configuration",
+      "apiName": "ERS_Service_Territory__c",
+      "label": "Territory",
+      "type": "Lookup → ServiceTerritory",
+      "custom": true,
+      "description": "Which garage/territory this PTA configuration applies to.",
+      "fleetContractor": "Both",
+      "category": "PTA / ETA Promise",
+      "usedIn": ["PTA Advisor"]
+    },
+    {
+      "entity": "ERS_Service_Appointment_PTA__c",
+      "entityLabel": "PTA Configuration",
+      "apiName": "ERS_Type__c",
+      "label": "Work Type",
+      "type": "Picklist",
+      "custom": true,
+      "description": "Which service type this PTA target applies to (Tow, Battery, Tire, etc.). Different work types have different PTA targets because service complexity varies.",
+      "fleetContractor": "Both",
+      "category": "PTA / ETA Promise",
+      "usedIn": ["PTA Advisor"]
+    },
+    {
+      "entity": "ERS_Service_Appointment_PTA__c",
+      "entityLabel": "PTA Configuration",
+      "apiName": "ERS_Minutes__c",
+      "label": "PTA Minutes Target",
+      "type": "Number",
+      "custom": true,
+      "description": "The configured PTA (minutes to promise the member) for this territory + work type combination. The PTA Advisor compares this target against actual response times to identify garages that are over- or under-promising.",
+      "fleetContractor": "Both",
+      "category": "PTA / ETA Promise",
+      "usedIn": ["PTA Advisor"]
+    },
+
+    {
+      "entity": "FSL__Scheduling_Policy_Goal__c",
+      "entityLabel": "Scheduling Policy Goal",
+      "apiName": "FSL__Scheduling_Policy__c",
+      "label": "Parent Policy",
+      "type": "Lookup → FSL__Scheduling_Policy__c",
+      "custom": true,
+      "description": "The scheduling policy this goal belongs to.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+    {
+      "entity": "FSL__Scheduling_Policy_Goal__c",
+      "entityLabel": "Scheduling Policy Goal",
+      "apiName": "FSL__Weight__c",
+      "label": "Goal Weight",
+      "type": "Number",
+      "custom": true,
+      "description": "How heavily this goal is weighted in the optimization. Higher weight means the FSL engine prioritizes this goal over lower-weighted ones when making trade-off decisions.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+    {
+      "entity": "FSL__Scheduling_Policy_Goal__c",
+      "entityLabel": "Scheduling Policy Goal",
+      "apiName": "FSL__Service_Goal__c",
+      "label": "Service Goal Reference",
+      "type": "Lookup → FSL__Service_Goal__c",
+      "custom": true,
+      "description": "The service goal (optimization objective) this policy goal links to.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+
+    {
+      "entity": "FSL__Service_Goal__c",
+      "entityLabel": "Service Goal",
+      "apiName": "Id",
+      "label": "Goal ID",
+      "type": "ID (18-char)",
+      "custom": true,
+      "description": "Unique ID for the service goal.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    },
+    {
+      "entity": "FSL__Service_Goal__c",
+      "entityLabel": "Service Goal",
+      "apiName": "Name",
+      "label": "Goal Name",
+      "type": "Text",
+      "custom": true,
+      "description": "Name of the optimization goal (e.g., 'Minimize Travel', 'ASAP', 'Resource Priority').",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    },
+
+    {
+      "entity": "FSL__Scheduling_Policy_Work_Rule__c",
+      "entityLabel": "Scheduling Policy Work Rule",
+      "apiName": "FSL__Scheduling_Policy__c",
+      "label": "Parent Policy",
+      "type": "Lookup → FSL__Scheduling_Policy__c",
+      "custom": true,
+      "description": "The scheduling policy this work rule assignment belongs to.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+    {
+      "entity": "FSL__Scheduling_Policy_Work_Rule__c",
+      "entityLabel": "Scheduling Policy Work Rule",
+      "apiName": "FSL__Work_Rule__c",
+      "label": "Work Rule Reference",
+      "type": "Lookup → FSL__Work_Rule__c",
+      "custom": true,
+      "description": "The work rule (constraint) applied under this policy.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine configuration"]
+    },
+
+    {
+      "entity": "FSL__Work_Rule__c",
+      "entityLabel": "Work Rule",
+      "apiName": "Id",
+      "label": "Rule ID",
+      "type": "ID (18-char)",
+      "custom": true,
+      "description": "Unique ID for the work rule.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    },
+    {
+      "entity": "FSL__Work_Rule__c",
+      "entityLabel": "Work Rule",
+      "apiName": "Name",
+      "label": "Rule Name",
+      "type": "Text",
+      "custom": true,
+      "description": "Name of the constraint rule (e.g., 'Match Skills', 'Match Territory', 'Working Hours', 'Maximum Travel Distance'). These rules prevent invalid dispatch assignments.",
+      "fleetContractor": "Fleet only",
+      "category": "Scheduling",
+      "usedIn": ["Scheduling engine"]
+    }
+  ],
+
+  "relationships": [
+    {
+      "from": "ServiceAppointment",
+      "to": "ServiceTerritory",
+      "field": "ServiceTerritoryId",
+      "type": "many-to-one",
+      "label": "assigned to garage"
+    },
+    {
+      "from": "ServiceAppointment",
+      "to": "WorkType",
+      "field": "WorkTypeId",
+      "type": "many-to-one",
+      "label": "has work type"
+    },
+    {
+      "from": "WorkOrder",
+      "to": "ServiceAppointment",
+      "field": "parent",
+      "type": "one-to-many",
+      "label": "contains SAs"
+    },
+    {
+      "from": "WorkOrder",
+      "to": "ServiceTerritory",
+      "field": "ServiceTerritoryId",
+      "type": "many-to-one",
+      "label": "belongs to garage"
+    },
+    {
+      "from": "AssignedResource",
+      "to": "ServiceAppointment",
+      "field": "ServiceAppointmentId",
+      "type": "many-to-one",
+      "label": "driver assigned to call"
+    },
+    {
+      "from": "AssignedResource",
+      "to": "ServiceResource",
+      "field": "ServiceResourceId",
+      "type": "many-to-one",
+      "label": "driver reference"
+    },
+    {
+      "from": "ServiceTerritoryMember",
+      "to": "ServiceTerritory",
+      "field": "ServiceTerritoryId",
+      "type": "many-to-one",
+      "label": "member of garage"
+    },
+    {
+      "from": "ServiceTerritoryMember",
+      "to": "ServiceResource",
+      "field": "ServiceResourceId",
+      "type": "many-to-one",
+      "label": "driver reference"
+    },
+    {
+      "from": "ServiceResourceSkill",
+      "to": "ServiceResource",
+      "field": "ServiceResourceId",
+      "type": "many-to-one",
+      "label": "driver has skill"
+    },
+    {
+      "from": "ServiceResourceSkill",
+      "to": "Skill",
+      "field": "SkillId",
+      "type": "many-to-one",
+      "label": "skill reference"
+    },
+    {
+      "from": "ServiceAppointmentHistory",
+      "to": "ServiceAppointment",
+      "field": "ServiceAppointmentId",
+      "type": "many-to-one",
+      "label": "audit trail for"
+    },
+    {
+      "from": "Survey_Result__c",
+      "to": "WorkOrder",
+      "field": "ERS_Work_Order_Number__c",
+      "type": "many-to-one",
+      "label": "linked via WO Number"
+    },
+    {
+      "from": "ServiceTerritory",
+      "to": "Account",
+      "field": "ERS_Facility_Account__r",
+      "type": "many-to-one",
+      "label": "facility account"
+    },
+    {
+      "from": "ERS_Territory_Priority_Matrix__c",
+      "to": "ServiceTerritory",
+      "field": "ERS_Parent_Service_Territory__c",
+      "type": "many-to-one",
+      "label": "zone (parent territory)"
+    },
+    {
+      "from": "ERS_Territory_Priority_Matrix__c",
+      "to": "ServiceTerritory",
+      "field": "ERS_Spotted_Territory__c",
+      "type": "many-to-one",
+      "label": "serving garage"
+    },
+    {
+      "from": "FSL__Polygon__c",
+      "to": "ServiceTerritory",
+      "field": "FSL__Service_Territory__c",
+      "type": "many-to-one",
+      "label": "boundary for territory"
+    },
+    {
+      "from": "SkillRequirement",
+      "to": "WorkType",
+      "field": "RelatedRecordId",
+      "type": "many-to-one",
+      "label": "work type requires skill"
+    },
+    {
+      "from": "SkillRequirement",
+      "to": "Skill",
+      "field": "SkillId",
+      "type": "many-to-one",
+      "label": "required skill"
+    },
+    {
+      "from": "Asset",
+      "to": "ServiceResource",
+      "field": "ERS_Driver__c",
+      "type": "many-to-one",
+      "label": "truck assigned to driver"
+    },
+    {
+      "from": "Shift",
+      "to": "ServiceResource",
+      "field": "ServiceResourceId",
+      "type": "many-to-one",
+      "label": "driver on shift"
+    },
+    {
+      "from": "Shift",
+      "to": "ServiceTerritory",
+      "field": "ServiceTerritoryId",
+      "type": "many-to-one",
+      "label": "shift at garage"
+    },
+    {
+      "from": "ResourceAbsence",
+      "to": "ServiceResource",
+      "field": "ResourceId",
+      "type": "many-to-one",
+      "label": "driver absent"
+    },
+    {
+      "from": "ERS_Service_Appointment_PTA__c",
+      "to": "ServiceTerritory",
+      "field": "ERS_Service_Territory__c",
+      "type": "many-to-one",
+      "label": "PTA config for garage"
+    },
+    {
+      "from": "FSL__Scheduling_Policy_Goal__c",
+      "to": "FSL__Scheduling_Policy__c",
+      "field": "FSL__Scheduling_Policy__c",
+      "type": "many-to-one",
+      "label": "goal under policy"
+    },
+    {
+      "from": "FSL__Scheduling_Policy_Goal__c",
+      "to": "FSL__Service_Goal__c",
+      "field": "FSL__Service_Goal__c",
+      "type": "many-to-one",
+      "label": "references goal"
+    },
+    {
+      "from": "FSL__Scheduling_Policy_Work_Rule__c",
+      "to": "FSL__Scheduling_Policy__c",
+      "field": "FSL__Scheduling_Policy__c",
+      "type": "many-to-one",
+      "label": "rule under policy"
+    },
+    {
+      "from": "FSL__Scheduling_Policy_Work_Rule__c",
+      "to": "FSL__Work_Rule__c",
+      "field": "FSL__Work_Rule__c",
+      "type": "many-to-one",
+      "label": "references work rule"
+    }
+  ]
+}

@@ -7,7 +7,7 @@ from collections import defaultdict
 
 _ET = ZoneInfo('America/New_York')
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -552,6 +552,8 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
                 SELECT Id, Status, CreatedDate, SchedStartTime,
                        ActualStartTime, ActualEndTime,
                        ERS_PTA__c, ERS_Dispatch_Method__c,
+                       Off_Platform_Truck_Id__c,
+                       Off_Platform_Driver__c, Off_Platform_Driver__r.Name,
                        WorkType.Name
                 FROM ServiceAppointment
                 WHERE ServiceTerritoryId = '{territory_id}'
@@ -610,25 +612,43 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
                 ORDER BY ServiceResource.Name
                 LIMIT 2000
             """),
+            # Towbook garage: decline SAs with Off_Platform_Truck_Id for per-contractor decline tracking
+            decline_sas=lambda: sf_query_all(f"""
+                SELECT Off_Platform_Driver__c, ERS_Facility_Decline_Reason__c
+                FROM ServiceAppointment
+                WHERE ServiceTerritoryId = '{territory_id}'
+                  AND CreatedDate >= {since}
+                  AND CreatedDate < {until}
+                  AND ERS_Facility_Decline_Reason__c != null
+                LIMIT 2000
+            """),
         )
 
         # Response time decomposition
-        # NOTE: Only use Field Services SAs — Towbook ActualStartTime is bulk-updated
-        # at midnight and is NOT real arrival time (verified Mar 5, 2026).
         decomp_by_wt = defaultdict(lambda: {'dispatch': [], 'travel': [], 'onsite': [], 'total': [], 'count': 0})
         all_dispatch = []
         all_travel = []
         all_onsite = []
         all_total = []
 
+        # Towbook ActualStartTime is NOT real arrival — the integration writes a
+        # future estimated time. Real arrival = ServiceAppointmentHistory 'On Location'.
+        def _is_towbook(sa):
+            return (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
+
+        _tb_count = sum(1 for sa in data['sas'] if _is_towbook(sa))
+        is_towbook_garage = _tb_count > len(data['sas']) * 0.5
+
+        # Fetch real On Location timestamps for Towbook SAs
+        _towbook_completed_ids = [
+            sa['Id'] for sa in data['sas']
+            if _is_towbook(sa) and sa.get('Id')
+        ]
+        _on_loc_map = get_towbook_on_location(_towbook_completed_ids) if _towbook_completed_ids else {}
+
         for sa in data['sas']:
             wt = (sa.get('WorkType') or {}).get('Name', '') or ''
             if 'drop' in wt.lower():
-                continue
-
-            # Skip Towbook SAs — their ActualStartTime is unreliable
-            dispatch_method = sa.get('ERS_Dispatch_Method__c', '') or ''
-            if dispatch_method == 'Towbook':
                 continue
 
             created = _parse_dt(sa.get('CreatedDate'))
@@ -636,49 +656,63 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             started = _parse_dt(sa.get('ActualStartTime'))
             ended = _parse_dt(sa.get('ActualEndTime'))
 
-            if not created or not started or not ended:
+            if not created:
                 continue
 
-            # Total = CreatedDate → ActualEndTime
-            total_min = (ended - created).total_seconds() / 60
-            if total_min <= 0 or total_min > 480:  # >8hr is clearly bad data
-                continue
-
-            # On-site = ActualStartTime → ActualEndTime (driver arrival to job done)
-            onsite = (ended - started).total_seconds() / 60
-            if onsite < 0 or onsite > 240:
-                continue
-
-            # Response time = CreatedDate → ActualStartTime (member's total wait)
-            response = (started - created).total_seconds() / 60
-            if response < 0:
-                continue
-
-            # Decompose response into dispatch queue + travel
-            # If SchedStartTime exists and is between Created and Started,
-            # it marks when the driver was dispatched/scheduled.
-            #   dispatch = CreatedDate → SchedStartTime (waiting for assignment)
-            #   travel   = SchedStartTime → ActualStartTime (driver en route)
-            # Otherwise, we only know the total response — don't guess.
-            if sched and created < sched < started:
-                dispatch = (sched - created).total_seconds() / 60
-                travel = (started - sched).total_seconds() / 60
+            if _is_towbook(sa):
+                # Towbook: use real On Location timestamp from ServiceAppointmentHistory
+                on_loc_str = _on_loc_map.get(sa.get('Id'))
+                on_loc = _parse_dt(on_loc_str) if on_loc_str else None
+                if not on_loc or not created:
+                    continue
+                response = (on_loc - created).total_seconds() / 60
+                if response <= 0 or response > 480:
+                    continue
+                # Can't decompose dispatch/travel for Towbook — use total response
+                dispatch_val = response
+                travel_val = 0
+                # On-site: use On Location → End if both exist
+                if on_loc and ended:
+                    onsite = (ended - on_loc).total_seconds() / 60
+                    if onsite < 0 or onsite > 240:
+                        onsite = 0
+                else:
+                    onsite = 0
+                total_min = response + onsite
             else:
-                # Can't decompose — record as dispatch=response, travel=0
-                # This is honest: we know total wait, not the split
-                dispatch = response
-                travel = 0
+                # Fleet: use real ATA timestamps
+                if not started or not ended:
+                    continue
+
+                total_min = (ended - created).total_seconds() / 60
+                if total_min <= 0 or total_min > 480:
+                    continue
+
+                onsite = (ended - started).total_seconds() / 60
+                if onsite < 0 or onsite > 240:
+                    continue
+
+                response = (started - created).total_seconds() / 60
+                if response < 0:
+                    continue
+
+                if sched and created < sched < started:
+                    dispatch_val = (sched - created).total_seconds() / 60
+                    travel_val = (started - sched).total_seconds() / 60
+                else:
+                    dispatch_val = response
+                    travel_val = 0
 
             wt_key = wt if wt else 'Other'
             d = decomp_by_wt[wt_key]
-            d['dispatch'].append(dispatch)
-            d['travel'].append(travel)
+            d['dispatch'].append(dispatch_val)
+            d['travel'].append(travel_val)
             d['onsite'].append(onsite)
             d['total'].append(total_min)
             d['count'] += 1
 
-            all_dispatch.append(dispatch)
-            all_travel.append(travel)
+            all_dispatch.append(dispatch_val)
+            all_travel.append(travel_val)
             all_onsite.append(onsite)
             all_total.append(total_min)
 
@@ -701,7 +735,8 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             'median_onsite_min': _median(all_onsite),
             'median_total_min': _median(all_total),
             'sample_size': len(all_total),
-            'method_note': 'Field Services SAs only (Towbook excluded — unreliable ActualStartTime)',
+            'method_note': 'ATA from On Location history (Towbook garages)' if is_towbook_garage else 'ATA-based (real arrival times)',
+            'response_metric': 'ATA (actual)',
             'by_work_type': {},
         }
         for wt_key, d in decomp_by_wt.items():
@@ -740,69 +775,136 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             ],
         }
 
-        # Driver leaderboard
-        # Only Field Services SAs — Towbook ActualStartTime is unreliable
-        driver_stats = {}
-        for r in data['driver_sas']:
-            sa_data = r
-            sa_ref = sa_data.get('ServiceAppointment') or sa_data
-            dispatch_method = sa_ref.get('ERS_Dispatch_Method__c', '') or ''
-            if dispatch_method == 'Towbook':
-                continue
+        # Detect Towbook garage: check if majority of completed SAs are Towbook-dispatched
+        tb_sa_count = sum(1 for sa in data['sas'] if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
+        is_towbook_garage = tb_sa_count > len(data['sas']) * 0.5
 
-            drv = (r.get('ServiceResource') or {}).get('Name', '?')
-            drv_id = (r.get('ServiceResource') or {}).get('Id', '')
+        missing_truck_id_count = 0
 
-            if drv.lower().startswith('towbook'):
-                continue
+        if is_towbook_garage:
+            # Towbook garage: build leaderboard from driver (Off_Platform_Driver__c)
+            contractor_stats = {}
+            # Build per-driver decline counts
+            driver_decline_counts = defaultdict(int)
+            for d in data['decline_sas']:
+                did = d.get('Off_Platform_Driver__c') or ''
+                if did:
+                    driver_decline_counts[did] += 1
 
-            if drv_id not in driver_stats:
-                driver_stats[drv_id] = {
-                    'name': drv, 'id': drv_id,
-                    'total_calls': 0, 'response_times': [],
-                    'onsite_times': [], 'declines': 0,
-                }
+            for sa in data['sas']:
+                wt = (sa.get('WorkType') or {}).get('Name', '') or ''
+                if 'drop' in wt.lower():
+                    continue
 
-            ds = driver_stats[drv_id]
-            ds['total_calls'] += 1
+                driver_id = sa.get('Off_Platform_Driver__c') or ''
+                if not driver_id:
+                    missing_truck_id_count += 1
+                    continue
 
-            sa_ref = sa_data.get('ServiceAppointment') or sa_data
-            created = _parse_dt(sa_ref.get('CreatedDate'))
-            started = _parse_dt(sa_ref.get('ActualStartTime'))
-            ended = _parse_dt(sa_ref.get('ActualEndTime'))
+                driver_name = (sa.get('Off_Platform_Driver__r') or {}).get('Name', '') or 'Unknown Driver'
 
-            if created and started:
-                rt = (started - created).total_seconds() / 60
-                if 0 < rt < 1440:
-                    ds['response_times'].append(rt)
-            if started and ended:
-                ot = (ended - started).total_seconds() / 60
-                if 0 < ot < 480:
-                    ds['onsite_times'].append(ot)
-            if sa_ref.get('ERS_Facility_Decline_Reason__c'):
-                ds['declines'] += 1
+                if driver_id not in contractor_stats:
+                    contractor_stats[driver_id] = {
+                        'name': driver_name, 'id': driver_id,
+                        'total_calls': 0, 'response_times': [],
+                        'onsite_times': [], 'declines': driver_decline_counts.get(driver_id, 0),
+                    }
 
-        leaderboard = []
-        for ds in driver_stats.values():
-            rts = ds['response_times']
-            ots = ds['onsite_times']
-            leaderboard.append({
-                'name': ds['name'],
-                'id': ds['id'],
-                'total_calls': ds['total_calls'],
-                'avg_response_min': round(sum(rts) / len(rts)) if rts else None,
-                'median_response_min': round(sorted(rts)[len(rts) // 2]) if rts else None,
-                'avg_onsite_min': round(sum(ots) / len(ots)) if ots else None,
-                'declines': ds['declines'],
-                'decline_rate': round(100 * ds['declines'] / max(ds['total_calls'], 1), 1),
-            })
-        leaderboard.sort(key=lambda d: d.get('avg_response_min') or 999)
+                cs = contractor_stats[driver_id]
+                if driver_name != 'Unknown Driver' and cs['name'] == 'Unknown Driver':
+                    cs['name'] = driver_name
+                cs['total_calls'] += 1
+
+                # Use real On Location timestamp for Towbook response time
+                created_lb = _parse_dt(sa.get('CreatedDate'))
+                on_loc_str = _on_loc_map.get(sa.get('Id'))
+                on_loc = _parse_dt(on_loc_str) if on_loc_str else None
+                if created_lb and on_loc:
+                    rt = (on_loc - created_lb).total_seconds() / 60
+                    if 0 < rt < 480:
+                        cs['response_times'].append(rt)
+
+                # On-site duration: On Location → End
+                ended_lb = _parse_dt(sa.get('ActualEndTime'))
+                if on_loc and ended_lb:
+                    ot = (ended_lb - on_loc).total_seconds() / 60
+                    if 0 < ot < 240:
+                        cs['onsite_times'].append(ot)
+
+            leaderboard = []
+            for cs in contractor_stats.values():
+                rts = cs['response_times']
+                ots = cs['onsite_times']
+                leaderboard.append({
+                    'name': cs['name'],
+                    'id': cs['id'],
+                    'total_calls': cs['total_calls'],
+                    'avg_response_min': round(sum(rts) / len(rts)) if rts else None,
+                    'median_response_min': round(sorted(rts)[len(rts) // 2]) if rts else None,
+                    'avg_onsite_min': round(sum(ots) / len(ots)) if ots else None,
+                    'declines': cs['declines'],
+                    'decline_rate': round(100 * cs['declines'] / max(cs['total_calls'] + cs['declines'], 1), 1),
+                    'response_metric': 'ATA (actual)',
+                })
+            leaderboard.sort(key=lambda d: d['total_calls'], reverse=True)
+        else:
+            # Fleet/On-Platform garage: build leaderboard from AssignedResource
+            driver_stats = {}
+            for r in data['driver_sas']:
+                sa_data = r
+
+                drv = (r.get('ServiceResource') or {}).get('Name', '?')
+                drv_id = (r.get('ServiceResource') or {}).get('Id', '')
+
+                if drv_id not in driver_stats:
+                    driver_stats[drv_id] = {
+                        'name': drv, 'id': drv_id,
+                        'total_calls': 0, 'response_times': [],
+                        'onsite_times': [], 'declines': 0,
+                    }
+
+                ds = driver_stats[drv_id]
+                ds['total_calls'] += 1
+
+                sa_ref = sa_data.get('ServiceAppointment') or sa_data
+                created = _parse_dt(sa_ref.get('CreatedDate'))
+                started = _parse_dt(sa_ref.get('ActualStartTime'))
+                ended = _parse_dt(sa_ref.get('ActualEndTime'))
+
+                if created and started:
+                    rt = (started - created).total_seconds() / 60
+                    if 0 < rt < 1440:
+                        ds['response_times'].append(rt)
+                if started and ended:
+                    ot = (ended - started).total_seconds() / 60
+                    if 0 < ot < 480:
+                        ds['onsite_times'].append(ot)
+                if sa_ref.get('ERS_Facility_Decline_Reason__c'):
+                    ds['declines'] += 1
+
+            leaderboard = []
+            for ds in driver_stats.values():
+                rts = ds['response_times']
+                ots = ds['onsite_times']
+                leaderboard.append({
+                    'name': ds['name'],
+                    'id': ds['id'],
+                    'total_calls': ds['total_calls'],
+                    'avg_response_min': round(sum(rts) / len(rts)) if rts else None,
+                    'median_response_min': round(sorted(rts)[len(rts) // 2]) if rts else None,
+                    'avg_onsite_min': round(sum(ots) / len(ots)) if ots else None,
+                    'declines': ds['declines'],
+                    'decline_rate': round(100 * ds['declines'] / max(ds['total_calls'], 1), 1),
+                })
+            leaderboard.sort(key=lambda d: d.get('avg_response_min') or 999)
 
         return {
+            'garage_type': 'towbook' if is_towbook_garage else 'fleet',
             'response_decomposition': decomposition,
             'decline_analysis': decline_analysis,
             'cancel_analysis': cancel_analysis,
             'driver_leaderboard': leaderboard,
+            'missing_truck_id_count': missing_truck_id_count,
         }
 
     return cache.cached_query(f'decomp_{territory_id}_{period_start}_{period_end}', _fetch, ttl=3600)

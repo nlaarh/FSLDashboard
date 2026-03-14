@@ -36,6 +36,7 @@ export const fetchAppointments = (id, date) => api.get(`/garages/${id}/appointme
 export const fetchSimulation = (id, date) => api.get(`/garages/${id}/simulate?date=${date}`).then(r => r.data)
 export const fetchScore = (id, weeks = 4) => api.get(`/garages/${id}/score?weeks=${weeks}`).then(r => r.data)
 export const fetchCommandCenter = (hours = 24) => api.get(`/command-center?hours=${hours}`).then(r => r.data)
+export const fetchSchedulerInsights = () => api.get('/scheduler-insights').then(r => r.data)
 export const lookupSA = (number) => api.get(`/sa/${number}`).then(r => r.data)
 export const fetchPerformance = (id, start, end) =>
   api.get(`/garages/${id}/performance?period_start=${start}&period_end=${end}`).then(r => r.data)
@@ -43,6 +44,7 @@ export const fetchMapGrids = () => api.get('/map/grids').then(r => r.data)
 export const fetchMapDrivers = () => api.get('/map/drivers').then(r => r.data)
 export const fetchMapWeather = () => api.get('/map/weather').then(r => r.data)
 export const fetchHealth = () => api.get('/health').then(r => r.data)
+export const fetchGpsHealth = () => api.get('/gps-health').then(r => r.data)
 export const fetchDbStatus = () => api.get('/db/status').then(r => r.data)
 export const triggerSync = () => api.post('/sync').then(r => r.data)
 
@@ -71,6 +73,10 @@ export const adminUpdateSettings = (pin, data) => api.put('/admin/settings', dat
 export const fetchMatrixHealth = (period = 'last_month') =>
   api.get(`/matrix/health?period=${period}`).then(r => r.data)
 
+// Data Quality
+export const fetchDataQuality = () => api.get('/data-quality').then(r => r.data)
+export const refreshDataQuality = () => api.post('/data-quality/refresh').then(r => r.data)
+
 // Admin (PIN-protected)
 const pinHeader = (pin) => ({ headers: { 'X-Admin-Pin': pin } })
 export const adminVerify = (pin) => api.post('/admin/verify', null, pinHeader(pin)).then(r => r.data)
@@ -79,6 +85,19 @@ export const adminFlush = (pin, prefix = '') => api.post(`/admin/flush?prefix=${
 export const adminFlushLive = (pin) => api.post('/admin/flush/live', null, pinHeader(pin)).then(r => r.data)
 export const adminFlushHistorical = (pin) => api.post('/admin/flush/historical', null, pinHeader(pin)).then(r => r.data)
 export const adminFlushStatic = (pin) => api.post('/admin/flush/static', null, pinHeader(pin)).then(r => r.data)
+
+// Issue Reporting & Management
+export const submitIssue = (data) => api.post('/issues', data).then(r => r.data)
+export const fetchIssues = (state = 'open') => api.get(`/issues?state=${state}`).then(r => r.data)
+export const fetchIssue = (num) => api.get(`/issues/${num}`).then(r => r.data)
+export const addIssueComment = (num, comment, name) => api.post(`/issues/${num}/comments`, { comment, name }).then(r => r.data)
+export const updateIssueStatus = (pin, num, status) => api.patch(`/issues/${num}`, { status }, pinHeader(pin)).then(r => r.data)
+export const triageIssues = (pin) => api.post('/issues/triage', null, pinHeader(pin)).then(r => r.data)
+
+// Chatbot
+export const fetchChatbotModels = () => api.get('/chatbot/models').then(r => r.data)
+export const askChatbot = (question, complexity = 'mid', history = []) =>
+  api.post('/chat', { question, complexity, history }, { timeout: 90000 }).then(r => r.data)
 
 // User Management (PIN-protected)
 export const adminListUsers = (pin) => api.get('/admin/users', pinHeader(pin)).then(r => r.data)

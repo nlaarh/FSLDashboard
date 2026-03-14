@@ -1,15 +1,15 @@
 """Daily Operations endpoints — TODAY only, live SOQL, correct PTA/ATA metrics.
 
-Key insight: Towbook SAs update ActualStartTime in bulk at midnight.
-- Field Services: ATA = ActualStartTime - CreatedDate (reliable, real-time)
-- Towbook: ATA is NOT calculable. Use PTA (ERS_PTA__c) as the promised time.
+- Fleet ATA = ActualStartTime - CreatedDate
+- Towbook ATA = ServiceAppointmentHistory 'On Location' timestamp - CreatedDate
+  (ActualStartTime is a fake future estimate; real arrival is the 'On Location' event)
 - ERS_Dispatch_Method__c = 'Field Services' or 'Towbook'
 """
 
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
 
 _ET = ZoneInfo('America/New_York')
@@ -34,31 +34,41 @@ def _minutes_since(dt_str, now_utc):
     return round((now_utc - dt).total_seconds() / 60)
 
 
-def _calc_ata(sa):
+def _calc_ata(sa, towbook_on_location=None):
     """Calculate ATA in minutes.
-    - Field Services: always reliable
-    - Towbook: filter out midnight-sync artifacts (ATA > 240 min)
+    - Fleet: ActualStartTime - CreatedDate
+    - Towbook: 'On Location' history timestamp - CreatedDate
+      (ActualStartTime is a fake future estimate written at completion)
+
+    Args:
+        towbook_on_location: dict {sa_id: iso_datetime} from get_towbook_on_location()
     """
     created = _parse_dt(sa.get('CreatedDate'))
-    actual_start = _parse_dt(sa.get('ActualStartTime'))
-
-    if not created or not actual_start:
+    if not created:
         return None
 
-    diff = (actual_start - created).total_seconds() / 60
+    dispatch_method = (sa.get('ERS_Dispatch_Method__c') or '')
+    if dispatch_method == 'Towbook':
+        # Use real arrival from ServiceAppointmentHistory
+        if not towbook_on_location:
+            return None
+        on_loc_str = towbook_on_location.get(sa.get('Id'))
+        if not on_loc_str:
+            return None
+        on_loc = _parse_dt(on_loc_str)
+        if not on_loc:
+            return None
+        diff = (on_loc - created).total_seconds() / 60
+    else:
+        actual_start = _parse_dt(sa.get('ActualStartTime'))
+        if not actual_start:
+            return None
+        diff = (actual_start - created).total_seconds() / 60
+
     if diff <= 0 or diff >= 1440:
         return None
 
-    dispatch_method = sa.get('ERS_Dispatch_Method__c', '')
-    if dispatch_method == 'Field Services':
-        return round(diff)
-
-    # Towbook: only trust if ATA is reasonable (< 4 hours)
-    # Midnight bulk sync creates 300+ min artifacts
-    if diff < 240:
-        return round(diff)
-
-    return None
+    return round(diff)
 
 
 def _get_priority_matrix():
@@ -190,6 +200,15 @@ def get_ops_territories():
             if tid:
                 by_territory[tid].append(sa)
 
+        # Fetch real arrival times for Towbook SAs (On Location from history)
+        towbook_completed_ids = [
+            sa['Id'] for sa in sas
+            if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
+            and sa.get('Status') == 'Completed'
+            and sa.get('Id')
+        ]
+        towbook_on_location = get_towbook_on_location(towbook_completed_ids)
+
         matrix = _get_priority_matrix()
         rank_lookup = matrix['rank_lookup']
 
@@ -221,16 +240,14 @@ def get_ops_territories():
             pta_under_60 = sum(1 for p in pta_values if p <= 60)
             pta_under_60_pct = round(100 * pta_under_60 / max(len(pta_values), 1)) if pta_values else None
 
-            # ATA stats (Fleet only — Towbook timestamps unreliable)
+            # ATA stats (Fleet: ActualStartTime, Towbook: On Location from history)
             ata_values = []
             fleet_pta_values = []
             for s in completed:
                 wt = (s.get('WorkType') or {}).get('Name', '')
                 if 'drop' in wt.lower():
                     continue
-                if s.get('ERS_Dispatch_Method__c') != 'Field Services':
-                    continue
-                ata = _calc_ata(s)
+                ata = _calc_ata(s, towbook_on_location)
                 if ata is not None:
                     ata_values.append(ata)
                 pta = s.get('ERS_PTA__c')
@@ -320,6 +337,7 @@ def get_ops_territories():
                 'secondary_completed': secondary_completed,
                 'pct_secondary_completion': pct_secondary_completion,
                 'avg_pta': avg_pta,
+                'pta_sample_size': len(pta_values),
                 'pta_under_60_pct': pta_under_60_pct,
                 'avg_ata': avg_ata,
                 'ata_under_45_pct': ata_under_45_pct,
@@ -382,6 +400,12 @@ def get_ops_territory_detail(territory_id: str):
             ORDER BY CreatedDate DESC
         """)
 
+        # Fetch real arrival times for Towbook SAs
+        tb_ids = [s['Id'] for s in sas
+                  if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
+                  and s.get('Status') == 'Completed' and s.get('Id')]
+        towbook_on_location = get_towbook_on_location(tb_ids)
+
         # Load priority matrix for rank lookup
         matrix = _get_priority_matrix()
 
@@ -423,10 +447,10 @@ def get_ops_territory_detail(territory_id: str):
                 if not is_dropoff:
                     pta_values.append(pta_min)
 
-            # ATA (only Field Services, exclude drop-offs)
+            # ATA (Fleet: ActualStartTime, Towbook: On Location history)
             ata_min = None
             if not is_dropoff:
-                ata_min = _calc_ata(sa)
+                ata_min = _calc_ata(sa, towbook_on_location)
                 if ata_min is not None:
                     ata_values.append(ata_min)
 
@@ -534,7 +558,7 @@ def get_ops_territory_detail(territory_id: str):
                 'ata_under_45': ata_under_45,
                 'ata_under_45_pct': round(100 * ata_under_45 / max(len(ata_values), 1), 1) if ata_values else None,
                 'ata_sample_size': len(ata_values),
-                'ata_note': 'ATA only available for Field Services dispatches. Towbook timestamps are unreliable.',
+                'ata_note': 'ATA includes all dispatch methods (Field Services + Towbook).',
             },
             'completion_by_rank': completion_by_rank,
             'status_counts': dict(status_counts),

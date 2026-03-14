@@ -690,15 +690,73 @@ function HowItWorks({ onClose }) {
           </ul>
         </div>
 
+        {/* Salesforce Fields Reference */}
+        <div>
+          <h3 className="text-sm font-semibold text-white mb-1">Salesforce Fields Used</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px] mt-2">
+              <thead>
+                <tr className="border-b border-slate-700/50">
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold uppercase">Data Point</th>
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold uppercase">Salesforce Field(s)</th>
+                  <th className="text-left py-1.5 px-2 text-slate-500 font-bold uppercase">How It's Used</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-400">
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">PTA Setting</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceTerritory.ERS_Service_Appointment_PTA__c</code></td>
+                  <td className="py-1.5 px-2">Current PTA promise (minutes) configured per garage. This is what Mulesoft quotes to members.</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Live PTA per call</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.ERS_PTA__c</code></td>
+                  <td className="py-1.5 px-2">Actual PTA promised for each SA at dispatch time. For contractor garages, AVG of this field on open SAs = projected PTA.</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Call type</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">WorkType.Name</code> via <code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.WorkTypeId</code></td>
+                  <td className="py-1.5 px-2">Maps to tier: Tow/Flat Bed/Wheel Lift → tow, Winch Out → winch, Battery/Jumpstart → battery, Tire/Lockout/Fuel → light.</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Queue depth</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.StatusCategory</code> = "None" (unassigned)</td>
+                  <td className="py-1.5 px-2">COUNT of today's SAs with no driver assigned yet = calls waiting in queue.</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Fleet drivers</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceResource</code> + <code className="text-brand-300 bg-slate-800 px-1 rounded">Asset</code> (vehicle login)</td>
+                  <td className="py-1.5 px-2">Driver is "online" if they have an active Asset record (logged into a truck). Truck capabilities determine skill tier.</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Contractor drivers</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.Off_Platform_Driver__r.Name</code></td>
+                  <td className="py-1.5 px-2">Towbook drivers identified from this field. Unique names on today's SAs = "drivers seen today".</td>
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="py-1.5 px-2 text-slate-300">Driver on-site?</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.ActualStartTime</code></td>
+                  <td className="py-1.5 px-2">If ActualStartTime is set, driver has arrived. Remaining time = cycle time − (NOW − ActualStartTime).</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 px-2 text-slate-300">Dispatch method</td>
+                  <td className="py-1.5 px-2"><code className="text-brand-300 bg-slate-800 px-1 rounded">ServiceAppointment.ERS_Dispatch_Method__c</code></td>
+                  <td className="py-1.5 px-2">"Field Services" = internal fleet, "Towbook" = external contractor. Determines fleet vs contractor logic.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         {/* Data Sources */}
         <div>
-          <h3 className="text-sm font-semibold text-white mb-1">Data Sources (5 Parallel Salesforce Queries)</h3>
+          <h3 className="text-sm font-semibold text-white mb-1">SOQL Queries (5 Parallel)</h3>
           <ol className="list-decimal list-inside space-y-0.5 text-slate-500 text-[10px]">
-            <li>Today's ServiceAppointments (with Off-Platform Driver names for Towbook)</li>
-            <li>AssignedResource records (driver-to-SA assignments)</li>
-            <li>Asset table (Fleet drivers logged into vehicles + truck capabilities)</li>
-            <li>ServiceTerritoryMember (driver-to-garage assignments)</li>
-            <li>ERS_Service_Appointment_PTA__c (current PTA settings per garage)</li>
+            <li><strong className="text-slate-400">ServiceAppointment</strong> — Today's SAs with Status, PTA, WorkType, Off_Platform_Driver, ActualStartTime, ActualEndTime</li>
+            <li><strong className="text-slate-400">AssignedResource</strong> — Links ServiceResource to SA (driver-to-call assignments)</li>
+            <li><strong className="text-slate-400">Asset</strong> — Fleet drivers logged into vehicles + truck capabilities (AccountId matches ServiceResource)</li>
+            <li><strong className="text-slate-400">ServiceTerritoryMember</strong> — Driver-to-garage assignments (which drivers belong to which territory)</li>
+            <li><strong className="text-slate-400">ServiceTerritory</strong> — ERS_Service_Appointment_PTA__c (current PTA settings per garage)</li>
           </ol>
         </div>
       </div>
