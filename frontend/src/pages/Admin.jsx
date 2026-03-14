@@ -30,6 +30,7 @@ export default function Admin() {
   const [aiPrimaryModel, setAiPrimaryModel] = useState('')
   const [aiFallbackModel, setAiFallbackModel] = useState('')
   const [aiModelCatalog, setAiModelCatalog] = useState({})
+  const [aiChatEnabled, setAiChatEnabled] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
   const [aiSaved, setAiSaved] = useState(false)
 
@@ -93,6 +94,7 @@ export default function Admin() {
       }
       setAiModelCatalog(catalog)
       const cb = settings.chatbot || {}
+      setAiChatEnabled(cb.enabled || false)
       setAiProvider(cb.provider || '')
       setAiApiKey(cb.api_key || '')
       // Support both new (primary_model) and old (models.mid) settings
@@ -106,7 +108,7 @@ export default function Admin() {
     setAiSaved(false)
     try {
       await adminUpdateSettings(pin, {
-        chatbot: { provider: aiProvider, api_key: aiApiKey, primary_model: aiPrimaryModel, fallback_model: aiFallbackModel },
+        chatbot: { enabled: aiChatEnabled, provider: aiProvider, api_key: aiApiKey, primary_model: aiPrimaryModel, fallback_model: aiFallbackModel },
       })
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
@@ -459,7 +461,21 @@ export default function Admin() {
           {aiSaved && <span className="text-[10px] text-emerald-400 ml-auto flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
         </div>
         <div className="p-4 space-y-5">
-          <p className="text-[11px] text-slate-500">Configure the AI chatbot in the Help Center. Pick a provider, enter your API key, then choose a primary model and an optional fallback.</p>
+          <p className="text-[11px] text-slate-500">Configure the AI chatbot. Pick a provider, enter your API key, then choose a primary model and an optional fallback.</p>
+
+          {/* Enable/Disable toggle */}
+          <div className="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3 border border-slate-700/50 mb-4">
+            <div>
+              <div className="text-sm font-medium text-slate-200">Chat Assistant</div>
+              <div className="text-[10px] text-slate-500">Show floating chat bubble for all users</div>
+            </div>
+            <button
+              onClick={() => setAiChatEnabled(e => !e)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${aiChatEnabled ? 'bg-emerald-500' : 'bg-slate-600'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${aiChatEnabled ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Left column: Provider + API Key */}

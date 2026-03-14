@@ -1060,7 +1060,7 @@ function MiniDonut({ pct, size = 56, stroke = 6, autoColor = '#6366f1', manualCo
 
 function DispatchInsightsPanel({ data, gpsHealth, ccData }) {
   const [open, setOpen] = useState(true)
-  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, manual_closest_pct, manual_closest_eval, towbook_closest_pct, towbook_closest_eval, dispatchers, total, fleet_total } = data
+  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, auto_extra_miles, auto_wrong, manual_closest_pct, manual_closest_eval, manual_extra_miles, manual_wrong, towbook_closest_pct, towbook_closest_eval, towbook_extra_miles, towbook_wrong, total_extra_miles, dispatchers, total, fleet_total } = data
   return (
     <div className="absolute bottom-14 right-3 z-[999] w-[240px] pointer-events-auto"
          style={{ maxHeight: 'calc(100vh - 140px)' }}>
@@ -1096,11 +1096,11 @@ function DispatchInsightsPanel({ data, gpsHealth, ccData }) {
                 </div>
               </div>
               {/* Closest driver — donut + split by system vs dispatcher */}
-              {(auto_closest_pct != null || manual_closest_pct != null) && (
+              {(auto_closest_pct != null || manual_closest_pct != null || towbook_closest_pct != null) && (
                 <div className="pt-2 border-t border-slate-800/60">
                   <div className="flex items-center gap-1.5 mb-2">
                     <Navigation className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                    <span className="text-[9px] text-slate-500 uppercase tracking-wider">Sent Closest Driver</span>
+                    <span className="text-[9px] text-slate-500 uppercase tracking-wider">Closest Driver Dispatched</span>
                   </div>
                   <div className="flex items-center gap-3">
                     {auto_closest_pct != null && (
@@ -1125,6 +1125,20 @@ function DispatchInsightsPanel({ data, gpsHealth, ccData }) {
                       </div>
                     )}
                   </div>
+                  {/* Extra miles wasted */}
+                  {total_extra_miles != null && total_extra_miles > 0 && (
+                    <div className="mt-2 bg-red-950/30 border border-red-800/30 rounded-lg px-2.5 py-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-red-400 font-medium">Extra Miles (wrong picks)</span>
+                        <span className="text-[11px] font-bold text-red-300">+{total_extra_miles} mi</span>
+                      </div>
+                      <div className="flex gap-2 mt-1 text-[8px] text-slate-500">
+                        {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
+                        {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
+                        {towbook_wrong > 0 && <span>TB: {towbook_extra_miles}mi ({towbook_wrong})</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Comparison stats */}
