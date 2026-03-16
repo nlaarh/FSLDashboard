@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import ReactDOM from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
@@ -9,7 +10,8 @@ import {
   Loader2, RefreshCw, Radio, CheckCircle2, AlertTriangle,
   ChevronRight, Search, MapPin, Clock, FileText,
   ChevronDown, ChevronUp, Crosshair, X, Truck, Layers,
-  Zap, Shield, Navigation, Users, TrendingUp, AlertCircle, ArrowRight
+  Zap, Shield, Navigation, Users, TrendingUp, AlertCircle, ArrowRight,
+  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity
 } from 'lucide-react'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -198,6 +200,7 @@ export default function CommandCenter() {
 
   // ── Panel state
   const [panelTab, setPanelTab] = useState('ops')    // ops | queue | zones | search
+  const [viewMode, setViewMode] = useState('insights')    // insights | map
   const [panelOpen, setPanelOpen] = useState(true)
   const [focusCenter, setFocusCenter] = useState(null)
 
@@ -311,12 +314,51 @@ export default function CommandCenter() {
   const idleDriverIds = new Set((fleet.idle_drivers || []).map(d => d.id))
 
   return (
-    <div className="-mx-6 -mt-6 flex" style={{ height: 'calc(100vh - 56px)' }}>
+    <div className="-mx-6 -mt-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}
-      {/* MAP                                                                  */}
+      {/* VIEW TABS — full-width tab bar                                       */}
       {/* ══════════════════════════════════════════════════════════════════════ */}
+      <div className="flex-shrink-0 bg-slate-900/95 border-b border-slate-700/50 px-6 flex items-center gap-1">
+        <button onClick={() => setViewMode('insights')}
+          className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
+            viewMode === 'insights'
+              ? 'border-indigo-500 text-indigo-300 bg-indigo-600/10'
+              : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
+          <Zap className="w-4 h-4" /> Dispatch Insights
+        </button>
+        <button onClick={() => setViewMode('map')}
+          className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
+            viewMode === 'map'
+              ? 'border-brand-500 text-brand-300 bg-brand-600/10'
+              : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
+          <MapPin className="w-4 h-4" /> Map
+        </button>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* VIEW CONTENT                                                         */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      {/* ── INSIGHTS FULL VIEW (takes all space, no sidebar) ── */}
+      {viewMode === 'insights' && (
+        <div className="flex-1 overflow-hidden">
+          {schedulerData ? (
+            <DispatchInsightsFullView data={schedulerData} gpsHealth={gpsHealth} ccData={data} />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-slate-950">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MAP VIEW (with ops cockpit + territory sidebar) ── */}
+      {viewMode === 'map' && (
+      <div className="flex-1 flex overflow-hidden">
       <div className="flex-1 relative cc-map">
+
+        {/* ── MAP ── */}
         <MapContainer center={[42.9, -78.8]} zoom={9} className="w-full h-full"
                       zoomControl={false} attributionControl={false}>
           <TileLayer key={mapConfig.url} url={mapConfig.url}
@@ -905,11 +947,6 @@ export default function CommandCenter() {
           </div>
         </div>
 
-        {/* ── Dispatch Insights (bottom-right, collapsible) ────── */}
-        {schedulerData && (
-          <DispatchInsightsPanel data={schedulerData} gpsHealth={gpsHealth} ccData={data} />
-        )}
-
         {error && (
           <div className="absolute top-16 right-4 z-[1000] bg-red-950/90 border border-red-800/50
                           rounded-xl px-4 py-2 text-sm text-red-300 shadow-xl max-w-xs">{error}</div>
@@ -945,9 +982,7 @@ export default function CommandCenter() {
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════ */}
-      {/* RIGHT PANEL — Territory List                                         */}
-      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── RIGHT PANEL — Territory List ── */}
       <div className="w-80 bg-slate-900/95 border-l border-slate-700/50 flex flex-col">
         <div className="p-3 border-b border-slate-800">
           <div className="text-sm font-semibold text-white mb-2">Territories</div>
@@ -985,6 +1020,8 @@ export default function CommandCenter() {
           ))}
         </div>
       </div>
+      </div>
+      )}
     </div>
   )
 }
@@ -1058,140 +1095,617 @@ function MiniDonut({ pct, size = 56, stroke = 6, autoColor = '#6366f1', manualCo
   )
 }
 
-function DispatchInsightsPanel({ data, gpsHealth, ccData }) {
-  const [open, setOpen] = useState(true)
-  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, auto_extra_miles, auto_wrong, manual_closest_pct, manual_closest_eval, manual_extra_miles, manual_wrong, towbook_closest_pct, towbook_closest_eval, towbook_extra_miles, towbook_wrong, total_extra_miles, dispatchers, total, fleet_total } = data
+function InfoTip({ text }) {
+  const [open, setOpen] = useState(false)
+  const [style, setStyle] = useState({})
+  const btnRef = useRef(null)
+  const popRef = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e) => {
+      if (btnRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  // Reposition after render so we know the popup's actual height
+  useEffect(() => {
+    if (!open || !popRef.current || !btnRef.current) return
+    const btn = btnRef.current.getBoundingClientRect()
+    const pop = popRef.current.getBoundingClientRect()
+    const vh = window.innerHeight
+    const vw = window.innerWidth
+    const pad = 12
+    // Horizontal: center on button, clamp to viewport
+    let left = Math.max(pad, Math.min(btn.left + btn.width / 2 - pop.width / 2, vw - pop.width - pad))
+    // Vertical: prefer below the button; if it won't fit, put it above
+    let top
+    const maxH = vh - pad * 2
+    if (btn.bottom + 8 + pop.height <= vh - pad) {
+      top = btn.bottom + 8
+    } else if (btn.top - 8 - pop.height >= pad) {
+      top = btn.top - 8 - pop.height
+    } else {
+      // Neither fits fully — anchor to bottom of viewport with scroll
+      top = Math.max(pad, vh - pop.height - pad)
+    }
+    setStyle({ zIndex: 99999, position: 'fixed', left, top, maxHeight: maxH })
+  }, [open])
+  const handleOpen = (e) => {
+    e.stopPropagation()
+    // Initial position near button — will be corrected by useEffect above
+    const rect = e.currentTarget.getBoundingClientRect()
+    setStyle({ zIndex: 99999, position: 'fixed', left: rect.left, top: rect.bottom + 8, maxHeight: window.innerHeight - 24 })
+    setOpen(o => !o)
+  }
   return (
-    <div className="absolute bottom-14 right-3 z-[999] w-[240px] pointer-events-auto"
-         style={{ maxHeight: 'calc(100vh - 140px)' }}>
-      <div className={clsx('bg-slate-900/95 backdrop-blur-xl border border-slate-600/40 shadow-2xl flex flex-col',
-        open ? 'rounded-xl' : 'rounded-xl')}>
-        {/* Header — always visible, click to toggle */}
-        <button onClick={() => setOpen(o => !o)}
-          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-800/95 transition-colors rounded-t-xl flex-shrink-0">
-          <Zap className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="text-[10px] font-bold text-white uppercase tracking-wide flex-1 text-left">Dispatch Insights</span>
-          <span className="text-[9px] text-slate-500">{fleet_total || total} fleet{towbook_count ? ` · ${towbook_count} TB` : ''}</span>
-          {open ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronUp className="w-3 h-3 text-slate-400" />}
-        </button>
-        {/* Scrollable body */}
-        {open && (
-          <div className="overflow-y-auto overscroll-contain border-t border-slate-800/60"
-               style={{ maxHeight: 'calc(100vh - 200px)' }}>
-            <div className="px-3 py-2.5 space-y-2.5">
-              {/* Donut + labels */}
-              <div className="flex items-center gap-3">
-                <MiniDonut pct={auto_pct} />
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />
-                    <span className="text-[10px] text-slate-300 flex-1">System</span>
-                    <span className="text-[11px] font-bold text-white">{auto_count}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                    <span className="text-[10px] text-slate-300 flex-1">Dispatcher</span>
-                    <span className="text-[11px] font-bold text-white">{manual_count}</span>
-                  </div>
+    <span ref={btnRef} className="relative ml-1 inline-flex">
+      <button onClick={handleOpen}
+        className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-700/60 text-slate-400 hover:text-white hover:bg-indigo-600 cursor-pointer text-[9px] font-bold leading-none transition-colors">?</button>
+      {open && ReactDOM.createPortal(
+        <div ref={popRef}
+          className="w-72 bg-slate-800 border border-slate-600/50 rounded-xl shadow-2xl shadow-black/60 p-3 text-xs text-slate-300 leading-relaxed overflow-y-auto"
+          style={style}
+          onClick={e => e.stopPropagation()}>
+          <div className="whitespace-pre-wrap">{text}</div>
+        </div>,
+        document.body
+      )}
+    </span>
+  )
+}
+
+function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
+  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, auto_extra_miles, auto_wrong, manual_closest_pct, manual_closest_eval, manual_extra_miles, manual_wrong, towbook_closest_pct, towbook_closest_eval, towbook_extra_miles, towbook_wrong, total_extra_miles, dispatchers, total, fleet_total } = data
+  const fg = ccData?.fleet_gps
+  const ts = ccData?.today_status
+  const sp = ccData?.today_split
+  const lb = ccData?.fleet_leaderboard
+  const ra = ccData?.reassignment
+  const cb = ccData?.cancel_breakdown
+  const db = ccData?.decline_breakdown
+  const fu = ccData?.fleet_utilization
+  const hv = ccData?.hourly_volume
+  const overCap = (ccData?.territories || []).filter(t =>
+      (t.capacity === 'over' || t.capacity === 'busy')
+      && !t.name.startsWith('000')
+      && !/SPOT/i.test(t.name)
+    )
+    .sort((a, b) => {
+      // Prioritize by impact: open calls × max wait time
+      const scoreA = (a.open || 0) * Math.max(a.max_wait || 1, 1)
+      const scoreB = (b.open || 0) * Math.max(b.max_wait || 1, 1)
+      return scoreB - scoreA
+    })
+
+  return (
+    <div className="w-full h-full bg-slate-950 overflow-y-auto pt-6 pb-6 px-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+
+        {/* ── Row 1: Dispatch Split + Closest Driver + Stats ── */}
+        <div className="grid grid-cols-3 gap-4">
+          {/* Dispatch Split */}
+          <div className="glass rounded-xl border border-slate-700/30 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="w-4 h-4 text-indigo-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">Dispatch Split</span>
+              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Top-right number (e.g. '175 fleet') = total completed fleet calls today.\n• Donut chart % = share handled by the auto-scheduler.\n• Blue dot / 'System' number = calls the FSL Enhanced Scheduler auto-assigned (no human involved).\n• Orange dot / 'Dispatcher' number = calls a human dispatcher manually assigned.\n• Pink dot / 'Contractor' number (below the line) = Towbook contractor calls, dispatched outside FSL.\n\nSystem + Dispatcher = total fleet calls. Contractor is separate.\n\nWHAT IT MEANS:\nSystem = the scheduler picked the driver automatically.\nDispatcher = a person chose who to send.\n\nHOW IT'S CALCULATED:\nWe check who created the 'Assigned' status in ServiceAppointmentHistory. System accounts (Automated Process, Data Loader, FSL Enhanced) = System. Human names = Dispatcher.\n\nGOAL: Higher System % = the auto-scheduler is handling more fleet work without human intervention."} />
+              <span className="text-[10px] text-slate-500 ml-auto">{fleet_total || total} fleet</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <MiniDonut pct={auto_pct} size={72} stroke={7} />
+              <div className="flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                  <span className="text-xs text-slate-300 flex-1">System</span>
+                  <span className="text-sm font-bold text-white">{auto_count}</span>
                 </div>
-              </div>
-              {/* Closest driver — donut + split by system vs dispatcher */}
-              {(auto_closest_pct != null || manual_closest_pct != null || towbook_closest_pct != null) && (
-                <div className="pt-2 border-t border-slate-800/60">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <Navigation className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                    <span className="text-[9px] text-slate-500 uppercase tracking-wider">Closest Driver Dispatched</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {auto_closest_pct != null && (
-                      <div className="text-center">
-                        <MiniDonut pct={auto_closest_pct} size={48} stroke={5} autoColor="#22c55e" manualColor="#1e293b" />
-                        <div className="text-[8px] text-indigo-400 mt-0.5">System</div>
-                        <div className="text-[7px] text-slate-600">{auto_closest_eval} eval</div>
-                      </div>
-                    )}
-                    {manual_closest_pct != null && (
-                      <div className="text-center">
-                        <MiniDonut pct={manual_closest_pct} size={48} stroke={5} autoColor="#f59e0b" manualColor="#1e293b" />
-                        <div className="text-[8px] text-amber-500/70 mt-0.5">Dispatcher</div>
-                        <div className="text-[7px] text-slate-600">{manual_closest_eval} eval</div>
-                      </div>
-                    )}
-                    {towbook_closest_pct != null && (
-                      <div className="text-center">
-                        <MiniDonut pct={towbook_closest_pct} size={48} stroke={5} autoColor="#e879f9" manualColor="#1e293b" />
-                        <div className="text-[8px] text-fuchsia-400/70 mt-0.5">Towbook</div>
-                        <div className="text-[7px] text-slate-600">{towbook_closest_eval} eval</div>
-                      </div>
-                    )}
-                  </div>
-                  {/* Extra miles wasted */}
-                  {total_extra_miles != null && total_extra_miles > 0 && (
-                    <div className="mt-2 bg-red-950/30 border border-red-800/30 rounded-lg px-2.5 py-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] text-red-400 font-medium">Extra Miles (wrong picks)</span>
-                        <span className="text-[11px] font-bold text-red-300">+{total_extra_miles} mi</span>
-                      </div>
-                      <div className="flex gap-2 mt-1 text-[8px] text-slate-500">
-                        {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
-                        {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
-                        {towbook_wrong > 0 && <span>TB: {towbook_extra_miles}mi ({towbook_wrong})</span>}
-                      </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  <span className="text-xs text-slate-300 flex-1">Dispatcher</span>
+                  <span className="text-sm font-bold text-white">{manual_count}</span>
+                </div>
+                {towbook_count > 0 && (
+                  <>
+                    <div className="border-t border-slate-700/30 my-1" />
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-500" />
+                      <span className="text-xs text-slate-400 flex-1">Contractor (Towbook)</span>
+                      <span className="text-sm font-bold text-slate-400">{towbook_count}</span>
                     </div>
-                  )}
+                  </>
+                )}
+              </div>
+            </div>
+            {total === 0 && <div className="text-xs text-slate-600 text-center mt-3">No fleet dispatches yet today</div>}
+          </div>
+
+          {/* Closest Driver */}
+          <div className="glass rounded-xl border border-slate-700/30 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Navigation className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">Closest Driver Dispatched</span>
+              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest available driver was sent.\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = how many calls had enough GPS data to evaluate (not all calls can be measured).\n\nFleet calls only — contractors don't have GPS in Salesforce.\n\nHOW IT'S CALCULATED:\nFor each completed fleet call, we compare the assigned driver's GPS distance to the member vs all other available drivers in that territory. Closest match = hit.\n\nGOAL: 100% = always sent the nearest driver. Lower % = wasted miles, longer wait for members."} />
+            </div>
+            <div className="flex items-center justify-around">
+              {auto_closest_pct != null && (
+                <div className="text-center">
+                  <MiniDonut pct={auto_closest_pct} size={56} stroke={6} autoColor="#22c55e" manualColor="#1e293b" />
+                  <div className="text-[10px] text-indigo-400 mt-1">System</div>
+                  <div className="text-[9px] text-slate-600">{auto_closest_eval} eval</div>
                 </div>
               )}
-              {/* Comparison stats */}
-              <div className="pt-2 border-t border-slate-800/60 grid grid-cols-3 gap-1.5">
-                <InsightStat label="Avg Response" auto={auto_avg_response != null ? `${auto_avg_response}m` : '—'} manual={manual_avg_response != null ? `${manual_avg_response}m` : '—'} />
-                <InsightStat label="Dispatch Speed" auto={auto_avg_speed != null ? `${auto_avg_speed}m` : '—'} manual={manual_avg_speed != null ? `${manual_avg_speed}m` : '—'} />
-                <InsightStat label="45-min SLA" auto={auto_sla != null ? `${auto_sla}%` : '—'} manual={manual_sla != null ? `${manual_sla}%` : '—'} />
+              {manual_closest_pct != null && (
+                <div className="text-center">
+                  <MiniDonut pct={manual_closest_pct} size={56} stroke={6} autoColor="#f59e0b" manualColor="#1e293b" />
+                  <div className="text-[10px] text-amber-500 mt-1">Dispatcher</div>
+                  <div className="text-[9px] text-slate-600">{manual_closest_eval} eval</div>
+                </div>
+              )}
+              {auto_closest_pct == null && manual_closest_pct == null && (
+                <div className="text-xs text-slate-600 text-center py-4">No fleet GPS data available yet</div>
+              )}
+            </div>
+            {total_extra_miles != null && total_extra_miles > 0 && (
+              <div className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-red-400 font-medium">Extra Miles (wrong picks)<InfoTip text={"WHAT: Wasted mileage from wrong driver picks.\n\nWhen a farther driver is sent instead of the closest one, the difference in miles is the 'extra miles'. This adds up across all wrong picks.\n\nHOW: For each call where the closest driver wasn't sent, we calculate: (assigned driver distance) - (closest driver distance) = extra miles.\n\nGOAL: Zero extra miles means perfect dispatch. High numbers mean significant fuel, time, and member wait time wasted."} /></span>
+                  <span className="text-sm font-bold text-red-300">+{total_extra_miles} mi</span>
+                </div>
+                <div className="flex gap-3 mt-1 text-[9px] text-slate-500">
+                  {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
+                  {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
+                </div>
               </div>
-              {/* Top dispatchers */}
-              {dispatchers && dispatchers.length > 0 && (
-                <div className="pt-2 border-t border-slate-800/60">
-                  <div className="text-[8px] text-slate-500 uppercase tracking-wider mb-1">Top Dispatchers</div>
-                  {dispatchers.map((d, i) => (
-                    <div key={i} className="flex items-center justify-between text-[10px]">
-                      <span className="text-slate-400 truncate mr-2">{d.name}</span>
-                      <span className="text-white font-semibold">{d.count}</span>
+            )}
+          </div>
+
+          {/* Performance Stats */}
+          <div className="glass rounded-xl border border-slate-700/30 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <TrendingUp className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">System vs Dispatcher</span>
+              <InfoTip text={"HOW TO READ THIS CARD:\n\nCompares System (auto-scheduler) vs Dispatcher (human) side by side on 3 metrics. Blue row = System, Orange row = Dispatcher. Lower is better for time metrics, higher is better for SLA %.\n\n• Avg Response: Average time from call creation to driver arriving on scene (ATA). This is how long the member waited.\n• Sched ETA: Average time from call creation to the scheduled arrival window. How far out was the appointment set.\n• 45-min SLA: % of calls where the driver arrived within 45 minutes (AAA's standard).\n\nFleet calls only (Towbook excluded).\n\nGOAL: System should match or beat Dispatcher on all 3 metrics. If Dispatcher is faster, the scheduler may need tuning."} />
+            </div>
+            <table className="w-full text-center border-separate" style={{ borderSpacing: '0 4px' }}>
+              <thead>
+                <tr>
+                  <th className="w-16" />
+                  <th className="text-[9px] text-slate-500 uppercase tracking-wider font-medium pb-1">
+                    Avg Response<InfoTip text={"WHAT: Average time a member waits from calling AAA to the driver arriving on scene.\n\nHOW: For each completed call: ActualStartTime (driver marked 'On Location' in Towbook) minus CreatedDate (call entered Salesforce). Averaged across all completed calls.\n\nGOAL: Under 45 minutes. This is the #1 member experience metric."} />
+                  </th>
+                  <th className="text-[9px] text-slate-500 uppercase tracking-wider font-medium pb-1">
+                    Sched ETA<InfoTip text={"WHAT: How quickly a call gets a scheduled arrival window.\n\nHOW: SchedStartTime minus CreatedDate. Measures how far out the scheduled appointment is from creation.\n\nGOAL: Lower is better — means calls are being scheduled with short ETAs."} />
+                  </th>
+                  <th className="text-[9px] text-slate-500 uppercase tracking-wider font-medium pb-1">
+                    45-min SLA<InfoTip text={"WHAT: % of calls where the driver arrived within 45 minutes.\n\nHOW: If (ActualStartTime - CreatedDate) ≤ 45 min, it passes.\n\nGOAL: AAA standard is 45 min. Higher % = better. Below 80% is a red flag."} />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="text-[9px] text-indigo-400/60 font-medium text-left">System</td>
+                  <td className="text-sm font-bold text-indigo-400">{auto_avg_response != null ? `${auto_avg_response}m` : '—'}</td>
+                  <td className="text-sm font-bold text-indigo-400">{auto_avg_speed != null ? `${auto_avg_speed}m` : '—'}</td>
+                  <td className="text-sm font-bold text-indigo-400">{auto_sla != null ? `${auto_sla}%` : '—'}</td>
+                </tr>
+                <tr>
+                  <td className="text-[9px] text-amber-500/50 font-medium text-left">Dispatcher</td>
+                  <td className="text-sm font-bold text-amber-500/80">{manual_avg_response != null ? `${manual_avg_response}m` : '—'}</td>
+                  <td className="text-sm font-bold text-amber-500/80">{manual_avg_speed != null ? `${manual_avg_speed}m` : '—'}</td>
+                  <td className="text-sm font-bold text-amber-500/80">{manual_sla != null ? `${manual_sla}%` : '—'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Row 2: Fleet GPS + Today's Calls + Fleet vs Contractor ── */}
+        <div className="grid grid-cols-3 gap-4">
+          {/* Fleet GPS Health */}
+          {fg && fg.total > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Truck className="w-4 h-4 text-blue-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet Drivers</span>
+                <InfoTip text={"HOW TO READ THIS CARD:\n\n• Drivers: Total active fleet drivers in Salesforce (excludes test accounts, SPOT placeholders, office staff).\n• GPS Tracking: % of fleet drivers the scheduler can currently locate (GPS updated within 4 hours).\n• On GPS: Drivers whose GPS is reporting right now (fresh + recent).\n\nBAR BREAKDOWN:\n• Green (fresh): GPS updated < 1 hour ago — trackable, likely on shift.\n• Dark green (recent): 1-4 hours — recently active, still trackable.\n• Amber (stale): GPS > 4 hours old — has GPS hardware but not reporting now.\n• Red (no GPS): Never reported GPS — may not have the FSL app installed.\n\nWHY IT MATTERS:\nThe scheduler needs live GPS to calculate travel times and pick the closest driver. Drivers without GPS get assigned based on territory only, which leads to longer ETAs and wasted miles.\n\nGOAL: During business hours, GPS Tracking should be 40%+. If most drivers show stale or no GPS, the scheduler is dispatching blind."} />
+              </div>
+              <div className="flex items-center gap-4 mb-3">
+                <div className="text-center flex-1">
+                  <div className="text-2xl font-bold text-white">{fg.total}</div>
+                  <div className="text-[10px] text-slate-500">Drivers</div>
+                </div>
+                <div className="text-center flex-1">
+                  <div className={clsx('text-2xl font-bold', fg.pct >= 40 ? 'text-emerald-400' : fg.pct >= 20 ? 'text-amber-400' : 'text-red-400')}>
+                    {fg.pct}%
+                  </div>
+                  <div className="text-[10px] text-slate-500">GPS Tracking</div>
+                </div>
+                <div className="text-center flex-1">
+                  <div className="text-2xl font-bold text-emerald-400">{fg.active}</div>
+                  <div className="text-[10px] text-slate-500">On GPS</div>
+                </div>
+              </div>
+              <div className="h-3 rounded-full bg-slate-800 overflow-hidden flex">
+                {fg.fresh > 0 && <div className="bg-emerald-500" style={{ width: `${100*fg.fresh/fg.total}%` }} title={`Fresh: ${fg.fresh}`} />}
+                {fg.recent > 0 && <div className="bg-emerald-700" style={{ width: `${100*fg.recent/fg.total}%` }} title={`Recent: ${fg.recent}`} />}
+                {fg.stale > 0 && <div className="bg-amber-600" style={{ width: `${100*fg.stale/fg.total}%` }} title={`Stale: ${fg.stale}`} />}
+                {fg.no_gps > 0 && <div className="bg-red-800" style={{ width: `${100*fg.no_gps/fg.total}%` }} title={`No GPS: ${fg.no_gps}`} />}
+              </div>
+              <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+                <span className="text-emerald-500">{fg.fresh} fresh</span>
+                <span className="text-emerald-700">{fg.recent} recent</span>
+                <span className="text-amber-600">{fg.stale} stale</span>
+                {fg.no_gps > 0 && <span className="text-red-700">{fg.no_gps} no GPS</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Today's Calls */}
+          {ts && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <FileText className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Today's Calls</span>
+                <span className="text-sm font-bold text-white ml-auto">{ts.total || 0}</span>
+                <InfoTip text={"WHAT: All roadside calls created today broken into pipeline stages and outcomes.\n\nPIPELINE (active calls):\n• Dispatched — Call entered, waiting for driver assignment\n• Accepted — Driver accepted, preparing to leave\n• Assigned — Driver assigned, not yet en route\n• En Route — Driver traveling to member\n• On Location — Driver arrived, working on site\n\nOUTCOMES (finished calls):\n• Completed — Service finished successfully\n• Canceled — Call canceled by member or dispatcher\n• No-Show — Driver arrived but member not present\n• Unable — Driver couldn't complete the service\n\nTow Drop-Offs excluded (second leg of a tow, not a new call)."} />
+              </div>
+              {/* Active pipeline */}
+              <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1">Active Pipeline</div>
+              <div className="grid grid-cols-5 gap-1.5 mb-2">
+                {[
+                  { label: 'Dispatched', val: ts.Dispatched, color: 'text-blue-400' },
+                  { label: 'Accepted', val: ts.Accepted, color: 'text-sky-400' },
+                  { label: 'Assigned', val: ts.Assigned, color: 'text-violet-400' },
+                  { label: 'En Route', val: ts['En Route'], color: 'text-amber-400' },
+                  { label: 'On Location', val: ts['On Location'], color: 'text-cyan-400' },
+                ].map(s => (
+                  <div key={s.label} className="text-center bg-slate-800/30 rounded-lg py-1.5">
+                    <div className={clsx('text-sm font-bold', s.color)}>{s.val || 0}</div>
+                    <div className="text-[8px] text-slate-500 leading-tight">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Outcomes */}
+              <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1">Outcomes</div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { label: 'Completed', val: ts.Completed, color: 'text-emerald-400' },
+                  { label: 'Canceled', val: ts.Canceled, color: 'text-slate-500' },
+                  { label: 'No-Show', val: ts['No-Show'], color: 'text-orange-400' },
+                  { label: 'Unable', val: ts['Unable to Complete'], color: 'text-red-400' },
+                ].map(s => (
+                  <div key={s.label} className="text-center bg-slate-800/30 rounded-lg py-1.5">
+                    <div className={clsx('text-sm font-bold', s.color)}>{s.val || 0}</div>
+                    <div className="text-[8px] text-slate-500 leading-tight">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Fleet vs Contractor */}
+              {sp && sp.total_completed > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-800/60">
+                  <div className="flex justify-between text-[10px] mb-1">
+                    <span className="text-blue-400 font-medium">Fleet {sp.fleet_pct}%</span>
+                    <span className="text-slate-600">{sp.total_completed} completed</span>
+                    <span className="text-fuchsia-400 font-medium">Contractor {sp.contractor_pct}%</span>
+                  </div>
+                  <div className="h-3 rounded-full bg-slate-800 overflow-hidden flex">
+                    <div className="bg-blue-500" style={{ width: `${sp.fleet_pct}%` }} />
+                    <div className="bg-fuchsia-600" style={{ width: `${sp.contractor_pct}%` }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fleet ATA Leaderboard */}
+          {lb && (lb.top?.length > 0 || lb.bottom?.length > 0) && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet ATA Today</span>
+                <InfoTip text={"WHAT: Which fleet drivers are fastest and slowest today.\n\nHOW: For each fleet driver's completed calls today, we calculate their average ATA (time from call creation to driver on scene). Then rank all drivers.\n\nFastest: Top 3 drivers with the lowest average ATA.\nSlowest: Bottom 3 drivers with the highest average ATA.\nThe number in parentheses is how many calls that driver completed.\n\nGOAL: Identifies top performers and drivers who may need route optimization or are covering difficult areas."} />
+              </div>
+              {lb.top?.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-[9px] text-emerald-500/70 uppercase tracking-wider mb-1">Fastest</div>
+                  {lb.top.map((d, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="text-slate-300 truncate mr-2">{d.name}</span>
+                      <span className="text-emerald-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
                     </div>
                   ))}
                 </div>
               )}
-              {total === 0 && (
-                <div className="text-[10px] text-slate-600 text-center py-2">No fleet dispatches yet today</div>
+              {lb.bottom?.length > 0 && (
+                <div>
+                  <div className="text-[9px] text-red-500/70 uppercase tracking-wider mb-1">Slowest</div>
+                  {lb.bottom.map((d, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="text-slate-300 truncate mr-2">{d.name}</span>
+                      <span className="text-red-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
+                    </div>
+                  ))}
+                </div>
               )}
-              {/* Over-Capacity Garages */}
-              {(() => {
-                const overCap = (ccData?.territories || []).filter(t => t.capacity === 'over' || t.capacity === 'busy')
-                if (overCap.length === 0) return null
-                return (
-                  <div className="pt-2 border-t border-slate-800/60">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <AlertCircle className="w-3 h-3 text-red-400 flex-shrink-0" />
-                      <span className="text-[9px] text-slate-500 uppercase tracking-wider">Capacity Alerts</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Row 3: Reassignment Cost ── */}
+        {ra && (
+          <div className={clsx('glass rounded-xl p-4', ra.total_bounces > 0 ? 'border border-red-800/30 bg-red-950/10' : 'border border-slate-700/30')}>
+            <div className="flex items-center gap-2 mb-4">
+              <RefreshCw className="w-4 h-4 text-red-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">Reassignment Cost</span>
+              <InfoTip text={"WHAT: Time lost when a garage gets assigned a call but doesn't respond, forcing a reassignment.\n\nHOW: We track every time a Service Appointment goes from 'Assigned' back to 'Dispatched' in Salesforce history. Each bounce = the garage received the call but didn't accept it. We measure the exact time between assignment and bounce-back.\n\nThe 'Top Offenders' shows which garages are bouncing the most calls today and how much total time was wasted waiting for them.\n\nGOAL: Zero bounces. Every bounce adds ~10+ minutes of wait time for the member. Chronic offenders may need follow-up or removal from rotation."} />
+              <div className="ml-auto flex items-center gap-4">
+                <div className="text-center">
+                  <div className="text-xl font-bold text-red-400">{ra.total_bounces}</div>
+                  <div className="text-[9px] text-slate-500">Bounces</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-red-400">{ra.affected_calls}</div>
+                  <div className="text-[9px] text-slate-500">Calls Affected</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-red-300">{ra.minutes_lost >= 60 ? `${Math.floor(ra.minutes_lost/60)}h ${ra.minutes_lost%60}m` : `${ra.minutes_lost}m`}</div>
+                  <div className="text-[9px] text-slate-500">Total Time Lost</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-amber-400">{ra.avg_bounce_min}m</div>
+                  <div className="text-[9px] text-slate-500">Avg per Bounce</div>
+                </div>
+              </div>
+            </div>
+            {ra.total_bounces === 0 && (
+              <div className="text-xs text-emerald-400/70 text-center py-2">No reassignment delays today</div>
+            )}
+            {ra.top_offenders?.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[9px] text-red-400/70 uppercase tracking-wider font-bold">Top Offenders — Sorted by Time Lost</div>
+                  <div className="text-[9px] text-slate-600">Avg delay = time garage sat on call before bouncing</div>
+                </div>
+                <div className="grid grid-cols-1 gap-1">
+                  {ra.top_offenders.slice(0, 5).map((g, i) => (
+                    <div key={i} className="flex items-center gap-3 text-xs bg-slate-900/40 rounded-lg px-3 py-2">
+                      <span className="w-5 h-5 rounded-full bg-red-950/60 border border-red-800/40 flex items-center justify-center text-[10px] font-bold text-red-400">{i+1}</span>
+                      <span className="text-slate-300 flex-1 truncate">{g.name}</span>
+                      <span className="text-red-400 font-bold">{g.count} bounce{g.count !== 1 ? 's' : ''}</span>
+                      <span className="text-amber-400 font-medium">{g.avg_delay || Math.round(g.minutes / Math.max(g.count, 1))}m avg</span>
+                      <span className="text-red-300 font-bold">{g.minutes}m lost</span>
                     </div>
-                    <div className="space-y-1">
-                      {overCap.sort((a, b) => (b.open / Math.max(b.avail_drivers, 0.1)) - (a.open / Math.max(a.avail_drivers, 0.1))).slice(0, 6).map(t => (
-                        <div key={t.id} className="flex items-center gap-1.5 text-[10px]">
-                          <span className={clsx('px-1 py-0.5 rounded text-[7px] font-bold uppercase',
-                            t.capacity === 'over' ? 'bg-red-950/60 text-red-400' : 'bg-amber-950/50 text-amber-400'
-                          )}>{t.capacity === 'over' ? 'Over' : 'Busy'}</span>
-                          <span className="text-slate-300 truncate flex-1">{t.name}</span>
-                          <span className="text-slate-500 whitespace-nowrap">{t.open}op/{t.avail_drivers}drv</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Row 4: Dispatchers + Capacity Alerts ── */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Top Dispatchers */}
+          {dispatchers && dispatchers.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Users className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Top Dispatchers</span>
+                <InfoTip text={"WHAT: Which dispatchers are manually assigning the most fleet calls today.\n\nHOW: When a call's dispatch method is not 'Field Services' (auto-scheduler), it was manually assigned. We look at who last modified the assignment to identify the dispatcher.\n\nGOAL: High manual counts may indicate the auto-scheduler isn't covering enough, or that dispatchers are overriding system assignments."} />
+              </div>
+              <div className="space-y-1">
+                {dispatchers.map((d, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/30 last:border-0">
+                    <span className="text-slate-300">{d.name}</span>
+                    <span className="text-white font-bold">{d.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Capacity Alerts */}
+          {overCap.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="w-4 h-4 text-red-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Capacity Alerts</span>
+                <InfoTip text={"WHAT: Garages struggling with call volume right now.\n\nFleet garages: flagged when open calls outnumber GPS-active drivers (open/drv ratio).\nContractor garages (ⓒ): flagged by open call count + wait time, since their real driver count isn't tracked in Salesforce.\n\nOver = significantly overloaded. Busy = near capacity.\n\nGOAL: No garage should stay 'Over' for long."} />
+              </div>
+              <div className="space-y-1.5">
+                {overCap.slice(0, 8).map(t => (
+                  <div key={t.id} className="flex items-center gap-2 text-xs">
+                    <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+                      t.capacity === 'over' ? 'bg-red-950/60 text-red-400' : 'bg-amber-950/50 text-amber-400'
+                    )}>{t.capacity === 'over' ? 'Over' : 'Busy'}</span>
+                    <span className="text-slate-300 truncate flex-1">{t.name}{t.is_contractor ? ' ⓒ' : ''}</span>
+                    <span className="text-slate-500 whitespace-nowrap">
+                      {t.is_contractor
+                        ? `${t.open} open${t.max_wait ? ` · ${t.max_wait}m wait` : ''}`
+                        : `${t.open} open / ${t.avail_drivers} drv`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Row 5: Cancellation Breakdown + Decline Reasons ── */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Cancellation Breakdown */}
+          {cb && cb.total > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <XCircle className="w-4 h-4 text-orange-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Cancel Reasons</span>
+                <InfoTip text={"WHY calls are being canceled today.\n\n• 'Member Could Not Wait' = member gave up waiting → response time too slow. This is the #1 actionable cancel.\n• 'Member Got Going' = self-resolved (flat fixed, car started). Not your fault.\n• 'Facility Initiated' = garage canceled the call. Investigate why.\n• 'Duplicate Call' = double entry, ignore.\n\nGOAL: Keep 'Could Not Wait' < 3% of total calls. High rate = members are abandoning."} />
+                <span className="text-sm font-bold text-orange-400 ml-auto">{cb.total}</span>
+              </div>
+              <div className="space-y-1.5">
+                {cb.reasons.map((r, i) => {
+                  const isCnw = r.reason.toLowerCase().includes('could not wait')
+                  return (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className={clsx('truncate', isCnw ? 'text-red-400 font-medium' : 'text-slate-300')}>{r.reason}</span>
+                          <span className={clsx('font-bold ml-2 whitespace-nowrap', isCnw ? 'text-red-400' : 'text-slate-400')}>{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
                         </div>
-                      ))}
+                        <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div className={clsx('h-full rounded-full', isCnw ? 'bg-red-500' : 'bg-orange-600/60')}
+                               style={{ width: `${r.pct}%` }} />
+                        </div>
+                      </div>
                     </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Decline/Rejection Reasons */}
+          {db && db.total > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <ThumbsDown className="w-4 h-4 text-rose-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Decline Reasons</span>
+                <InfoTip text={"WHY garages are declining assigned calls today.\n\n• 'End of Shift' = timing gap. Garage closed but still getting calls.\n• 'Meal/Break' = driver unavailable temporarily.\n• 'Out of Area' = routing problem. Call sent to wrong zone.\n• 'Truck not capable' = skill mismatch. Battery truck sent to tow call.\n• 'Towbook Decline' = external contractor refusing work.\n\nEach decline adds ~10 min delay (call cascades to next garage).\nGOAL: Reduce declines by fixing routing and shift alignment."} />
+                <span className="text-sm font-bold text-rose-400 ml-auto">{db.total}</span>
+              </div>
+              <div className="space-y-1.5">
+                {db.reasons.map((r, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-slate-300 truncate">{r.reason}</span>
+                        <span className="text-slate-400 font-bold ml-2 whitespace-nowrap">{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div className="h-full rounded-full bg-rose-600/60" style={{ width: `${r.pct}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Row 6: Fleet Utilization + Hourly Volume ── */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Fleet Utilization Gauge */}
+          {fu && fu.total_on_shift > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Activity className="w-4 h-4 text-violet-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet Utilization</span>
+                <InfoTip text={"WHAT: How much of your on-shift fleet is currently busy vs idle.\n\nOn Shift = drivers logged into a truck (Asset). Busy = on an active SA (Dispatched/Assigned/In Progress/En Route/On Location).\n\nBroken down by tier:\n• Tow = can do tow + light service + battery\n• Light = tire/lockout/fuel/winch + battery\n• Battery = battery-only trucks\n\nGOAL: 60-80% utilization is healthy. Below 50% = overstaffed. Above 90% = no capacity buffer for surges."} />
+              </div>
+              {/* Big gauge */}
+              <div className="flex items-center gap-4 mb-3">
+                <div className="relative w-20 h-20">
+                  <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
+                    <circle cx="18" cy="18" r="14" fill="none" stroke="#1e293b" strokeWidth="4" />
+                    <circle cx="18" cy="18" r="14" fill="none"
+                      stroke={fu.utilization_pct >= 90 ? '#ef4444' : fu.utilization_pct >= 60 ? '#a78bfa' : '#22c55e'}
+                      strokeWidth="4" strokeDasharray={`${fu.utilization_pct * 0.88} 88`} strokeLinecap="round" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={clsx('text-lg font-bold',
+                      fu.utilization_pct >= 90 ? 'text-red-400' : fu.utilization_pct >= 60 ? 'text-violet-400' : 'text-emerald-400'
+                    )}>{fu.utilization_pct}%</span>
+                  </div>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">On Shift</span>
+                    <span className="text-white font-bold">{fu.total_on_shift}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Busy</span>
+                    <span className="text-violet-400 font-bold">{fu.total_busy}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Idle</span>
+                    <span className="text-emerald-400 font-bold">{fu.total_on_shift - fu.total_busy}</span>
+                  </div>
+                </div>
+              </div>
+              {/* Tier breakdown */}
+              <div className="border-t border-slate-800/50 pt-2 space-y-1">
+                {['tow', 'light', 'battery'].map(tier => {
+                  const t = fu.by_tier?.[tier]
+                  if (!t || t.on_shift === 0) return null
+                  const pct = Math.round(100 * t.busy / Math.max(t.on_shift, 1))
+                  return (
+                    <div key={tier} className="flex items-center gap-2 text-[10px]">
+                      <span className="text-slate-500 w-12 uppercase font-medium">{tier}</span>
+                      <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
+                        <div className={clsx('h-full rounded-full',
+                          pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-violet-500' : 'bg-emerald-500'
+                        )} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-slate-400 w-16 text-right">{t.busy}/{t.on_shift} <span className="text-slate-600">({pct}%)</span></span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Hourly Volume */}
+          {hv && hv.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Hourly Volume</span>
+                <InfoTip text={"WHAT: Call volume by hour today (Eastern Time).\n\nShows when calls are coming in so you can spot peak hours and staffing gaps.\n\nPeak hours are highlighted. If peaks don't align with your shift coverage, you may need to adjust driver start times.\n\nGOAL: Smooth coverage across peak hours. No hour should have 3x the average without extra drivers available."} />
+              </div>
+              {(() => {
+                const maxCount = Math.max(...hv.map(h => h.count), 1)
+                const nowHour = new Date().getHours()
+                // Only show 6am-11pm (business hours) to save space
+                const filtered = hv.filter(h => h.hour >= 6 && h.hour <= 23)
+                return (
+                  <div className="flex items-end gap-px h-24">
+                    {filtered.map(h => {
+                      const pct = Math.max(h.count / maxCount * 100, 2)
+                      const isPeak = h.count >= maxCount * 0.7
+                      const isCurrent = h.hour === nowHour
+                      return (
+                        <div key={h.hour} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                          <div className={clsx('w-full rounded-t-sm transition-colors',
+                            isCurrent ? 'bg-sky-400' : isPeak ? 'bg-sky-500/80' : 'bg-slate-700/60'
+                          )} style={{ height: `${pct}%` }} />
+                          {h.hour % 3 === 0 && (
+                            <span className="text-[7px] text-slate-600 mt-0.5">
+                              {h.hour > 12 ? `${h.hour - 12}p` : h.hour === 0 ? '12a' : h.hour === 12 ? '12p' : `${h.hour}a`}
+                            </span>
+                          )}
+                          {/* Tooltip on hover */}
+                          <div className="absolute bottom-full mb-1 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                            {h.hour > 12 ? `${h.hour - 12}:00 PM` : h.hour === 0 ? '12:00 AM' : h.hour === 12 ? '12:00 PM' : `${h.hour}:00 AM`}: {h.count} calls
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })()}
-              <div className="text-[8px] text-slate-600 text-center pt-1">
-                Fleet · {data.is_fallback ? 'Last 24h' : 'Today'} · 1h refresh
+              <div className="flex justify-between text-[9px] text-slate-600 mt-1">
+                <span>Total: {hv.reduce((s, h) => s + h.count, 0)} calls</span>
+                <span>Peak: {Math.max(...hv.map(h => h.count))}</span>
               </div>
             </div>
-          </div>
-        )}
+          )}
+
+        </div>
+
+        <div className="text-[10px] text-slate-600 text-center">
+          Fleet · {data.is_fallback ? 'Last 24h' : 'Today'} · 2m auto-refresh
+        </div>
       </div>
     </div>
   )

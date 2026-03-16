@@ -9,7 +9,21 @@ import {
   Truck, Users, Award, ChevronRight, Wrench,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { fetchDataQuality, refreshDataQuality, askChatbot } from '../api'
+import { motion, AnimatePresence } from 'framer-motion'
+import { fetchDataQuality, refreshDataQuality, askChatbot, fetchFeatures } from '../api'
+
+/* ── Framer Motion helpers ── */
+const fadeUp = { hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0 } }
+const fadeSide = { hidden: { opacity: 0, x: -20 }, show: { opacity: 1, x: 0 } }
+const stagger = (staggerChildren = 0.06) => ({
+  hidden: {},
+  show: { transition: { staggerChildren } },
+})
+const collapseVariants = {
+  hidden: { opacity: 0, y: -8 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
+  exit: { opacity: 0, y: -8, transition: { duration: 0.2 } },
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION DEFINITIONS
@@ -20,9 +34,8 @@ const SECTIONS = [
   { id: 'overview',   label: 'Dispatch Manager Guide', icon: BookOpen,      desc: 'Page-by-page guide — what to look for, how to read the data, and when to take action.' },
   { id: 'metrics',    label: 'Metric Definitions',   icon: Calculator,     desc: 'Every metric — what it measures, how it is calculated, and which Salesforce fields are used.' },
   { id: 'scoring',    label: 'How Garages Are Rated', icon: Target,         desc: 'Plain English guide to how the system scores and grades each garage from A to F.' },
-  { id: 'dictionary', label: 'Data Dictionary',      icon: Database,       desc: 'Searchable & sortable table of all Salesforce fields used in this app.' },
+  { id: 'data',       label: 'Data & Model',         icon: Database,       desc: 'Searchable field dictionary and entity-relationship diagram — all Salesforce objects in one place.' },
   { id: 'quality',    label: 'Data Quality',         icon: ShieldCheck,    desc: 'Live field-level quality audit with severity ratings and recommendations.' },
-  { id: 'datamodel',  label: 'Data Model',           icon: Share2,         desc: 'Entity-relationship diagram showing how FSL objects connect.' },
   { id: 'rules',      label: 'Business Rules',       icon: AlertTriangle,  desc: 'Key filters, guardrails, and exclusions that affect metric calculations.' },
   { id: 'ops',        label: 'Ops Recommendations',   icon: Truck,          desc: 'How to improve driver assignment — Fleet vs Towbook challenges and actionable fixes.' },
 ]
@@ -86,11 +99,13 @@ acceptance_rate = COUNT(accepted) ÷ COUNT(all auto-assigned) × 100`,
   {
     name: '1st Call vs 2nd+ Call Acceptance', icon: ArrowRightLeft,
     what: 'Was this garage the first one assigned to the call, or did it receive the call after another garage declined? "1st Call" means the system originally sent it here. "2nd+ Call" means another garage got it first, declined, and it cascaded to this garage.',
-    formula: `Query ServiceAppointmentHistory WHERE Field = 'ServiceTerritoryId'
+    formula: `Primary method: Query ServiceAppointmentHistory WHERE Field = 'ServiceTerritoryId'
 ORDER BY CreatedDate ASC
 First NewValue = first territory assigned.
 If first NewValue = this garage → "1st Call"
-If first NewValue ≠ this garage → "2nd+ Call" (received after cascade)`,
+If first NewValue ≠ this garage → "2nd+ Call" (received after cascade)
+
+Fallback: ERS_Spotting_Number__c on SA (1 = 1st Call, >1 = 2nd+ Call)`,
   },
   {
     name: 'Completion of Accepted', icon: CheckCircle2,
@@ -187,25 +202,28 @@ const PAGES = [
 function LandingCards({ onSelect }) {
   return (
     <div>
-      <div className="text-center mb-8">
+      <motion.div className="text-center mb-8" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <HelpCircle className="w-10 h-10 text-brand-400 mx-auto mb-3" />
         <h1 className="text-2xl font-bold text-white mb-2">Help Center</h1>
         <p className="text-sm text-slate-400 max-w-lg mx-auto">
           Everything you need to understand FSL App — metrics, scoring, data fields, quality audits, and business rules.
         </p>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-w-5xl mx-auto">
+      </motion.div>
+      <motion.div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-w-5xl mx-auto"
+        variants={stagger(0.07)} initial="hidden" animate="show">
         {SECTIONS.map(s => (
-          <button key={s.id} onClick={() => onSelect(s.id)}
-            className="group glass rounded-xl p-5 border border-slate-700/20 hover:border-brand-500/40 transition-all text-left">
+          <motion.button key={s.id} onClick={() => onSelect(s.id)} variants={fadeUp}
+            transition={{ type: 'spring', stiffness: 260, damping: 22 }}
+            whileHover={{ scale: 1.03, y: -3 }} whileTap={{ scale: 0.97 }}
+            className="group glass rounded-xl p-5 border border-slate-700/20 hover:border-brand-500/40 transition-colors text-left">
             <div className="w-10 h-10 rounded-xl bg-brand-600/10 border border-brand-500/20 flex items-center justify-center mb-3 group-hover:bg-brand-600/20 transition-colors">
               <s.icon className="w-5 h-5 text-brand-400" />
             </div>
             <h3 className="font-semibold text-sm text-white mb-1">{s.label}</h3>
             <p className="text-[11px] text-slate-500 leading-relaxed">{s.desc}</p>
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
     </div>
   )
 }
@@ -230,11 +248,15 @@ function FieldTag({ name, className }) {
 
 function FlowStep({ number, color, icon: Icon, title, children }) {
   return (
-    <div className="flex gap-4">
+    <motion.div className="flex gap-4"
+      initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 24, delay: (number - 1) * 0.1 }}>
       <div className="flex flex-col items-center">
-        <div className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border', color)}>
+        <motion.div className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border', color)}
+          initial={{ scale: 0 }} animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 15, delay: (number - 1) * 0.1 + 0.05 }}>
           <Icon className="w-5 h-5" />
-        </div>
+        </motion.div>
         <div className="w-0.5 flex-1 bg-slate-800 mt-2" />
       </div>
       <div className="pb-8 flex-1 min-w-0">
@@ -246,7 +268,7 @@ function FlowStep({ number, color, icon: Icon, title, children }) {
           {children}
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -266,7 +288,12 @@ function InfoCard({ title, icon: Icon, color, children }) {
 
 function HowItWorksSection() {
   const [expandedTopic, setExpandedTopic] = useState(null)
+  const [videoUrl, setVideoUrl] = useState('')
   const toggle = (id) => setExpandedTopic(prev => prev === id ? null : id)
+
+  useEffect(() => {
+    fetchFeatures().then(f => setVideoUrl(f.help_video_url || '')).catch(() => {})
+  }, [])
 
   return (
     <div>
@@ -275,10 +302,38 @@ function HowItWorksSection() {
         subtitle="End-to-end guide to AAA WNYC Field Service operations — from member call to garage scorecard."
       />
 
+      {/* ═══ VIDEO OVERVIEW ═══ */}
+      {videoUrl && (() => {
+        const m = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)
+        const vid = m ? m[1] : null
+        if (!vid) return null
+        return (
+          <a href={videoUrl} target="_blank" rel="noopener noreferrer"
+            className="block glass rounded-xl border border-slate-700/20 p-4 mt-4 mb-4 hover:border-brand-500/30 transition-all group">
+            <div className="flex items-center gap-4">
+              <div className="relative flex-shrink-0 rounded-lg overflow-hidden w-48 h-28 bg-slate-800">
+                <img src={`https://img.youtube.com/vi/${vid}/hqdefault.jpg`} alt="FleetPulse Overview"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/10 transition-colors">
+                  <div className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
+                    <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">Watch: FleetPulse Overview</h3>
+                <p className="text-[11px] text-slate-500 mt-1">See how the system works end-to-end — from member call to garage scoring.</p>
+                <span className="text-[10px] text-brand-400 mt-2 inline-block">youtube.com — Click to watch</span>
+              </div>
+            </div>
+          </a>
+        )
+      })()}
+
       {/* ═══ VISUAL OVERVIEW — Call Lifecycle Pipeline ═══ */}
       <div className="glass rounded-xl border border-slate-700/20 p-5 mt-4 mb-6 overflow-x-auto">
         <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-4">Call Lifecycle Pipeline</h3>
-        <div className="flex items-start gap-0 min-w-[900px]">
+        <motion.div className="flex items-start gap-0 min-w-[900px]" variants={stagger(0.08)} initial="hidden" animate="show">
           {[
             { label: 'Member Calls', sub: 'SA Created', color: 'bg-blue-500', fields: ['CreatedDate', 'Lat/Long', 'WorkTypeId'] },
             { label: 'Zone Identified', sub: 'Spotted Territory', color: 'bg-indigo-500', fields: ['ERS_Parent_Territory__c', 'Priority Matrix'] },
@@ -290,11 +345,13 @@ function HowItWorksSection() {
             { label: 'Completed', sub: 'Job Done', color: 'bg-emerald-600', fields: ['ActualEndTime', 'Status'] },
             { label: 'Scored', sub: 'Metrics Updated', color: 'bg-brand-500', fields: ['Composite Score', 'Survey_Result__c'] },
           ].map((step, i, arr) => (
-            <div key={step.label} className="flex items-start flex-1 min-w-0">
+            <motion.div key={step.label} className="flex items-start flex-1 min-w-0" variants={fadeUp}
+              transition={{ type: 'spring', stiffness: 300, damping: 24 }}>
               <div className="flex flex-col items-center text-center w-full">
-                <div className={clsx('w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg', step.color)}>
+                <motion.div className={clsx('w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg', step.color)}
+                  initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 15, delay: i * 0.08 + 0.1 }}>
                   {i + 1}
-                </div>
+                </motion.div>
                 <div className="mt-2 font-semibold text-[11px] text-white">{step.label}</div>
                 <div className="text-[9px] text-slate-500 mt-0.5">{step.sub}</div>
                 <div className="mt-2 flex flex-col gap-1 items-center">
@@ -304,13 +361,14 @@ function HowItWorksSection() {
                 </div>
               </div>
               {i < arr.length - 1 && (
-                <div className="flex items-center pt-3 px-0.5 shrink-0">
+                <motion.div className="flex items-center pt-3 px-0.5 shrink-0"
+                  initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 + 0.15 }}>
                   <ChevronRight className="w-4 h-4 text-slate-700" />
-                </div>
+                </motion.div>
               )}
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       </div>
 
       {/* ═══ TOPIC 1: Territory & Zone Structure ═══ */}
@@ -327,8 +385,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'territory' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'territory' && (
-          <div className="ml-4 pl-4 border-l-2 border-indigo-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-indigo-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             {/* Territory Visual */}
             <div className="glass rounded-xl p-5 border border-slate-700/20 overflow-x-auto">
               <div className="min-w-[700px]">
@@ -407,8 +467,9 @@ function HowItWorksSection() {
                 </p>
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 2: Fleet vs Contractors ═══ */}
@@ -425,8 +486,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'fleet' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'fleet' && (
-          <div className="ml-4 pl-4 border-l-2 border-emerald-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-emerald-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             {/* Side-by-side comparison */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="glass rounded-xl border-2 border-blue-800/30 overflow-hidden">
@@ -514,8 +577,9 @@ function HowItWorksSection() {
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 3: Call Creation & Dispatch ═══ */}
@@ -532,8 +596,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'dispatch' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'dispatch' && (
-          <div className="ml-4 pl-4 border-l-2 border-violet-800/30 space-y-1">
+          <motion.div className="ml-4 pl-4 border-l-2 border-violet-800/30 space-y-1"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             <FlowStep number={1} color="bg-blue-950/40 border-blue-700/30 text-blue-400" icon={Phone} title="Member Calls AAA">
               <p>
                 A member is stranded and calls AAA. The call center creates a <FieldTag name="WorkOrder" /> and a child
@@ -628,8 +694,9 @@ function HowItWorksSection() {
                 <code className="block text-[10px] text-brand-300/80">SLA Hit = ATA ≤ 45 minutes</code>
               </div>
             </FlowStep>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 4: Skills & Truck Matching ═══ */}
@@ -646,8 +713,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'skills' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'skills' && (
-          <div className="ml-4 pl-4 border-l-2 border-teal-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-teal-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             {/* Matching visual */}
             <div className="glass rounded-xl p-5 border border-slate-700/20 overflow-x-auto">
               <div className="min-w-[650px]">
@@ -713,8 +782,9 @@ function HowItWorksSection() {
               they can do. The driver's truck (<FieldTag name="Asset" /> with <FieldTag name="ERS_Truck_Capabilities__c" />)
               must also be capable. Only when skills AND truck capabilities match is the driver eligible.
             </p>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 5: PTA & Time Tracking ═══ */}
@@ -731,8 +801,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'pta' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'pta' && (
-          <div className="ml-4 pl-4 border-l-2 border-amber-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-amber-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             {/* Timeline visual */}
             <div className="glass rounded-xl p-5 border border-slate-700/20 overflow-x-auto">
               <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">Response Time Decomposition</h4>
@@ -794,8 +866,9 @@ function HowItWorksSection() {
                 </p>
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 6: Scoring & Grading ═══ */}
@@ -812,37 +885,46 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'scoring' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'scoring' && (
-          <div className="ml-4 pl-4 border-l-2 border-brand-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-brand-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             {/* Scoring pyramid */}
             <div className="glass rounded-xl p-5 border border-slate-700/20">
               <div className="flex items-center gap-6">
                 <div className="flex flex-col gap-1.5 flex-1">
                   {[
-                    { dim: '45-Min SLA Hit Rate', w: '30%', field: 'ActualStartTime − CreatedDate ≤ 45', bar: 'w-full', color: 'bg-violet-500' },
-                    { dim: 'Completion Rate', w: '15%', field: 'Status = Completed ÷ Total', bar: 'w-[50%]', color: 'bg-blue-500' },
-                    { dim: 'Customer Satisfaction', w: '15%', field: 'Survey_Result__c.ERS_Overall_Satisfaction__c', bar: 'w-[50%]', color: 'bg-emerald-500' },
-                    { dim: 'Median Response Time', w: '10%', field: 'MEDIAN(ActualStartTime − CreatedDate)', bar: 'w-[33%]', color: 'bg-teal-500' },
-                    { dim: 'PTA Accuracy', w: '10%', field: 'ATA ≤ ERS_PTA__c', bar: 'w-[33%]', color: 'bg-amber-500' },
-                    { dim: '"Could Not Wait" Rate', w: '10%', field: 'ERS_Cancellation_Reason__c LIKE Member Could Not Wait%', bar: 'w-[33%]', color: 'bg-orange-500' },
-                    { dim: 'Dispatch Speed', w: '5%', field: 'SchedStartTime − CreatedDate', bar: 'w-[17%]', color: 'bg-pink-500' },
-                    { dim: 'Facility Decline Rate', w: '5%', field: 'ERS_Facility_Decline_Reason__c IS NOT NULL', bar: 'w-[17%]', color: 'bg-red-500' },
-                  ].map(d => (
-                    <div key={d.dim} className="flex items-center gap-3">
-                      <div className={clsx('h-3 rounded-full', d.bar, d.color)} style={{ opacity: 0.6 }} />
+                    { dim: '45-Min SLA Hit Rate', w: '30%', field: 'ActualStartTime − CreatedDate ≤ 45', pct: 100, color: 'bg-violet-500' },
+                    { dim: 'Completion Rate', w: '15%', field: 'Status = Completed ÷ Total', pct: 50, color: 'bg-blue-500' },
+                    { dim: 'Customer Satisfaction', w: '15%', field: 'Survey_Result__c.ERS_Overall_Satisfaction__c', pct: 50, color: 'bg-emerald-500' },
+                    { dim: 'Median Response Time', w: '10%', field: 'MEDIAN(ActualStartTime − CreatedDate)', pct: 33, color: 'bg-teal-500' },
+                    { dim: 'PTA Accuracy', w: '10%', field: 'ATA ≤ ERS_PTA__c', pct: 33, color: 'bg-amber-500' },
+                    { dim: '"Could Not Wait" Rate', w: '10%', field: 'ERS_Cancellation_Reason__c LIKE Member Could Not Wait%', pct: 33, color: 'bg-orange-500' },
+                    { dim: 'Dispatch Speed', w: '5%', field: 'SchedStartTime − CreatedDate', pct: 17, color: 'bg-pink-500' },
+                    { dim: 'Facility Decline Rate', w: '5%', field: 'ERS_Facility_Decline_Reason__c IS NOT NULL', pct: 17, color: 'bg-red-500' },
+                  ].map((d, i) => (
+                    <motion.div key={d.dim} className="flex items-center gap-3"
+                      initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.06 + 0.1 }}>
+                      <motion.div className={clsx('h-3 rounded-full', d.color)}
+                        style={{ opacity: 0.6 }}
+                        initial={{ width: 0 }} animate={{ width: `${d.pct}%` }}
+                        transition={{ duration: 0.6, delay: i * 0.06 + 0.2, ease: 'easeOut' }} />
                       <span className="text-[10px] text-white font-medium shrink-0 w-40">{d.dim}</span>
                       <span className="text-[10px] text-brand-300 font-bold shrink-0 w-8">{d.w}</span>
                       <code className="text-[8px] text-slate-500 truncate">{d.field}</code>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
-                <div className="shrink-0 text-center">
+                <motion.div className="shrink-0 text-center"
+                  initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 15, delay: 0.5 }}>
                   <div className="w-20 h-20 rounded-2xl bg-emerald-950/40 border-2 border-emerald-700/30 flex flex-col items-center justify-center">
                     <div className="text-3xl font-black text-emerald-400">A</div>
                     <div className="text-[10px] text-emerald-400/80">92/100</div>
                   </div>
                   <div className="text-[9px] text-slate-500 mt-2">Composite<br/>Score</div>
-                </div>
+                </motion.div>
               </div>
             </div>
 
@@ -853,8 +935,9 @@ function HowItWorksSection() {
               Customer satisfaction comes from <FieldTag name="Survey_Result__c" /> matched to garages via
               <FieldTag name="WorkOrder.WorkOrderNumber" />.
             </p>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ═══ TOPIC 7: Member Experience ═══ */}
@@ -871,8 +954,10 @@ function HowItWorksSection() {
           <ChevronDown className={clsx('w-4 h-4 text-slate-500 transition-transform', expandedTopic === 'member' && 'rotate-180')} />
         </button>
 
+        <AnimatePresence initial={false}>
         {expandedTopic === 'member' && (
-          <div className="ml-4 pl-4 border-l-2 border-blue-800/30 space-y-4">
+          <motion.div className="ml-4 pl-4 border-l-2 border-blue-800/30 space-y-4"
+            variants={collapseVariants} initial="hidden" animate="visible" exit="exit">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <InfoCard title="Response Time" icon={Clock} color="bg-blue-950/40 border-blue-700/30 text-blue-400">
                 <p>
@@ -910,8 +995,9 @@ function HowItWorksSection() {
                 <span className="bg-purple-950/30 rounded-lg px-2 py-1 border border-purple-800/20">Survey sent<br/><code className="text-[8px] text-purple-300">Survey_Result__c</code></span>
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -1036,9 +1122,10 @@ function OverviewSection() {
       </div>
 
       {/* Page-by-page guides */}
-      <div className="space-y-4">
+      <motion.div className="space-y-4" variants={stagger(0.08)} initial="hidden" animate="show">
         {PAGE_GUIDES.map(p => (
-          <div key={p.name} className={clsx('rounded-xl border overflow-hidden', p.color)}>
+          <motion.div key={p.name} className={clsx('rounded-xl border overflow-hidden', p.color)}
+            variants={fadeUp} transition={{ type: 'spring', stiffness: 260, damping: 22 }}>
             {/* Header */}
             <div className="px-5 py-4 border-b border-slate-800/30">
               <div className="flex items-center gap-3">
@@ -1087,9 +1174,9 @@ function OverviewSection() {
                 <p className="text-[11px] text-slate-400 leading-relaxed">{p.tips}</p>
               </div>
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
     </div>
   )
 }
@@ -1099,9 +1186,10 @@ function MetricsSection() {
   return (
     <div>
       <SectionHeader title="Metric Definitions" subtitle="Every metric in the app — what it measures, how it is calculated, and which Salesforce fields are used." />
-      <div className="space-y-3 mt-4">
+      <motion.div className="space-y-3 mt-4" variants={stagger(0.05)} initial="hidden" animate="show">
         {METRICS.map(m => (
-          <div key={m.name} className="glass rounded-xl border border-slate-700/20 overflow-hidden">
+          <motion.div key={m.name} className="glass rounded-xl border border-slate-700/20 overflow-hidden"
+            variants={fadeUp} transition={{ type: 'spring', stiffness: 300, damping: 24 }}>
             <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-700/20">
               <m.icon className="w-4 h-4 text-brand-400 shrink-0" />
               <span className="font-semibold text-sm text-slate-200">{m.name}</span>
@@ -1123,9 +1211,9 @@ function MetricsSection() {
                 </pre>
               </div>
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
     </div>
   )
 }
@@ -1222,20 +1310,22 @@ function ScoringSection() {
       </div>
 
       {/* Grade Scale */}
-      <div className="flex gap-2 mb-6">
+      <motion.div className="flex gap-2 mb-6" variants={stagger(0.06)} initial="hidden" animate="show">
         {GRADES.map(g => (
-          <div key={g.grade} className={clsx('flex-1 text-center rounded-xl py-3 border', g.color)}>
+          <motion.div key={g.grade} className={clsx('flex-1 text-center rounded-xl py-3 border', g.color)}
+            variants={fadeUp} transition={{ type: 'spring', stiffness: 400, damping: 20 }}>
             <div className="text-xl font-black">{g.grade}</div>
             <div className="text-[10px] mt-0.5 opacity-80">{g.range}</div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* The 8 Dimensions — Plain English Cards */}
       <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">The 8 Things We Measure</h4>
-      <div className="space-y-3 mb-6">
+      <motion.div className="space-y-3 mb-6" variants={stagger(0.06)} initial="hidden" animate="show">
         {PLAIN_DIMS.map((d, i) => (
-          <div key={d.key} className={clsx('rounded-xl border p-4', d.color)}>
+          <motion.div key={d.key} className={clsx('rounded-xl border p-4', d.color)}
+            variants={fadeSide} transition={{ type: 'spring', stiffness: 280, damping: 22 }}>
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg bg-slate-900/60 flex items-center justify-center shrink-0 border border-slate-700/30">
                 <span className="text-sm font-black text-brand-300">{i + 1}</span>
@@ -1265,9 +1355,9 @@ function ScoringSection() {
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* How the Final Score is Calculated — Plain English */}
       <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">How the Final Score is Calculated</h4>
@@ -1315,14 +1405,15 @@ function RulesSection() {
   return (
     <div>
       <SectionHeader title="Key Business Rules & Filters" subtitle="Important rules that affect how data is processed and metrics are calculated." />
-      <div className="space-y-3 mt-4">
+      <motion.div className="space-y-3 mt-4" variants={stagger(0.06)} initial="hidden" animate="show">
         {rules.map(r => (
-          <div key={r.title} className="glass rounded-xl p-4 border border-slate-700/20">
+          <motion.div key={r.title} className="glass rounded-xl p-4 border border-slate-700/20"
+            variants={fadeUp} transition={{ type: 'spring', stiffness: 300, damping: 24 }}>
             <h4 className="font-semibold text-sm text-slate-200 mb-1.5">{r.title}</h4>
             <p className="text-xs text-slate-400 leading-relaxed">{r.text}</p>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
     </div>
   )
 }
@@ -1403,9 +1494,10 @@ function OpsRecommendationsSection() {
     <div>
       <SectionHeader title="Operational Recommendations" subtitle="How to improve driver assignment — challenges by driver type and actionable fixes." />
 
-      <div className="space-y-4 mt-4">
+      <motion.div className="space-y-4 mt-4" variants={stagger(0.07)} initial="hidden" animate="show">
         {challenges.map(c => (
-          <div key={c.title} className={clsx('rounded-xl p-4 border', severityColors[c.severity])}>
+          <motion.div key={c.title} className={clsx('rounded-xl p-4 border', severityColors[c.severity])}
+            variants={fadeUp} transition={{ type: 'spring', stiffness: 260, damping: 22 }}>
             <div className="flex items-start gap-2 mb-2">
               <span className={clsx('text-[9px] uppercase font-bold px-1.5 py-0.5 rounded', severityBadge[c.severity])}>{c.severity}</span>
               <h4 className="font-semibold text-sm text-slate-200">{c.title}</h4>
@@ -1430,9 +1522,9 @@ function OpsRecommendationsSection() {
                 </ul>
               </div>
             )}
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* Action Plan Table */}
       <div className="mt-6">
@@ -2061,9 +2153,45 @@ const MODEL_LINES = [
   { from: 'PolicyRule',         to: 'WorkRule',            label: 'Rule ref',           type: 'M:1' },
 ]
 
+// Map MODEL_ENTITIES id → dictionary entity name
+const ENTITY_ID_TO_NAME = {
+  WorkType: 'WorkType', SkillReq: 'SkillRequirement', Skill: 'Skill',
+  WorkOrder: 'WorkOrder', ServiceAppointment: 'ServiceAppointment',
+  ServiceTerritory: 'ServiceTerritory', Account: 'Account',
+  SAHistory: 'ServiceAppointmentHistory', AssignedResource: 'AssignedResource',
+  STMember: 'ServiceTerritoryMember', PriorityMatrix: 'ERS_Territory_Priority_Matrix__c',
+  Survey: 'Survey_Result__c', ServiceResource: 'ServiceResource',
+  SRSkill: 'ServiceResourceSkill', Polygon: 'FSL__Polygon__c',
+  Asset: 'Asset', Shift: 'Shift', ResAbsence: 'ResourceAbsence',
+  PTAConfig: 'ERS_Service_Appointment_PTA__c', SchedPolicy: 'FSL__Scheduling_Policy__c',
+  PolicyGoal: 'FSL__Policy_Goal__c', ServiceGoal: 'FSL__Service_Goal__c',
+  PolicyRule: 'FSL__Policy_Work_Rule__c', WorkRule: 'FSL__Work_Rule__c',
+}
+
 function DataModelSection({ data }) {
   const svgW = 940
   const svgH = 720
+  const [selectedEntity, setSelectedEntity] = useState(null)
+  const detailRef = useRef(null)
+
+  // Build field lookup: entityName → fields[]
+  const fieldsByEntity = useMemo(() => {
+    if (!data?.fields) return {}
+    const map = {}
+    data.fields.forEach(f => {
+      if (!map[f.entity]) map[f.entity] = []
+      map[f.entity].push(f)
+    })
+    return map
+  }, [data])
+
+  // Build entity description lookup
+  const entityDesc = useMemo(() => {
+    if (!data?.entities) return {}
+    const map = {}
+    data.entities.forEach(e => { map[e.name] = e })
+    return map
+  }, [data])
 
   const getCenter = (id) => {
     const e = MODEL_ENTITIES.find(n => n.id === id)
@@ -2071,17 +2199,25 @@ function DataModelSection({ data }) {
     return { x: e.x + e.w / 2, y: e.y + e.h / 2 }
   }
 
+  const handleEntityClick = (entityId) => {
+    setSelectedEntity(prev => prev === entityId ? null : entityId)
+    setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100)
+  }
+
+  const selName = selectedEntity ? ENTITY_ID_TO_NAME[selectedEntity] : null
+  const selMeta = selName ? entityDesc[selName] : null
+  const selFields = selName ? (fieldsByEntity[selName] || []) : []
+
   return (
     <div>
-      <SectionHeader title="Data Model" subtitle={`${data?.entities?.length || 15} Salesforce objects and their relationships.`} />
-
       {/* Legend */}
-      <div className="flex flex-wrap gap-4 mt-4 mb-4 text-[10px]">
+      <div className="flex flex-wrap gap-4 mt-1 mb-4 text-[10px]">
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-[#8b5cf6]" /> Primary Object</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-[#6366f1]" /> Standard Object</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-[#10b981]" /> Junction Object</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-[#f97316]" /> Custom Object</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-[#64748b]" /> Supporting</span>
+        <span className="text-slate-600 ml-2">Click any entity to see its fields</span>
       </div>
 
       {/* Diagram */}
@@ -2113,26 +2249,85 @@ function DataModelSection({ data }) {
           </svg>
 
           {/* Entity boxes */}
-          {MODEL_ENTITIES.map(e => (
-            <div key={e.id}
-              className={clsx('absolute rounded-lg border-2 px-3 py-2 shadow-lg', e.primary && 'ring-2 ring-purple-500/30')}
-              style={{
-                left: e.x, top: e.y, width: e.w, height: e.h,
-                backgroundColor: '#0f172a',
-                borderColor: e.color + '60',
-              }}>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: e.color }} />
-                <span className="font-bold text-[10px] text-white truncate">{e.label}</span>
+          {MODEL_ENTITIES.map(e => {
+            const isSelected = selectedEntity === e.id
+            return (
+              <div key={e.id}
+                onClick={() => handleEntityClick(e.id)}
+                className={clsx(
+                  'absolute rounded-lg border-2 px-3 py-2 shadow-lg cursor-pointer transition-all hover:brightness-125',
+                  e.primary && 'ring-2 ring-purple-500/30',
+                  isSelected && 'ring-2 ring-brand-400/60 brightness-125'
+                )}
+                style={{
+                  left: e.x, top: e.y, width: e.w, height: e.h,
+                  backgroundColor: '#0f172a',
+                  borderColor: isSelected ? '#60a5fa' : e.color + '60',
+                }}>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: e.color }} />
+                  <span className="font-bold text-[10px] text-white truncate">{e.label}</span>
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-[9px] text-slate-500">{e.cat}</span>
+                  <span className="text-[9px] text-slate-600">{e.fields} fields</span>
+                </div>
               </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-[9px] text-slate-500">{e.cat}</span>
-                <span className="text-[9px] text-slate-600">{e.fields} fields</span>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
+
+      {/* Selected entity field detail */}
+      {selectedEntity && selFields.length > 0 && (
+        <div ref={detailRef} className="mt-4 glass rounded-xl border border-brand-500/30 p-4">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Database className="w-4 h-4 text-brand-400" />
+                {selMeta?.label || selectedEntity}
+                <code className="text-[10px] font-mono text-slate-500 ml-1">{selName}</code>
+              </h4>
+              {selMeta?.description && (
+                <p className="text-[11px] text-slate-400 mt-1 max-w-3xl leading-relaxed">{selMeta.description}</p>
+              )}
+            </div>
+            <button onClick={() => setSelectedEntity(null)} className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="border-b border-slate-700/50 bg-slate-900/30">
+                <tr>
+                  <th className="text-left py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 w-[200px]">SF Field (API Name)</th>
+                  <th className="text-left py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 w-[140px]">Label</th>
+                  <th className="text-left py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 w-[80px]">Type</th>
+                  <th className="text-left py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/30">
+                {selFields.map((f, i) => (
+                  <tr key={f.apiName} className={i % 2 === 0 ? 'bg-slate-900/10' : ''}>
+                    <td className="px-3 py-2 font-mono text-brand-300 text-[11px]">
+                      {f.apiName}
+                      {f.custom && <span className="ml-1.5 text-[8px] bg-amber-950/30 text-amber-400 border border-amber-800/30 rounded px-1 py-0.5 font-bold">CUSTOM</span>}
+                    </td>
+                    <td className="px-3 py-2 text-slate-300 text-[11px]">{f.label}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{f.type}</td>
+                    <td className="px-3 py-2 text-slate-400 leading-relaxed">{f.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {selectedEntity && selFields.length === 0 && (
+        <div ref={detailRef} className="mt-4 glass rounded-xl border border-slate-700/20 p-4 text-center text-sm text-slate-500">
+          No field data available for this entity in the dictionary.
+        </div>
+      )}
 
       {/* Relationship table */}
       <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-6 mb-2">Relationships</h4>
@@ -2158,6 +2353,38 @@ function DataModelSection({ data }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMBINED DATA & MODEL — Tabbed view (Dictionary + ER Diagram)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function DataSection({ data }) {
+  const [tab, setTab] = useState('dictionary')
+  return (
+    <div>
+      <SectionHeader title="Data & Model" subtitle="All Salesforce objects, fields, and relationships in one place." />
+      <div className="flex gap-1 mb-5 border-b border-slate-800/50 pb-2">
+        <button onClick={() => setTab('dictionary')}
+          className={clsx('flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            tab === 'dictionary'
+              ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'
+          )}>
+          <Database className="w-3.5 h-3.5" /> Dictionary
+        </button>
+        <button onClick={() => setTab('model')}
+          className={clsx('flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            tab === 'model'
+              ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'
+          )}>
+          <Share2 className="w-3.5 h-3.5" /> Data Model
+        </button>
+      </div>
+      {tab === 'dictionary' ? <DictionarySection data={data} /> : <DataModelSection data={data} />}
     </div>
   )
 }
@@ -2196,9 +2423,8 @@ export default function Help() {
       case 'overview':   return <OverviewSection />
       case 'metrics':    return <MetricsSection />
       case 'scoring':    return <ScoringSection />
-      case 'dictionary': return <DictionarySection data={dictionary} />
+      case 'data':       return <DataSection data={dictionary} />
       case 'quality':    return <QualitySection />
-      case 'datamodel':  return <DataModelSection data={dictionary} />
       case 'rules':      return <RulesSection />
       case 'ops':        return <OpsRecommendationsSection />
       default:           return <LandingCards onSelect={setActiveSection} />
@@ -2232,7 +2458,13 @@ export default function Help() {
       )}
 
       {/* ── Content ── */}
-      {renderSection()}
+      <AnimatePresence mode="wait">
+        <motion.div key={activeSection || 'landing'}
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.25 }}>
+          {renderSection()}
+        </motion.div>
+      </AnimatePresence>
 
       {/* Chat is now global in Layout */}
     </div>

@@ -29,19 +29,21 @@ const WMO_EMOJI = {
   95: '⛈️', 96: '⛈️', 99: '⛈️',
 }
 
-function makeTruckIcon(driverType) {
-  const color = (driverType || '').toLowerCase().includes('tow') ? '#f59e0b' : '#818cf8'
+function makeTruckIcon(driverType, stale = false) {
+  const baseColor = (driverType || '').toLowerCase().includes('tow') ? '#f59e0b' : '#818cf8'
+  const color = stale ? '#475569' : baseColor
+  const opacity = stale ? 'opacity:0.4;' : ''
   return L.divIcon({
     className: '',
     iconSize: [26, 22],
     iconAnchor: [13, 22],
     popupAnchor: [0, -22],
-    html: `<svg width="26" height="22" viewBox="0 0 26 22">
+    html: `<div style="${opacity}"><svg width="26" height="22" viewBox="0 0 26 22">
       <rect x="1" y="5" width="24" height="13" rx="3" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>
       <rect x="17" y="2" width="9" height="9" rx="2" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>
       <circle cx="7"  cy="21" r="2.5" fill="#0f172a" stroke="${color}" stroke-width="1.5"/>
       <circle cx="19" cy="21" r="2.5" fill="#0f172a" stroke="${color}" stroke-width="1.5"/>
-    </svg>`,
+    </svg></div>`,
   })
 }
 
@@ -188,10 +190,13 @@ export default function MapPage() {
 
         {/* ── Drivers layer ── */}
         {layers.drivers && drivers.map(d => (
-          <Marker key={d.id} position={[d.lat, d.lon]} icon={makeTruckIcon(d.driver_type)}>
+          <Marker key={d.id} position={[d.lat, d.lon]}
+            icon={makeTruckIcon(d.driver_type, d.gps_stale)}
+            zIndexOffset={d.gps_stale ? -100 : 0}>
             <Popup>
-              <strong>{d.name}</strong><br />
+              <strong>{d.name}</strong>{d.gps_stale && <span style={{color:'#f59e0b',fontSize:10,marginLeft:4}}>STALE GPS</span>}<br />
               {d.driver_type && <>{d.driver_type}<br /></>}
+              {d.truck && <>Truck: {d.truck}<br /></>}
               GPS: {d.gps_time}
             </Popup>
           </Marker>
@@ -298,12 +303,22 @@ export default function MapPage() {
                   <span className="text-indigo-400 font-mono font-semibold">{grids.features.length}</span>
                 </div>
               )}
-              {layers.drivers && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Drivers</span>
-                  <span className="text-amber-400 font-mono font-semibold">{drivers.length}</span>
-                </div>
-              )}
+              {layers.drivers && (() => {
+                const active = drivers.filter(d => !d.gps_stale).length
+                const stale = drivers.filter(d => d.gps_stale).length
+                return (<>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Drivers (active GPS)</span>
+                    <span className="text-amber-400 font-mono font-semibold">{active}</span>
+                  </div>
+                  {stale > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-500">Drivers (stale GPS)</span>
+                      <span className="text-slate-500 font-mono font-semibold">{stale}</span>
+                    </div>
+                  )}
+                </>)
+              })()}
               {layers.sas && (
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-400">SAs (8h)</span>

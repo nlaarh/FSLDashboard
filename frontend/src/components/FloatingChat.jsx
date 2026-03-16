@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Send, X, Bot, User, Loader2 } from 'lucide-react'
+import { Send, X, Bot, User, Maximize2, Minimize2, Sparkles } from 'lucide-react'
 import { clsx } from 'clsx'
 import { askChatbot } from '../api'
 import axios from 'axios'
 
-/* Chat bubble icon (not phone) */
+/* Chat bubble icon */
 function ChatBubbleIcon({ className }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -12,6 +12,8 @@ function ChatBubbleIcon({ className }) {
     </svg>
   )
 }
+
+const MIN_W = 320, MIN_H = 360, DEFAULT_W = 380, DEFAULT_H = 500
 
 export default function FloatingChat() {
   const [enabled, setEnabled] = useState(false)
@@ -23,19 +25,29 @@ export default function FloatingChat() {
   const [complexity, setComplexity] = useState('mid')
   const scrollRef = useRef(null)
 
-  // Check if chat is enabled via admin settings
+  // Check if chat is enabled via admin settings + feature flag
+  const checkEnabled = () => axios.get('/api/chatbot/status').then(r => setEnabled(r.data?.enabled ?? false)).catch(() => setEnabled(false))
   useEffect(() => {
-    axios.get('/api/chatbot/status').then(r => setEnabled(r.data?.enabled ?? false)).catch(() => setEnabled(false))
+    checkEnabled()
+    const handler = () => checkEnabled()
+    window.addEventListener('featuresChanged', handler)
+    return () => window.removeEventListener('featuresChanged', handler)
   }, [])
 
-  // ── Drag state ──
+  // ── Position & size state ──
   const [pos, setPos] = useState({ x: null, y: null })
+  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
+  const [expanded, setExpanded] = useState(false)
+  const prevSize = useRef({ w: DEFAULT_W, h: DEFAULT_H, x: null, y: null })
+
   const dragRef = useRef(null)
   const dragging = useRef(false)
+  const resizing = useRef(false)
   const dragStart = useRef({ mx: 0, my: 0, px: 0, py: 0 })
+  const resizeStart = useRef({ mx: 0, my: 0, w: 0, h: 0 })
 
-  const onMouseDown = useCallback((e) => {
-    // Only drag from the header area
+  // ── Drag from header ──
+  const onDragDown = useCallback((e) => {
     if (e.target.closest('select') || e.target.closest('button')) return
     e.preventDefault()
     dragging.current = true
@@ -45,15 +57,34 @@ export default function FloatingChat() {
     document.body.style.userSelect = 'none'
   }, [])
 
+  // ── Resize from corner handle ──
+  const onResizeDown = useCallback((e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    resizing.current = true
+    resizeStart.current = { mx: e.clientX, my: e.clientY, w: size.w, h: size.h }
+    document.body.style.userSelect = 'none'
+  }, [size.w, size.h])
+
   useEffect(() => {
     const onMove = (e) => {
-      if (!dragging.current) return
-      const dx = e.clientX - dragStart.current.mx
-      const dy = e.clientY - dragStart.current.my
-      setPos({ x: dragStart.current.px + dx, y: dragStart.current.py + dy })
+      if (dragging.current) {
+        const dx = e.clientX - dragStart.current.mx
+        const dy = e.clientY - dragStart.current.my
+        setPos({ x: dragStart.current.px + dx, y: dragStart.current.py + dy })
+      }
+      if (resizing.current) {
+        const dw = e.clientX - resizeStart.current.mx
+        const dh = e.clientY - resizeStart.current.my
+        setSize({
+          w: Math.max(MIN_W, Math.min(resizeStart.current.w + dw, window.innerWidth - 40)),
+          h: Math.max(MIN_H, Math.min(resizeStart.current.h + dh, window.innerHeight - 80)),
+        })
+      }
     }
     const onUp = () => {
       dragging.current = false
+      resizing.current = false
       document.body.style.userSelect = ''
     }
     window.addEventListener('mousemove', onMove)
@@ -61,10 +92,28 @@ export default function FloatingChat() {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
 
-  // Reset position when closing
+  // ── Expand / collapse toggle ──
+  const toggleExpand = () => {
+    if (expanded) {
+      setSize({ w: prevSize.current.w, h: prevSize.current.h })
+      setPos({ x: prevSize.current.x, y: prevSize.current.y })
+      setExpanded(false)
+    } else {
+      prevSize.current = { w: size.w, h: size.h, x: pos.x, y: pos.y }
+      const maxW = Math.min(700, window.innerWidth - 40)
+      const maxH = window.innerHeight - 80
+      setSize({ w: maxW, h: maxH })
+      setPos({ x: (window.innerWidth - maxW) / 2, y: 40 })
+      setExpanded(true)
+    }
+  }
+
+  // Reset on close
   const handleClose = () => {
     setOpen(false)
     setPos({ x: null, y: null })
+    setSize({ w: DEFAULT_W, h: DEFAULT_H })
+    setExpanded(false)
   }
 
   useEffect(() => {
@@ -106,11 +155,11 @@ export default function FloatingChat() {
 
   return (
     <>
-      {/* ── WhatsApp-style floating button ── */}
+      {/* ── Floating button ── */}
       <button
         onClick={() => setOpen(o => !o)}
         className={clsx(
-          'fixed bottom-6 right-6 z-[60] w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300',
+          'fixed bottom-6 right-6 z-[9999] w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300',
           open
             ? 'bg-slate-700 hover:bg-slate-600 rotate-90 scale-90'
             : 'bg-emerald-500 hover:bg-emerald-400 shadow-emerald-500/30 hover:shadow-emerald-400/40 hover:scale-105'
@@ -118,14 +167,17 @@ export default function FloatingChat() {
       >
         {open
           ? <X className="w-6 h-6 text-white" />
-          : <ChatBubbleIcon className="w-7 h-7 text-white" />
+          : <div className="relative">
+              <Sparkles className="w-7 h-7 text-white" />
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse" />
+            </div>
         }
       </button>
 
-      {/* Unread dot when closed */}
+      {/* AI label when closed */}
       {!open && messages.length === 0 && (
-        <span className="fixed bottom-[68px] right-[22px] z-[61] w-5 h-5 rounded-full bg-red-500 text-[10px] text-white font-bold flex items-center justify-center shadow-lg animate-bounce pointer-events-none">
-          1
+        <span className="fixed bottom-[68px] right-[18px] z-[10000] px-1.5 py-0.5 rounded-full bg-purple-600/90 text-[9px] text-white font-bold flex items-center justify-center shadow-lg pointer-events-none">
+          AI
         </span>
       )}
 
@@ -133,24 +185,25 @@ export default function FloatingChat() {
       {open && (
         <div
           ref={dragRef}
-          className="fixed z-[55] w-[380px] rounded-2xl border border-slate-700/40 shadow-2xl shadow-black/50 flex flex-col overflow-hidden"
+          className="fixed z-[9998] rounded-2xl border border-slate-700/40 shadow-2xl shadow-black/50 flex flex-col overflow-hidden"
           style={{
-            height: 'min(520px, calc(100vh - 140px))',
+            width: size.w,
+            height: size.h,
             background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
             ...panelStyle,
           }}
         >
           {/* Header — draggable green bar */}
           <div
-            className="flex items-center justify-between px-4 py-3 bg-emerald-600 cursor-grab active:cursor-grabbing select-none"
-            onMouseDown={onMouseDown}
+            className="flex items-center justify-between px-4 py-2.5 bg-emerald-600 cursor-grab active:cursor-grabbing select-none shrink-0"
+            onMouseDown={onDragDown}
           >
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-                <Bot className="w-5 h-5 text-white" />
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                <Bot className="w-4.5 h-4.5 text-white" />
               </div>
               <div>
-                <div className="font-semibold text-sm text-white">FleetPulse Assistant</div>
+                <div className="font-semibold text-sm text-white leading-tight">FleetPulse Assistant</div>
                 <div className="text-[10px] text-emerald-100/70">
                   {loading ? 'typing...' : 'online'}
                 </div>
@@ -163,8 +216,12 @@ export default function FloatingChat() {
                 <option value="mid">Standard</option>
                 <option value="high">Deep</option>
               </select>
+              <button onClick={toggleExpand} title={expanded ? 'Restore size' : 'Expand'}
+                className="p-1.5 rounded-lg text-emerald-200 hover:text-white hover:bg-emerald-700 transition-colors">
+                {expanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              </button>
               <button onClick={handleClose} title="Close chat"
-                className="ml-1 p-1.5 rounded-lg text-emerald-200 hover:text-white hover:bg-emerald-700 transition-colors">
+                className="p-1.5 rounded-lg text-emerald-200 hover:text-white hover:bg-emerald-700 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -199,7 +256,7 @@ export default function FloatingChat() {
                     <Bot className="w-3.5 h-3.5 text-emerald-400" />
                   </div>
                 )}
-                <div className={clsx('rounded-lg px-3 py-2 text-xs leading-relaxed max-w-[80%] shadow-sm',
+                <div className={clsx('rounded-lg px-3 py-2 text-xs leading-relaxed max-w-[85%] shadow-sm',
                   m.role === 'user'
                     ? 'bg-emerald-700/40 text-emerald-100 rounded-tr-none'
                     : m.isError
@@ -233,7 +290,7 @@ export default function FloatingChat() {
           </div>
 
           {/* Input */}
-          <div className="px-3 py-3 bg-slate-900/80 border-t border-slate-700/30">
+          <div className="px-3 py-3 bg-slate-900/80 border-t border-slate-700/30 shrink-0">
             <div className="flex gap-2 items-end">
               <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
                 placeholder="Type a message..."
@@ -247,6 +304,18 @@ export default function FloatingChat() {
                 <Send className="w-4 h-4 text-white" />
               </button>
             </div>
+          </div>
+
+          {/* Resize handle — bottom-right corner */}
+          <div
+            onMouseDown={onResizeDown}
+            className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize z-10 group"
+            title="Drag to resize"
+          >
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 absolute bottom-1 right-1 text-slate-600 group-hover:text-emerald-400 transition-colors">
+              <path d="M14 14L8 14L14 8Z" fill="currentColor" opacity="0.5" />
+              <path d="M14 14L11 14L14 11Z" fill="currentColor" />
+            </svg>
           </div>
         </div>
       )}

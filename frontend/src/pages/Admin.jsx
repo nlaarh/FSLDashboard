@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, Users, UserPlus, Edit3, Trash, Eye, Radio, Bot, Save } from 'lucide-react'
-import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions, adminGetSettings, adminUpdateSettings, fetchChatbotModels } from '../api'
+import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, Users, UserPlus, Edit3, Trash, Eye, Radio, Bot, Save, ToggleLeft, ToggleRight } from 'lucide-react'
+import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions, adminGetSettings, adminUpdateSettings, fetchChatbotModels, fetchFeatures } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 
 const ROLES = ['admin', 'supervisor', 'viewer']
@@ -23,6 +23,14 @@ export default function Admin() {
   const [userForm, setUserForm] = useState({ username: '', password: '', name: '', role: 'viewer' })
   const [userError, setUserError] = useState('')
   const [userSaving, setUserSaving] = useState(false)
+
+  // Feature flags state
+  const [features, setFeatures] = useState({})
+  const [featureSaving, setFeatureSaving] = useState(false)
+  const [featureSaved, setFeatureSaved] = useState(false)
+  const [helpVideoUrl, setHelpVideoUrl] = useState('')
+  const [videoSaving, setVideoSaving] = useState(false)
+  const [videoSaved, setVideoSaved] = useState(false)
 
   // AI Assistant config state
   const [aiProvider, setAiProvider] = useState('')
@@ -122,6 +130,7 @@ export default function Admin() {
       loadUsers()
       loadSessions()
       loadAiConfig()
+      fetchFeatures().then(f => { setFeatures(f); setHelpVideoUrl(f.help_video_url || '') }).catch(() => {})
       const id = setInterval(() => { refresh(); loadSessions() }, 5000)
       return () => clearInterval(id)
     }
@@ -262,7 +271,7 @@ export default function Admin() {
             <Server className="w-3 h-3" /> Uptime: {uptimeStr}
           </div>
           <div className="px-2 py-0.5 rounded-md bg-brand-600/20 border border-brand-500/30 text-[10px] font-mono text-brand-400">
-            v1.00
+            v2.0
           </div>
         </div>
       </div>
@@ -581,6 +590,80 @@ export default function Admin() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ── Feature Modules ── */}
+      <div className="glass rounded-xl overflow-hidden">
+        <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
+          <ToggleRight className="w-4 h-4 text-brand-400" />
+          <h2 className="text-sm font-semibold text-white">Feature Modules</h2>
+          <span className="text-[10px] text-slate-500 ml-1">Toggle modules on/off — hidden from all users when off</span>
+          {featureSaved && <span className="text-[10px] text-emerald-400 ml-auto flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
+        </div>
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { key: 'pta_advisor', label: 'PTA Advisor', desc: 'Promised time projections' },
+            { key: 'onroute', label: 'Route Tracker', desc: 'En-route drivers & live tracking links' },
+            { key: 'matrix', label: 'Insights', desc: 'Priority matrix advisor' },
+            { key: 'chat', label: 'AI Chat', desc: 'Floating chatbot assistant' },
+          ].map(m => {
+            const on = features[m.key] !== false
+            return (
+              <div key={m.key} className={`flex items-center justify-between rounded-lg border px-4 py-3 transition-colors ${
+                on ? 'bg-slate-800/30 border-slate-700/50' : 'bg-slate-900/50 border-slate-800/30 opacity-60'
+              }`}>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-200">{m.label}</div>
+                  <div className="text-[10px] text-slate-500">{m.desc}</div>
+                </div>
+                <button
+                  disabled={featureSaving}
+                  onClick={async () => {
+                    const next = { ...features, [m.key]: !on }
+                    setFeatures(next)
+                    setFeatureSaving(true)
+                    try {
+                      await adminUpdateSettings(pin, { features: next })
+                      window.dispatchEvent(new Event('featuresChanged'))
+                      setFeatureSaved(true)
+                      setTimeout(() => setFeatureSaved(false), 2000)
+                    } catch { /* ignore */ }
+                    finally { setFeatureSaving(false) }
+                  }}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ml-3 ${on ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        {/* Help Video URL */}
+        <div className="px-4 pb-4 pt-2 border-t border-slate-700/30 mt-3">
+          <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">Help Page Video URL</label>
+          <div className="flex items-center gap-2">
+            <input value={helpVideoUrl} onChange={e => setHelpVideoUrl(e.target.value)}
+              placeholder="https://youtu.be/..."
+              className="flex-1 bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2
+                         focus:outline-none focus:ring-1 focus:ring-brand-500/40 font-mono text-slate-300 placeholder:text-slate-600" />
+            <button disabled={videoSaving}
+              onClick={async () => {
+                setVideoSaving(true); setVideoSaved(false)
+                try {
+                  await adminUpdateSettings(pin, { help_video_url: helpVideoUrl })
+                  setVideoSaved(true)
+                  setTimeout(() => setVideoSaved(false), 2000)
+                } catch { /* ignore */ }
+                finally { setVideoSaving(false) }
+              }}
+              className="px-3 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-40 rounded-lg text-xs font-semibold text-white transition-colors flex items-center gap-1.5">
+              {videoSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              Save
+            </button>
+            {videoSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
+          </div>
+          <p className="text-[10px] text-slate-600 mt-1">YouTube link shown in the Help &gt; How It Works section. Leave blank to hide.</p>
         </div>
       </div>
 

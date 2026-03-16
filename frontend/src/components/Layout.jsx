@@ -1,30 +1,59 @@
+import { useState, useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Settings, HelpCircle, LogOut } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut } from 'lucide-react'
 import FloatingChat from './FloatingChat'
+import { fetchFeatures } from '../api'
 
-/* ── FleetPulse Logo (inline SVG) ──────────────────────────────────────── */
+/* ── FleetPulse Logo (AI Brain + Fleet Routes) ────────────────────────── */
 function Logo({ className = '' }) {
   return (
     <svg viewBox="0 0 32 32" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="2" y="22" width="28" height="4" rx="2" fill="#334155" />
-      <rect x="6" y="23" width="4" height="2" rx="1" fill="#64748b" />
-      <rect x="14" y="23" width="4" height="2" rx="1" fill="#64748b" />
-      <rect x="22" y="23" width="4" height="2" rx="1" fill="#64748b" />
-      <rect x="4" y="12" width="16" height="10" rx="2" fill="#3b82f6" />
-      <rect x="20" y="15" width="8" height="7" rx="1.5" fill="#2563eb" />
-      <rect x="21" y="16" width="5" height="4" rx="1" fill="#93c5fd" opacity="0.6" />
-      <circle cx="10" cy="22" r="3" fill="#1e293b" />
-      <circle cx="10" cy="22" r="1.5" fill="#475569" />
-      <circle cx="24" cy="22" r="3" fill="#1e293b" />
-      <circle cx="24" cy="22" r="1.5" fill="#475569" />
-      <polyline points="1,8 7,8 9,4 12,12 15,6 18,8 22,8" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <polyline points="22,8 26,8 28,5 30,8" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.5" />
+      {/* Brain outline — left hemisphere */}
+      <path d="M16 4 C12 4 9 5.5 8 8 C6.5 8.2 5 9.5 5 12 C4 12.5 3 14 3 16 C3 18.5 4.5 20 6 20.5 C6.5 22.5 8 24 10 24.5 C11 26.5 13 28 16 28"
+        stroke="#60a5fa" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+      {/* Brain outline — right hemisphere */}
+      <path d="M16 4 C20 4 23 5.5 24 8 C25.5 8.2 27 9.5 27 12 C28 12.5 29 14 29 16 C29 18.5 27.5 20 26 20.5 C25.5 22.5 24 24 22 24.5 C21 26.5 19 28 16 28"
+        stroke="#3b82f6" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+      {/* Brain center fold */}
+      <path d="M16 6 L16 26" stroke="#334155" strokeWidth="0.8" strokeDasharray="2 2" />
+      {/* Neural network nodes */}
+      <circle cx="10" cy="11" r="1.8" fill="#6366f1" />
+      <circle cx="22" cy="11" r="1.8" fill="#6366f1" />
+      <circle cx="8" cy="17" r="1.8" fill="#818cf8" />
+      <circle cx="24" cy="17" r="1.8" fill="#818cf8" />
+      <circle cx="12" cy="22" r="1.8" fill="#a78bfa" />
+      <circle cx="20" cy="22" r="1.8" fill="#a78bfa" />
+      <circle cx="16" cy="14" r="2" fill="#4f46e5" />
+      {/* Neural connections — route-like lines between nodes */}
+      <line x1="10" y1="11" x2="16" y2="14" stroke="#818cf8" strokeWidth="0.8" opacity="0.6" />
+      <line x1="22" y1="11" x2="16" y2="14" stroke="#818cf8" strokeWidth="0.8" opacity="0.6" />
+      <line x1="8" y1="17" x2="16" y2="14" stroke="#818cf8" strokeWidth="0.8" opacity="0.6" />
+      <line x1="24" y1="17" x2="16" y2="14" stroke="#818cf8" strokeWidth="0.8" opacity="0.6" />
+      <line x1="8" y1="17" x2="12" y2="22" stroke="#a78bfa" strokeWidth="0.8" opacity="0.5" />
+      <line x1="24" y1="17" x2="20" y2="22" stroke="#a78bfa" strokeWidth="0.8" opacity="0.5" />
+      <line x1="10" y1="11" x2="8" y2="17" stroke="#818cf8" strokeWidth="0.8" opacity="0.5" />
+      <line x1="22" y1="11" x2="24" y2="17" stroke="#818cf8" strokeWidth="0.8" opacity="0.5" />
+      {/* Small pulse on center node — AI activity */}
+      <circle cx="16" cy="14" r="3.5" stroke="#6366f1" strokeWidth="0.6" opacity="0.3">
+        <animate attributeName="r" values="2.5;4;2.5" dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite" />
+      </circle>
     </svg>
   )
 }
 
 export default function Layout() {
   const { pathname } = useLocation()
+  const [features, setFeatures] = useState({})
+
+  const loadFeatures = () => fetchFeatures().then(setFeatures).catch(() => {})
+  useEffect(() => {
+    loadFeatures()
+    // Re-fetch when admin toggles features
+    const handler = () => loadFeatures()
+    window.addEventListener('featuresChanged', handler)
+    return () => window.removeEventListener('featuresChanged', handler)
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -61,24 +90,36 @@ export default function Layout() {
               }`}>
               <ListOrdered className="w-4 h-4 inline mr-1.5 -mt-0.5" />Queue
             </Link>
-            <Link to="/pta"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                pathname === '/pta' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}>
-              <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />PTA Advisor
-            </Link>
             <Link to="/forecast"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/forecast' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}>
               <CloudSun className="w-4 h-4 inline mr-1.5 -mt-0.5" />Forecast
             </Link>
-            <Link to="/matrix"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                pathname === '/matrix' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}>
-              <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />Territory Matrix
-            </Link>
+            {features.pta_advisor !== false && (
+              <Link to="/pta"
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  pathname === '/pta' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}>
+                <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />PTA Advisor
+              </Link>
+            )}
+            {features.onroute !== false && (
+              <Link to="/onroute"
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  pathname === '/onroute' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}>
+                <Truck className="w-4 h-4 inline mr-1.5 -mt-0.5" />Route Tracker
+              </Link>
+            )}
+            {features.matrix !== false && (
+              <Link to="/matrix"
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  pathname === '/matrix' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}>
+                <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />Insights
+              </Link>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-1">
             <Link to="/help" title="Help Center"

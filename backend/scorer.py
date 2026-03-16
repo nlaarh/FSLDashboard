@@ -174,6 +174,8 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
             pta = s.get('ERS_PTA__c')
             if pta is not None:
                 pv = float(pta)
+                if pv <= 0 or pv >= 999:
+                    continue  # skip sentinel/invalid PTA values
                 pta_values.append(pv)
                 dispatch_method = (s.get('ERS_Dispatch_Method__c') or '')
                 created = _parse_dt(s.get('CreatedDate'))

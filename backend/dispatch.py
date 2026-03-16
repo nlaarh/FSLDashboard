@@ -81,6 +81,21 @@ def _classify_worktype(wt_name):
     return 'light'
 
 
+def _driver_tier(truck_capabilities: str) -> str:
+    """Classify driver tier from Asset.ERS_Truck_Capabilities__c (semicolon-separated)."""
+    caps = {c.strip().lower() for c in (truck_capabilities or '').split(';') if c.strip()}
+    if caps & TOW_SKILLS:
+        return 'tow'
+    if caps & BATTERY_SKILLS:
+        # Has battery but also has light-service items → light driver
+        light_caps = {'tire', 'lockout', 'locksmith', 'fuel - gasoline', 'fuel - diesel',
+                      'extrication- driveway', 'extrication- highway/roadway', 'winch'}
+        if caps & light_caps:
+            return 'light'
+        return 'battery'
+    return 'light'
+
+
 def _can_cover(driver_tier, call_tier):
     return call_tier in SKILL_HIERARCHY.get(driver_tier, [])
 
@@ -129,7 +144,7 @@ def get_live_queue():
             wait_min = round((now - created).total_seconds() / 60) if created else 0
             pta = sa.get('ERS_PTA__c')
             pta_val = float(pta) if pta else None
-            pta_breached = pta_val is not None and wait_min > pta_val
+            pta_breached = pta_val is not None and 0 < pta_val < 999 and wait_min > pta_val
 
             wt = (sa.get('WorkType') or {}).get('Name', '') or ''
             if 'drop' in wt.lower():
@@ -230,62 +245,73 @@ def recommend_drivers(sa_id: str):
         wt_name = (sa.get('WorkType') or {}).get('Name', '')
         call_tier = _classify_worktype(wt_name)
 
-        # Parallel queries
+        # Parallel queries: Asset for on-shift, STM for GPS, AssignedResource for busy
         data = sf_parallel(
-            members=lambda: sf_query_all(f"""
+            trucks=lambda: sf_query_all("""
+                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """),
+            gps=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId,
                        ServiceResource.Name,
                        ServiceResource.ERS_Driver_Type__c,
                        ServiceResource.LastKnownLatitude,
                        ServiceResource.LastKnownLongitude,
-                       ServiceResource.LastKnownLocationDate,
-                       TerritoryType
+                       ServiceResource.LastKnownLocationDate
                 FROM ServiceTerritoryMember
                 WHERE ServiceTerritoryId = '{tid}'
-            """),
-            skills=lambda: sf_query_all(f"""
-                SELECT ServiceResourceId, Skill.MasterLabel
-                FROM ServiceResourceSkill
-                WHERE ServiceResourceId IN (
-                    SELECT ServiceResourceId FROM ServiceTerritoryMember
-                    WHERE ServiceTerritoryId = '{tid}'
-                )
+                  AND TerritoryType IN ('P','S')
             """),
             active_sas=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt
                 FROM AssignedResource
-                WHERE ServiceAppointment.Status IN ('Dispatched', 'Assigned')
+                WHERE ServiceAppointment.Status IN ('Dispatched', 'Assigned', 'In Progress')
                   AND ServiceAppointment.ServiceTerritoryId = '{tid}'
                 GROUP BY ServiceResourceId
             """),
         )
 
-        # Build driver skills map
-        driver_skills = defaultdict(set)
-        for r in data['skills']:
-            sk = (r.get('Skill') or {}).get('MasterLabel')
-            if sk:
-                driver_skills[r['ServiceResourceId']].add(sk)
+        # Build on-shift set + truck capabilities from Asset
+        logged_in_ids = set()
+        driver_caps = {}
+        for asset in data['trucks']:
+            dr_id = asset.get('ERS_Driver__c')
+            if dr_id:
+                logged_in_ids.add(dr_id)
+                driver_caps[dr_id] = asset.get('ERS_Truck_Capabilities__c', '')
+
+        # Build GPS lookup from STM (only for on-shift drivers)
+        gps_lookup = {}
+        for m in data['gps']:
+            d_id = m.get('ServiceResourceId')
+            if d_id and d_id in logged_in_ids:
+                res = m.get('ServiceResource') or {}
+                gps_lookup[d_id] = {
+                    'name': res.get('Name', ''),
+                    'type': res.get('ERS_Driver_Type__c', ''),
+                    'lat': res.get('LastKnownLatitude'),
+                    'lon': res.get('LastKnownLongitude'),
+                }
 
         # Build active workload map
         workload = {}
         for r in data['active_sas']:
             workload[r.get('ServiceResourceId', '')] = r.get('cnt', 0)
 
-        # Evaluate each driver
+        # Evaluate each on-shift driver in this territory
         candidates = []
-        for m in data['members']:
-            res = m.get('ServiceResource') or {}
-            name = res.get('Name', '')
+        for d_id, gps in gps_lookup.items():
+            name = gps['name']
             if name.lower().startswith('towbook'):
                 continue
 
-            d_id = m['ServiceResourceId']
-            d_lat = res.get('LastKnownLatitude')
-            d_lon = res.get('LastKnownLongitude')
-            d_skills = driver_skills.get(d_id, set())
-            d_tier = _classify_driver(d_skills)
-            d_type = res.get('ERS_Driver_Type__c', '')
+            d_lat = gps['lat']
+            d_lon = gps['lon']
+            caps = driver_caps.get(d_id, '')
+            d_tier = _driver_tier(caps) if caps else 'light'
+            d_type = gps['type']
             d_load = workload.get(d_id, 0)
 
             # Distance and ETA
@@ -382,61 +408,72 @@ def get_cascade_status(territory_id: str):
                   AND CreatedDate >= {cutoff}
                 ORDER BY CreatedDate ASC
             """),
-            members=lambda: sf_query_all(f"""
+            trucks=lambda: sf_query_all("""
+                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """),
+            gps=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId,
                        ServiceResource.Name,
                        ServiceResource.LastKnownLatitude,
-                       ServiceResource.LastKnownLongitude,
-                       TerritoryType
+                       ServiceResource.LastKnownLongitude
                 FROM ServiceTerritoryMember
                 WHERE ServiceTerritoryId = '{territory_id}'
-            """),
-            skills=lambda: sf_query_all(f"""
-                SELECT ServiceResourceId, Skill.MasterLabel
-                FROM ServiceResourceSkill
-                WHERE ServiceResourceId IN (
-                    SELECT ServiceResourceId FROM ServiceTerritoryMember
-                    WHERE ServiceTerritoryId = '{territory_id}'
-                )
+                  AND TerritoryType IN ('P','S')
             """),
             assigned=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt
                 FROM AssignedResource
-                WHERE ServiceAppointment.Status IN ('Dispatched', 'Assigned')
+                WHERE ServiceAppointment.Status IN ('Dispatched', 'Assigned', 'In Progress')
                   AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
                 GROUP BY ServiceResourceId
             """),
         )
 
-        # Build indexes
-        driver_skills = defaultdict(set)
-        for r in data['skills']:
-            sk = (r.get('Skill') or {}).get('MasterLabel')
-            if sk:
-                driver_skills[r['ServiceResourceId']].add(sk)
+        # Build on-shift set + truck capabilities from Asset
+        logged_in_ids = set()
+        driver_caps = {}
+        for asset in data['trucks']:
+            dr_id = asset.get('ERS_Driver__c')
+            if dr_id:
+                logged_in_ids.add(dr_id)
+                driver_caps[dr_id] = asset.get('ERS_Truck_Capabilities__c', '')
+
+        # GPS lookup from STM (only on-shift drivers in this territory)
+        gps_lookup = {}
+        for m in data['gps']:
+            d_id = m.get('ServiceResourceId')
+            if d_id and d_id in logged_in_ids:
+                res = m.get('ServiceResource') or {}
+                gps_lookup[d_id] = {
+                    'name': res.get('Name', ''),
+                    'lat': res.get('LastKnownLatitude'),
+                    'lon': res.get('LastKnownLongitude'),
+                }
 
         busy_drivers = set()
         for r in data['assigned']:
             if r.get('cnt', 0) > 0:
                 busy_drivers.add(r.get('ServiceResourceId', ''))
 
-        # Classify drivers
+        # Classify on-shift drivers by tier using truck capabilities
         drivers_by_tier = defaultdict(list)
-        for m in data['members']:
-            res = m.get('ServiceResource') or {}
-            name = res.get('Name', '')
+        for d_id, gps in gps_lookup.items():
+            name = gps['name']
             if name.lower().startswith('towbook'):
                 continue
-            d_id = m['ServiceResourceId']
-            d_tier = _classify_driver(driver_skills.get(d_id, set()))
+            caps = driver_caps.get(d_id, '')
+            d_tier = _driver_tier(caps) if caps else 'light'
             d_busy = d_id in busy_drivers
             drivers_by_tier[d_tier].append({
                 'id': d_id,
                 'name': name,
                 'tier': d_tier,
                 'busy': d_busy,
-                'lat': res.get('LastKnownLatitude'),
-                'lon': res.get('LastKnownLongitude'),
+                'lat': gps['lat'],
+                'lon': gps['lon'],
             })
 
         # Skill utilization
@@ -852,6 +889,17 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             driver_stats = {}
             for r in data['driver_sas']:
                 sa_data = r
+                sa_ref = sa_data.get('ServiceAppointment') or sa_data
+
+                # Exclude Tow Drop-Off SAs (paired SAs, not real member calls)
+                wt_name = ((sa_ref.get('WorkType') or {}).get('Name', '') or '')
+                if 'drop' in wt_name.lower():
+                    continue
+
+                # Skip Towbook SAs — ActualStartTime is unreliable (midnight bulk-update)
+                dispatch_method = (sa_ref.get('ERS_Dispatch_Method__c') or '')
+                if dispatch_method == 'Towbook':
+                    continue
 
                 drv = (r.get('ServiceResource') or {}).get('Name', '?')
                 drv_id = (r.get('ServiceResource') or {}).get('Id', '')
@@ -866,18 +914,17 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
                 ds = driver_stats[drv_id]
                 ds['total_calls'] += 1
 
-                sa_ref = sa_data.get('ServiceAppointment') or sa_data
                 created = _parse_dt(sa_ref.get('CreatedDate'))
                 started = _parse_dt(sa_ref.get('ActualStartTime'))
                 ended = _parse_dt(sa_ref.get('ActualEndTime'))
 
                 if created and started:
                     rt = (started - created).total_seconds() / 60
-                    if 0 < rt < 1440:
+                    if 0 < rt < 480:
                         ds['response_times'].append(rt)
                 if started and ended:
                     ot = (ended - started).total_seconds() / 60
-                    if 0 < ot < 480:
+                    if 0 < ot < 240:
                         ds['onsite_times'].append(ot)
                 if sa_ref.get('ERS_Facility_Decline_Reason__c'):
                     ds['declines'] += 1

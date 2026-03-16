@@ -94,6 +94,17 @@ export const addIssueComment = (num, comment, name) => api.post(`/issues/${num}/
 export const updateIssueStatus = (pin, num, status) => api.patch(`/issues/${num}`, { status }, pinHeader(pin)).then(r => r.data)
 export const triageIssues = (pin) => api.post('/issues/triage', null, pinHeader(pin)).then(r => r.data)
 
+// Feature Flags
+export const fetchFeatures = () => api.get('/features').then(r => r.data)
+
+// On-Route Tracking
+export const fetchOnRoute = () => api.get('/onroute').then(r => r.data)
+export const createTrackingLink = (saId) => api.post('/track/create', { sa_id: saId }).then(r => r.data)
+
+// AI Insights
+export const fetchInsights = (category) =>
+  api.get(`/insights/${category}`).then(r => r.data)
+
 // Chatbot
 export const fetchChatbotModels = () => api.get('/chatbot/models').then(r => r.data)
 export const askChatbot = (question, complexity = 'mid', history = []) =>

@@ -371,23 +371,21 @@ function GarageRow({ garage: g, expanded, onToggle }) {
           </div>
         </div>
 
-        {/* PTA pills for each type */}
-        <div className="flex items-center gap-2">
+        {/* PTA pills for each type — fixed-width grid so columns align across rows */}
+        <div className="grid grid-cols-4 gap-2 shrink-0" style={{ width: '580px' }}>
           {CALL_TYPES.map(tier => {
             const p = g.projected_pta[tier]
-            if (!p) return null
+            if (!p) return <div key={tier} />
             const rec = REC_STYLES[p.recommendation] || REC_STYLES.ok
             return (
               <div key={tier}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${rec.bg} ${rec.border}`}>
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border ${rec.bg} ${rec.border}`}>
                 <span className="text-slate-500">{TIER_ICONS[tier]}</span>
                 <span className="text-[10px] text-slate-400 font-medium">{TIER_LABELS[tier]}</span>
-                <span className={`text-xs font-bold ${rec.text}`}>
+                <span className={`text-xs font-bold ml-auto ${rec.text}`}>
                   {p.projected_min != null ? `${p.projected_min}m` : '—'}
                 </span>
-                {p.current_setting_min != null && (
-                  <span className="text-[10px] text-slate-600">/ {p.current_setting_min}m</span>
-                )}
+                <span className="text-[10px] text-slate-600">/ {p.current_setting_min != null ? `${p.current_setting_min}m` : '—'}</span>
                 <span className={rec.text}>{rec.icon}</span>
               </div>
             )
@@ -412,7 +410,7 @@ function GarageRow({ garage: g, expanded, onToggle }) {
               const idleCount = g.drivers.capable_idle?.[tier] ?? g.drivers.idle_by_tier?.[tier] ?? 0
               const busyCount = g.drivers.capable_busy?.[tier] ?? g.drivers.busy_by_tier?.[tier] ?? 0
               return (
-                <div key={tier} className={`rounded-xl border p-3 ${rec.bg} ${rec.border}`}>
+                <div key={tier} className={`rounded-xl border p-3 flex flex-col ${rec.bg} ${rec.border}`}>
                   <div className="flex items-center gap-2 mb-2">
                     <span className={rec.text}>{TIER_ICONS[tier]}</span>
                     <span className="text-sm font-semibold text-white">{TIER_LABELS[tier]}</span>
@@ -420,7 +418,7 @@ function GarageRow({ garage: g, expanded, onToggle }) {
                       {rec.icon} {rec.label}
                     </span>
                   </div>
-                  <div className="space-y-1.5 text-xs">
+                  <div className="space-y-1.5 text-xs flex-1">
                     <div className="flex justify-between">
                       <span className="text-slate-500">Projected PTA</span>
                       <span className={`font-bold ${rec.text}`}>
@@ -433,39 +431,33 @@ function GarageRow({ garage: g, expanded, onToggle }) {
                         {p.current_setting_min != null ? `${p.current_setting_min} min` : 'Not set'}
                       </span>
                     </div>
-                    {p.projected_min != null && p.current_setting_min != null && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Delta</span>
-                        <span className={`font-medium ${
-                          p.projected_min > p.current_setting_min ? 'text-red-400' :
-                          p.projected_min < p.current_setting_min ? 'text-emerald-400' : 'text-slate-400'
-                        }`}>
-                          {p.projected_min > p.current_setting_min ? '+' : ''}
-                          {p.projected_min - p.current_setting_min} min
-                        </span>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Delta</span>
+                      <span className={`font-medium ${
+                        p.projected_min != null && p.current_setting_min != null
+                          ? (p.projected_min > p.current_setting_min ? 'text-red-400' :
+                             p.projected_min < p.current_setting_min ? 'text-emerald-400' : 'text-slate-400')
+                          : 'text-slate-600'
+                      }`}>
+                        {p.projected_min != null && p.current_setting_min != null
+                          ? `${p.projected_min > p.current_setting_min ? '+' : ''}${p.projected_min - p.current_setting_min} min`
+                          : '—'}
+                      </span>
+                    </div>
                     <div className="border-t border-slate-700/30 pt-1.5 mt-1.5">
                       <div className="flex justify-between">
                         <span className="text-slate-600">Queue</span>
                         <span className="text-slate-400">{queueCount} calls</span>
                       </div>
-                      {g.drivers.is_towbook ? (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">{g.drivers.is_towbook ? 'Active drivers' : 'Idle drivers'}</span>
+                        <span className="text-slate-400">{g.drivers.is_towbook ? `${busyCount} on calls` : idleCount}</span>
+                      </div>
+                      {!g.drivers.is_towbook && (
                         <div className="flex justify-between">
-                          <span className="text-slate-600">Active drivers</span>
-                          <span className="text-slate-400">{busyCount} on calls</span>
+                          <span className="text-slate-600">Busy drivers</span>
+                          <span className="text-slate-400">{busyCount}</span>
                         </div>
-                      ) : (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-slate-600">Idle drivers</span>
-                            <span className="text-slate-400">{idleCount}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-600">Busy drivers</span>
-                            <span className="text-slate-400">{busyCount}</span>
-                          </div>
-                        </>
                       )}
                     </div>
                   </div>

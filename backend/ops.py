@@ -65,7 +65,7 @@ def _calc_ata(sa, towbook_on_location=None):
             return None
         diff = (actual_start - created).total_seconds() / 60
 
-    if diff <= 0 or diff >= 1440:
+    if diff <= 0 or diff >= 480:
         return None
 
     return round(diff)
@@ -429,7 +429,8 @@ def get_ops_territory_detail(territory_id: str):
             parent_tid = sa.get('ERS_Parent_Territory__c')
             priority_rank = matrix['rank_lookup'].get((parent_tid, territory_id)) if parent_tid else None
 
-            status_counts[status] += 1
+            if not is_dropoff:
+                status_counts[status] += 1
             if not is_dropoff:
                 wt_counts[wt] += 1
                 # Track completion by rank (exclude drop-offs)
@@ -459,14 +460,20 @@ def get_ops_territory_detail(territory_id: str):
             if status in ('Dispatched', 'Assigned'):
                 wait = _minutes_since(created, now_utc)
 
-            # On-site duration
+            # On-site duration (arrival → end)
+            # Towbook: use On Location from history; Fleet: use ActualStartTime
             onsite = None
-            actual_start = _parse_dt(sa.get('ActualStartTime'))
             actual_end = _parse_dt(sa.get('ActualEndTime'))
-            if actual_start and actual_end:
-                onsite = round((actual_end - actual_start).total_seconds() / 60)
-                if onsite < 0 or onsite > 1440:
-                    onsite = None
+            if actual_end:
+                if dispatch == 'Towbook':
+                    on_loc_str = towbook_on_location.get(sa.get('Id')) if towbook_on_location else None
+                    arrival = _parse_dt(on_loc_str) if on_loc_str else None
+                else:
+                    arrival = _parse_dt(sa.get('ActualStartTime'))
+                if arrival:
+                    onsite = round((actual_end - arrival).total_seconds() / 60)
+                    if onsite < 0 or onsite > 480:
+                        onsite = None
 
             sa_rows.append({
                 'id': sa.get('Id'),
@@ -489,10 +496,11 @@ def get_ops_territory_detail(territory_id: str):
                 'parent_zone': (sa.get('ERS_Parent_Territory__r') or {}).get('Name'),
             })
 
-        # Summary KPIs
-        total = len(sa_rows)
-        completed = sum(1 for s in sa_rows if s['status'] == 'Completed')
-        open_count = sum(1 for s in sa_rows if s['status'] in ('Dispatched', 'Assigned'))
+        # Summary KPIs (exclude Tow Drop-Off from counts)
+        non_dropoff = [s for s in sa_rows if not s['is_dropoff']]
+        total = len(non_dropoff)
+        completed = sum(1 for s in non_dropoff if s['status'] == 'Completed')
+        open_count = sum(1 for s in non_dropoff if s['status'] in ('Dispatched', 'Assigned'))
         avg_pta = round(sum(pta_values) / len(pta_values)) if pta_values else None
         avg_ata = round(sum(ata_values) / len(ata_values)) if ata_values else None
         median_ata = round(sorted(ata_values)[len(ata_values) // 2]) if ata_values else None
