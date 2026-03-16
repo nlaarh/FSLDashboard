@@ -472,18 +472,16 @@ export default function Admin() {
         <div className="p-4 space-y-5">
           <p className="text-[11px] text-slate-500">Configure the AI chatbot. Pick a provider, enter your API key, then choose a primary model and an optional fallback.</p>
 
-          {/* Enable/Disable toggle */}
-          <div className="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3 border border-slate-700/50 mb-4">
-            <div>
-              <div className="text-sm font-medium text-slate-200">Chat Assistant</div>
-              <div className="text-[10px] text-slate-500">Show floating chat bubble for all users</div>
+          {/* Example questions for dispatchers */}
+          <div className="bg-slate-800/30 rounded-lg px-4 py-3 border border-slate-700/30 mb-4">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Example questions dispatchers can ask</div>
+            <div className="space-y-1 text-xs text-slate-500 italic">
+              <div>"Which garages are over capacity right now?"</div>
+              <div>"What's the average response time for Battery calls today?"</div>
+              <div>"How many calls did 076DO handle this week?"</div>
+              <div>"Show me Fleet vs Towbook split for today"</div>
+              <div>"Who are the top 3 fastest drivers this week?"</div>
             </div>
-            <button
-              onClick={() => setAiChatEnabled(e => !e)}
-              className={`relative w-11 h-6 rounded-full transition-colors ${aiChatEnabled ? 'bg-emerald-500' : 'bg-slate-600'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${aiChatEnabled ? 'translate-x-5' : ''}`} />
-            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
