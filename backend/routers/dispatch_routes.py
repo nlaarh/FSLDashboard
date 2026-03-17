@@ -1151,7 +1151,28 @@ def api_trends():
             'bottom_garages': bottom_garages,
         }
 
-    return cache.cached_query_persistent('insights_trends_30d', _fetch, ttl=86400)
+    # Serve from cache ONLY — never block a request with heavy SF queries.
+    # The nightly thread (12:05 AM ET) or manual trigger populates the cache.
+    cached = cache.get('insights_trends_30d')
+    if cached:
+        return cached
+    # Try disk cache (survives restarts)
+    disk = cache.disk_get('insights_trends_30d', ttl=86400)
+    if disk:
+        cache.put('insights_trends_30d', disk, 86400)
+        return disk
+    # No cache at all — trigger background generation, return empty immediately
+    import threading
+    def _bg():
+        try:
+            result = _fetch()
+            cache.put('insights_trends_30d', result, 86400)
+            cache.disk_put('insights_trends_30d', result, 86400)
+        except Exception as e:
+            import logging
+            logging.getLogger('trends').warning(f"Background trends fetch failed: {e}")
+    threading.Thread(target=_bg, daemon=True).start()
+    return {'days': [], 'top_garages': [], 'bottom_garages': [], 'loading': True}
 
 
 ## NOTE: /api/garages/{territory_id}/decomposition is in routers/garages.py

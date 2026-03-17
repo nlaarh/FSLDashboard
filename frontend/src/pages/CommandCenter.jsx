@@ -2177,6 +2177,13 @@ function TrendsView() {
     </div>
   )
   if (error) return <div className="max-w-5xl mx-auto text-center text-red-400 py-10 text-sm">{error}</div>
+  if (trends?.loading) return (
+    <div className="max-w-5xl mx-auto text-center py-10">
+      <Loader2 className="w-5 h-5 animate-spin text-blue-500 mx-auto mb-2" />
+      <div className="text-sm text-slate-500">Generating 30-day trends in background...</div>
+      <div className="text-xs text-slate-600 mt-1">Refresh in 1-2 minutes. Data is pre-computed nightly after midnight.</div>
+    </div>
+  )
   if (!trends?.days?.length) return <div className="max-w-5xl mx-auto text-center text-slate-600 py-10 text-sm">No trend data available</div>
 
   const days = trends.days.map(d => ({ ...d, label: d.date.slice(5) })) // "03-15"
