@@ -42,6 +42,7 @@ jobs:
         # Azure Oryx will pip install from requirements.txt server-side
         zip -r ../deploy.zip \
           *.py \
+          routers/ \
           startup.sh requirements.txt \
           static/
         echo "Package size: $(du -h ../deploy.zip | cut -f1)"
