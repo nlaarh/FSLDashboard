@@ -99,7 +99,8 @@ def _warmup_cache():
             ("map_grids", lambda: map_router.get_map_grids()),
             ("map_drivers", lambda: map_router.get_map_drivers()),
             ("pta_advisor", lambda: pta.pta_advisor()),
-            ("trends_30d", lambda: dispatch_routes.api_trends()),
+            # trends_30d excluded from warmup — too heavy for startup (4 parallel SF queries, 45K+ rows)
+            # It uses cached_query_persistent so first request triggers it, then cached to disk for 24h
         ]
 
         for name, fn in warmup_fns:

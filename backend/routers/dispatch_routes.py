@@ -589,7 +589,6 @@ def api_gps_detail(bucket: str):
             WHERE RecordType.Name = 'ERS Truck'
               AND ERS_Driver__c != null
               AND ERS_Driver__r.IsActive = true
-              AND ERS_Driver__r.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
         """)
         now = datetime.now(ZoneInfo('UTC'))
         result = []
@@ -716,7 +715,6 @@ def api_closest_driver_detail():
                 WHERE TerritoryType IN ('P','S')
                   AND ServiceResource.IsActive = true
                   AND ServiceResource.ResourceType = 'T'
-                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """)
 
         data = sf_parallel(
@@ -932,6 +930,10 @@ def api_trends():
         status_hist = data['status_hist']
         reassign_hist = data['reassign_hist']
         satisfaction_rows = data['satisfaction']
+
+        import logging
+        _log = logging.getLogger('trends')
+        _log.info(f"Trends fetch: sas={len(all_sas)}, status_hist={len(status_hist)}, reassign={len(reassign_hist)}, satisfaction={len(satisfaction_rows)}")
 
         # ── Pre-process history data ─────────────────────────────────
 
