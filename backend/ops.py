@@ -7,31 +7,11 @@
 """
 
 from datetime import datetime, date, timedelta, timezone
-from zoneinfo import ZoneInfo
 from collections import defaultdict
+
+from utils import _ET, parse_dt as _parse_dt, minutes_since as _minutes_since
 from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
-
-_ET = ZoneInfo('America/New_York')
-
-
-def _parse_dt(s):
-    if not s:
-        return None
-    try:
-        s = s.replace('+0000', '+00:00').replace('Z', '+00:00')
-        return datetime.fromisoformat(s)
-    except Exception:
-        return None
-
-
-def _minutes_since(dt_str, now_utc):
-    dt = _parse_dt(dt_str)
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return round((now_utc - dt).total_seconds() / 60)
 
 
 def _calc_ata(sa, towbook_on_location=None):

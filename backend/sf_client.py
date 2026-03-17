@@ -19,13 +19,13 @@ def sanitize_soql(value: str) -> str:
     """Sanitize a value for safe SOQL interpolation. Prevents SOQL injection."""
     if not isinstance(value, str):
         value = str(value)
-    # Remove/escape characters that could break SOQL string literals
-    # SOQL strings use single quotes, so escape them
-    # Also remove backslashes, semicolons, and other dangerous chars
+    # Remove backslashes first, then escape single quotes for SOQL
     value = value.replace("\\", "").replace("'", "\\'")
-    # Only allow alphanumeric, hyphens, underscores, dots, spaces, colons
-    # (covers SF IDs like 0HoXX0000000001, appointment numbers like SA-0001234, dates like 2026-03-08T00:00:00Z)
-    if not re.match(r'^[a-zA-Z0-9\-_.:/ ]+$', value):
+    # Allow characters found in Salesforce data: alphanumeric, hyphens, underscores,
+    # dots, spaces, colons, slashes, ampersands, commas, parens, hash, at-signs
+    # (covers territory names like "J\'S AUTO", "AUTO & GLASS", SF IDs, dates)
+    # Block semicolons, backticks, and other injection vectors
+    if re.search(r'[;`\x00-\x1f]', value):
         raise ValueError(f"Invalid characters in SOQL parameter: {value!r}")
     return value
 

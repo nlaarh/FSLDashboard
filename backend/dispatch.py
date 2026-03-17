@@ -1,31 +1,19 @@
 """Dispatch optimization module — queue board, driver recommender, cross-skill cascade, forecast."""
 
-import math, os, sys
+import math
 from datetime import datetime, date, timedelta, timezone
-from zoneinfo import ZoneInfo
 from collections import defaultdict
 
-_ET = ZoneInfo('America/New_York')
-
+from utils import (
+    _ET, parse_dt as _parse_dt, haversine, is_fleet_territory,
+    TRAVEL_SPEED_MPH, CYCLE_TIMES, TOW_SKILLS, LIGHT_SKILLS,
+    BATTERY_SKILLS, SKILL_HIERARCHY,
+)
 from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
 
-# ── Constants ────────────────────────────────────────────────────────────────
-
-TRAVEL_SPEED_MPH = 25
-CYCLE_TIMES = {'tow': 115, 'battery': 38, 'light': 33}
+# ── Constants (dispatch-specific) ────────────────────────────────────────────
 BLOCK_MIN = 120  # 2-hour shift blocks
-
-TOW_SKILLS = {'tow', 'flat bed', 'wheel lift'}
-LIGHT_SKILLS = {'tire', 'lockout', 'locksmith', 'winch out', 'fuel / miscellaneous', 'pvs'}
-BATTERY_SKILLS = {'battery', 'jumpstart'}
-
-# Skill hierarchy: tow drivers can do light+battery, light can do battery
-SKILL_HIERARCHY = {
-    'tow': ['tow', 'light', 'battery'],
-    'light': ['light', 'battery'],
-    'battery': ['battery'],
-}
 
 DOW_WEATHER_MULTIPLIERS = {
     'Clear': 1.0, 'Mild': 1.05, 'Moderate': 1.10, 'Severe': 1.25, 'Extreme': 1.40,
@@ -34,29 +22,6 @@ DOW_WEATHER_MULTIPLIERS = {
 URGENCY_THRESHOLDS = [
     (20, 'green'), (35, 'yellow'), (45, 'orange'),
 ]
-
-
-def _parse_dt(dt_str):
-    if not dt_str:
-        return None
-    if isinstance(dt_str, datetime):
-        return dt_str
-    try:
-        s = dt_str.replace('+0000', '+00:00').replace('Z', '+00:00')
-        return datetime.fromisoformat(s)
-    except Exception:
-        return None
-
-
-def haversine(lat1, lon1, lat2, lon2):
-    if None in (lat1, lon1, lat2, lon2):
-        return None
-    R = 3959
-    la1, la2 = math.radians(lat1), math.radians(lat2)
-    dl = math.radians(lat2 - lat1)
-    dn = math.radians(lon2 - lon1)
-    a = math.sin(dl / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin(dn / 2) ** 2
-    return round(R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 2)
 
 
 def _classify_driver(skills_set):
@@ -252,6 +217,7 @@ def recommend_drivers(sa_id: str):
                 FROM Asset
                 WHERE RecordType.Name = 'ERS Truck'
                   AND ERS_Driver__c != null
+                  AND ERS_Driver__r.IsActive = true
             """),
             gps=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId,
@@ -263,6 +229,8 @@ def recommend_drivers(sa_id: str):
                 FROM ServiceTerritoryMember
                 WHERE ServiceTerritoryId = '{tid}'
                   AND TerritoryType IN ('P','S')
+                  AND ServiceResource.IsActive = true
+                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """),
             active_sas=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt
@@ -304,9 +272,6 @@ def recommend_drivers(sa_id: str):
         candidates = []
         for d_id, gps in gps_lookup.items():
             name = gps['name']
-            if name.lower().startswith('towbook'):
-                continue
-
             d_lat = gps['lat']
             d_lon = gps['lon']
             caps = driver_caps.get(d_id, '')
@@ -362,7 +327,7 @@ def recommend_drivers(sa_id: str):
                 },
                 'lat': d_lat,
                 'lon': d_lon,
-                'territory_type': m.get('TerritoryType', ''),
+                'territory_type': d_type,
             })
 
         # Sort by composite score descending
@@ -381,7 +346,7 @@ def recommend_drivers(sa_id: str):
             },
             'recommendations': candidates[:5],
             'total_eligible': len(candidates),
-            'total_evaluated': len(data['members']),
+            'total_evaluated': len(data['gps']),
         }
 
     return cache.cached_query(f'recommend_{sa_id}', _fetch, ttl=60)
@@ -413,6 +378,7 @@ def get_cascade_status(territory_id: str):
                 FROM Asset
                 WHERE RecordType.Name = 'ERS Truck'
                   AND ERS_Driver__c != null
+                  AND ERS_Driver__r.IsActive = true
             """),
             gps=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId,
@@ -422,6 +388,8 @@ def get_cascade_status(territory_id: str):
                 FROM ServiceTerritoryMember
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND TerritoryType IN ('P','S')
+                  AND ServiceResource.IsActive = true
+                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """),
             assigned=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt
@@ -462,8 +430,6 @@ def get_cascade_status(territory_id: str):
         drivers_by_tier = defaultdict(list)
         for d_id, gps in gps_lookup.items():
             name = gps['name']
-            if name.lower().startswith('towbook'):
-                continue
             caps = driver_caps.get(d_id, '')
             d_tier = _driver_tier(caps) if caps else 'light'
             d_busy = d_id in busy_drivers
@@ -580,6 +546,11 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
     period_end = sanitize_soql(period_end)
 
     def _fetch():
+        # Get territory name for fleet/contractor classification
+        _t_rows = sf_query_all(f"SELECT Name FROM ServiceTerritory WHERE Id = '{territory_id}' LIMIT 1")
+        territory_name = _t_rows[0].get('Name', '') if _t_rows else ''
+        _is_fleet = is_fleet_territory(territory_name)
+
         next_day = (date.fromisoformat(period_end) + timedelta(days=1)).isoformat()
         since = f"{period_start}T00:00:00Z"
         until = f"{next_day}T00:00:00Z"
@@ -812,9 +783,9 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             ],
         }
 
-        # Detect Towbook garage: check if majority of completed SAs are Towbook-dispatched
+        # Fleet = territory 100*/800*. Everything else = contractor.
         tb_sa_count = sum(1 for sa in data['sas'] if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
-        is_towbook_garage = tb_sa_count > len(data['sas']) * 0.5
+        is_towbook_garage = not _is_fleet and tb_sa_count > len(data['sas']) * 0.5
 
         missing_truck_id_count = 0
 
@@ -946,7 +917,7 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             leaderboard.sort(key=lambda d: d.get('avg_response_min') or 999)
 
         return {
-            'garage_type': 'towbook' if is_towbook_garage else 'fleet',
+            'garage_type': 'fleet' if _is_fleet else ('towbook' if is_towbook_garage else 'contractor'),
             'response_decomposition': decomposition,
             'decline_analysis': decline_analysis,
             'cancel_analysis': cancel_analysis,

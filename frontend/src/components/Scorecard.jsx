@@ -176,10 +176,10 @@ export default function Scorecard({ data, garageId }) {
           <div className="flex items-center gap-2">
             <Truck className="w-5 h-5 text-brand-400" />
             <h3 className="font-semibold text-slate-200">
-              {fleet.garage_type === 'towbook' ? 'Contractor Trucks' : 'Fleet Composition'}
+              {fleet.garage_type === 'fleet' ? 'Fleet Composition' : 'Contractor Trucks'}
             </h3>
-            {fleet.garage_type === 'towbook' && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium">TOWBOOK</span>
+            {fleet.garage_type !== 'fleet' && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${fleet.garage_type === 'towbook' ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400'}`}>{fleet.garage_type === 'towbook' ? 'TOWBOOK' : 'ON-PLATFORM'}</span>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -189,10 +189,10 @@ export default function Scorecard({ data, garageId }) {
             </div>
             <div className="bg-slate-800/50 rounded-xl p-4 text-center">
               <div className="text-3xl font-bold text-slate-300">
-                {fleet.garage_type === 'towbook' ? (fleet.total_contractors || 0) : fleet.total_members}
+                {fleet.garage_type === 'fleet' ? fleet.total_members : (fleet.total_contractors || 0)}
               </div>
               <div className="text-xs text-slate-400 mt-1">
-                {fleet.garage_type === 'towbook' ? 'Active Contractors' : 'Territory Members'}
+                {fleet.garage_type === 'fleet' ? 'Territory Members' : 'Active Contractors'}
               </div>
             </div>
           </div>
@@ -238,11 +238,11 @@ export default function Scorecard({ data, garageId }) {
           How to Meet the 45-Minute Goal
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Lever num={1} title={fleet.garage_type === 'towbook' ? 'Maximize Contractor Coverage' : 'Deploy Full Fleet'}
-            desc={fleet.garage_type === 'towbook'
-              ? `${fleet.total_contractors || fleet.total_trucks || 0} contractor trucks active. Monitor decline rates and PTA compliance.`
-              : `${fleet.total_members} drivers on the books. Ensure all are on the road at peak.`}
-            impact={fleet.garage_type === 'towbook' ? 'Reduces decline-driven delays' : 'Eliminates queue wait time'} />
+          <Lever num={1} title={fleet.garage_type === 'fleet' ? 'Deploy Full Fleet' : 'Maximize Contractor Coverage'}
+            desc={fleet.garage_type === 'fleet'
+              ? `${fleet.total_members} drivers on the books. Ensure all are on the road at peak.`
+              : `${fleet.total_contractors || fleet.total_trucks || 0} contractor trucks active. Monitor decline rates and PTA compliance.`}
+            impact={fleet.garage_type === 'fleet' ? 'Eliminates queue wait time' : 'Reduces decline-driven delays'} />
           <Lever num={2} title="Dispatch Closest Driver"
             desc="System currently picks closest only ~26% of the time. Fix dispatch logic."
             impact="Cuts 5-10 min per call" />

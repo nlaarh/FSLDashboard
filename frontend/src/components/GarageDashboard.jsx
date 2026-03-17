@@ -13,35 +13,9 @@ import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getWeek(offset = 0) {
-  const now = new Date()
-  const diff = now.getDay() === 0 ? -6 : 1 - now.getDay()
-  const mon = new Date(now)
-  mon.setDate(now.getDate() + diff + offset * 7)
-  const sun = new Date(mon)
-  sun.setDate(mon.getDate() + 6)
-  const fmt = d => d.toISOString().split('T')[0]
-  const lbl = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return { start: fmt(mon), end: fmt(sun), label: `${lbl(mon)} – ${lbl(sun)}`, offset }
-}
-
-function getMonth(offset = 0) {
-  const now = new Date()
-  const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
-  const start = d.toISOString().split('T')[0]
-  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-  const end = last.toISOString().split('T')[0]
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  return { start, end, label, offset }
-}
-
-function pct(n, d) { return d > 0 ? Math.round(100 * n / d * 10) / 10 : 0 }
-
-const TT_STYLE = {
-  contentStyle: { background: '#1e293b', border: '1px solid #334155', borderRadius: 8 },
-  itemStyle: { color: '#e2e8f0' },
-  labelStyle: { color: '#94a3b8', fontSize: 11 },
-}
+import { getWeek, getMonth } from '../utils/dateHelpers'
+import { pct } from '../utils/formatting'
+import { TT_STYLE } from '../constants/chartStyles'
 
 // ── Small Components ─────────────────────────────────────────────────────────
 
@@ -348,7 +322,10 @@ export default function GarageDashboard({ garageId, garageName }) {
   const missingTruckIdCount = decomp?.missing_truck_id_count || 0
   const declines = decomp?.decline_analysis
   const cancels = decomp?.cancel_analysis
-  const isTowbook = decomp?.garage_type === 'towbook' || scorecard?.garage_type === 'towbook'
+  const garageType = decomp?.garage_type || scorecard?.garage_type || 'fleet'
+  const isTowbook = garageType === 'towbook'
+  const isFleet = garageType === 'fleet'
+  const isContractor = garageType !== 'fleet'  // Towbook OR on-platform contractor
 
   const anyLoading = loading.perf || loading.scorecard || loading.score || loading.decomp
   const isFullLoading = loading.perf && !perf
@@ -378,15 +355,17 @@ export default function GarageDashboard({ garageId, garageName }) {
           {perf?.dispatch_mix && (
             <div className="flex flex-col items-center gap-1">
               <div className={clsx('px-3 py-1.5 rounded-lg text-xs font-bold border',
-                perf.dispatch_mix.primary_method === 'Field Services'
+                isFleet
                   ? 'bg-blue-950/40 border-blue-700/40 text-blue-400'
-                  : 'bg-amber-950/40 border-amber-700/40 text-amber-400')}>
-                {perf.dispatch_mix.primary_method === 'Field Services' ? 'Fleet' : 'Contractor'}
+                  : isTowbook
+                    ? 'bg-amber-950/40 border-amber-700/40 text-amber-400'
+                    : 'bg-purple-950/40 border-purple-700/40 text-purple-400')}>
+                {isFleet ? 'Fleet' : isTowbook ? 'Contractor · Towbook' : 'Contractor · On-Platform'}
               </div>
               <div className="text-[9px] text-slate-500 text-center leading-tight">
-                {perf.dispatch_mix.primary_method === 'Towbook'
+                {isTowbook
                   ? `${perf.dispatch_mix.tb_pct}% Towbook`
-                  : `${perf.dispatch_mix.fs_pct}% Fleet · ${perf.dispatch_mix.tb_pct}% Towbook`}
+                  : `${perf.dispatch_mix.fs_pct}% Field Services · ${perf.dispatch_mix.tb_pct}% Towbook`}
               </div>
             </div>
           )}
@@ -718,8 +697,8 @@ export default function GarageDashboard({ garageId, garageName }) {
               <div className="glass rounded-xl p-5 space-y-4">
                 <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
                   <Truck className="w-4 h-4 text-brand-400" />
-                  {isTowbook ? 'Contractors & Volume' : 'Fleet & Volume'}
-                  {isTowbook && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium">TOWBOOK</span>}
+                  {isFleet ? 'Fleet & Volume' : 'Contractors & Volume'}
+                  {isContractor && <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', isTowbook ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400')}>{isTowbook ? 'TOWBOOK' : 'ON-PLATFORM'}</span>}
                 </h3>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
@@ -789,8 +768,8 @@ export default function GarageDashboard({ garageId, garageName }) {
                 <div className="glass rounded-xl p-5 lg:col-span-2">
                   <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm mb-3">
                     <Award className="w-4 h-4 text-amber-400" />
-                    {isTowbook ? 'Contractor Leaderboard' : 'Driver Leaderboard'}
-                    {isTowbook && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium">TOWBOOK</span>}
+                    {isFleet ? 'Driver Leaderboard' : 'Contractor Leaderboard'}
+                    {isContractor && <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', isTowbook ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400')}>{isTowbook ? 'TOWBOOK' : 'ON-PLATFORM'}</span>}
                     <span className="text-[10px] text-slate-500 font-normal ml-auto">
                       {isTowbook ? 'Ranked by volume · Response = PTA (promised)' : 'Ranked by avg response time'}
                     </span>

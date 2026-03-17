@@ -6,6 +6,8 @@ All data live from Salesforce (parallel SOQL).
 
 from datetime import datetime, date, timedelta
 from collections import defaultdict
+
+from utils import parse_dt as _parse_dt, is_fleet_territory
 from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 from cache import cached_query
 
@@ -33,18 +35,6 @@ def _score_dimension(actual, target, higher_better):
         return max(0, round(100 * (1 - (actual - target) / max(target, 0.001)), 1))
 
 
-def _parse_dt(dt_str):
-    if not dt_str:
-        return None
-    if isinstance(dt_str, datetime):
-        return dt_str
-    try:
-        return datetime.fromisoformat(
-            str(dt_str).replace('+0000', '+00:00').replace('Z', '+00:00'))
-    except Exception:
-        return None
-
-
 def compute_score(territory_id: str, weeks: int = 4) -> dict:
     """Compute all 8 scoring dimensions. Parallel SOQL queries."""
     territory_id = sanitize_soql(territory_id)
@@ -55,6 +45,11 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
     cache_key = f"scorer_{territory_id}_{days}"
 
     def _compute():
+        # Get territory name for fleet/contractor classification
+        _t_rows = sf_query_all(f"SELECT Name FROM ServiceTerritory WHERE Id = '{territory_id}' LIMIT 1")
+        territory_name = _t_rows[0].get('Name', '') if _t_rows else ''
+        _is_fleet = is_fleet_territory(territory_name)
+
         # All parallel: aggregates for counts, individual only for completed SAs
         data = sf_parallel(
             # Aggregate: total by status
@@ -125,8 +120,10 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         # Towbook ActualStartTime is a fake future estimate. Real arrival is
         # the 'On Location' status change from ServiceAppointmentHistory.
         # Fleet garages use ActualStartTime directly.
+        # Fleet = territory 100*/800*. Everything else = contractor.
+        # Contractor sub-type: Towbook (ERS_Dispatch_Method__c='Towbook') vs On-Platform (Field Services)
         tb_count = sum(1 for s in completed_sas if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
-        is_towbook = tb_count > len(completed_sas) * 0.5
+        is_towbook = not _is_fleet and tb_count > len(completed_sas) * 0.5
 
         # Fetch real on-location timestamps for Towbook SAs
         towbook_ids = [s['Id'] for s in completed_sas
@@ -310,7 +307,7 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         return {
             'composite': composite,
             'grade': grade,
-            'garage_type': 'towbook' if is_towbook else 'fleet',
+            'garage_type': 'fleet' if _is_fleet else ('towbook' if is_towbook else 'contractor'),
             'dimensions': dimensions,
             'sample_sizes': {
                 'total_sas': total,

@@ -12,23 +12,7 @@ const TABS = [
   { key: 'dispatch',  label: 'Dispatch Map', icon: Map },
 ]
 
-function getWeekDates(offset = 0) {
-  const now = new Date()
-  const day = now.getDay()
-  const diffToMon = day === 0 ? -6 : 1 - day
-  const monday = new Date(now)
-  monday.setDate(now.getDate() + diffToMon + offset * 7)
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
-  const fmt = d => d.toISOString().split('T')[0]
-  const label = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return {
-    start: fmt(monday),
-    end: fmt(sunday),
-    label: `${label(monday)} – ${label(sunday)}, ${monday.getFullYear()}`,
-    offset,
-  }
-}
+import { getWeek as getWeekDates } from '../utils/dateHelpers'
 
 export default function GarageDetail() {
   const { id } = useParams()

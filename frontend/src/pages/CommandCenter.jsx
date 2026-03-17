@@ -4,14 +4,15 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends } from '../api'
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Area, Legend } from 'recharts'
 import { getMapConfig } from '../mapStyles'
 import {
   Loader2, RefreshCw, Radio, CheckCircle2, AlertTriangle,
   ChevronRight, Search, MapPin, Clock, FileText,
   ChevronDown, ChevronUp, Crosshair, X, Truck, Layers,
   Zap, Shield, Navigation, Users, TrendingUp, AlertCircle, ArrowRight,
-  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity
+  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity, Eye
 } from 'lucide-react'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -344,7 +345,15 @@ export default function CommandCenter() {
       {viewMode === 'insights' && (
         <div className="flex-1 overflow-hidden">
           {schedulerData ? (
-            <DispatchInsightsFullView data={schedulerData} gpsHealth={gpsHealth} ccData={data} />
+            <DispatchInsightsFullView data={schedulerData} gpsHealth={gpsHealth} ccData={data} onViewOnMap={(saNum) => {
+              setSaQuery(saNum)
+              setSaLoading(true); setSaError(null); setSaResult(null)
+              lookupSA(saNum)
+                .then(r => { setSaResult(r); if (r.sa.lat && r.sa.lon) setFocusCenter([r.sa.lat, r.sa.lon]) })
+                .catch(e => setSaError(e.response?.data?.detail || e.message))
+                .finally(() => setSaLoading(false))
+              setViewMode('map')
+            }} />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-slate-950">
               <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
@@ -962,7 +971,7 @@ export default function CommandCenter() {
             <div className="px-3 py-2.5 space-y-2">
               {[
                 { key: 'activeSAs', emoji: '📍', label: 'Active SAs', color: 'text-blue-400' },
-                { key: 'drivers', emoji: '🚛', label: 'Fleet Drivers', color: 'text-amber-400' },
+                { key: 'drivers', emoji: '🚛', label: 'On-Shift Drivers', color: 'text-amber-400' },
                 { key: 'garages',  emoji: '🏢', label: 'Fleet Garages',  color: 'text-emerald-400' },
                 { key: 'towbook', emoji: '🔧', label: 'Towbook Garages', color: 'text-orange-400' },
                 { key: 'grid',    emoji: '🗺️', label: 'Grid',    color: 'text-indigo-400' },
@@ -1156,8 +1165,452 @@ function InfoTip({ text }) {
   )
 }
 
-function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
-  const { auto_count, manual_count, towbook_count, auto_pct, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, auto_extra_miles, auto_wrong, manual_closest_pct, manual_closest_eval, manual_extra_miles, manual_wrong, towbook_closest_pct, towbook_closest_eval, towbook_extra_miles, towbook_wrong, total_extra_miles, dispatchers, total, fleet_total } = data
+// ── Inline Drill-Down: icon on each row, expands detail panel below ─────────
+function DrillDown({ fetchFn, renderRow, emptyMsg = 'No data', children }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const toggle = (e) => {
+    e.stopPropagation()
+    if (!open && !data && !loading) {
+      setLoading(true)
+      fetchFn()
+        .then(setData)
+        .catch(e => setError(e.message || 'Failed'))
+        .finally(() => setLoading(false))
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-0">
+        <div className="flex-1 min-w-0">{children}</div>
+        <button onClick={toggle} title="View details"
+          className={clsx('ml-1 p-1 rounded-md transition-all flex-shrink-0',
+            open ? 'bg-blue-600/30 text-blue-400' : 'text-slate-600 hover:text-blue-400 hover:bg-slate-800/60')}>
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+           open ? <ChevronUp className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-1 mb-1 space-y-0.5 animate-in fade-in duration-200 max-h-[400px] overflow-y-auto rounded-lg border border-slate-800/40 bg-slate-950/30 p-2 ml-2">
+          {loading && <div className="flex items-center gap-2 text-xs text-slate-500 py-4 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>}
+          {error && <div className="text-xs text-red-400 py-2 text-center">{error}</div>}
+          {data && (Array.isArray(data) ? data : []).length === 0 && !loading && (
+            <div className="text-xs text-slate-600 py-3 text-center">{emptyMsg}</div>
+          )}
+          {data && (Array.isArray(data) ? data : []).map((item, i) => (
+            <div key={i}>{renderRow(item, i)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── SA detail row used across drill-downs ───────────────────────────────────
+function SADetailRow({ item }) {
+  const reason = item.reject_reason || item.cancel_reason || ''
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
+      <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+      {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
+      {item.customer && <span className="text-slate-300 w-24 truncate" title={item.customer}>{item.customer}</span>}
+      <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
+      <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
+      {item.wait_min != null && (
+        <span className={clsx('font-semibold whitespace-nowrap', item.wait_min > 45 ? 'text-red-400' : 'text-amber-400')}>{item.wait_min}m wait</span>
+      )}
+      {item.minutes_lost != null && (
+        <span className="text-red-400 font-semibold whitespace-nowrap">{item.minutes_lost}m lost</span>
+      )}
+      {item.ata_min != null && (
+        <span className={clsx('font-semibold whitespace-nowrap', item.ata_min <= 45 ? 'text-emerald-400' : 'text-amber-400')}>{item.ata_min}m ATA</span>
+      )}
+      <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+        item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
+        item.status === 'Dispatched' ? 'bg-blue-950/50 text-blue-400' :
+        item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
+        item.status === 'En Route' ? 'bg-amber-950/50 text-amber-400' :
+        item.status === 'On Location' ? 'bg-cyan-950/50 text-cyan-400' :
+        'bg-slate-800 text-slate-400'
+      )}>{item.status || '—'}</span>
+      {item.dispatch_method && (
+        <span className={clsx('text-[8px] px-1 py-0.5 rounded',
+          item.dispatch_method === 'Field Services' ? 'bg-blue-950/40 text-blue-400' : 'bg-fuchsia-950/40 text-fuchsia-400'
+        )}>{item.dispatch_method === 'Field Services' ? 'Fleet' : 'TB'}</span>
+      )}
+      {item.from_territory && item.to_territory && (
+        <span className="w-full text-[9px] text-red-400/70 pl-16 truncate" title={`${item.from_territory} → ${item.to_territory}`}>
+          {item.from_territory} → {item.to_territory}
+        </span>
+      )}
+      {reason && (
+        <span className="w-full text-[9px] text-amber-500/70 pl-16 truncate" title={reason}>Reason: {reason}</span>
+      )}
+    </div>
+  )
+}
+
+// ── Bounce Detail Row (SA + driver chain) ────────────────────────────────────
+function BounceDetailRow({ item }) {
+  const chain = item.bounce_chain || []
+  const isTowbook = item.dispatch_method === 'Towbook'
+  const offDriver = item.off_platform_driver
+  return (
+    <div className="bg-slate-900/40 rounded px-2.5 py-2 space-y-1">
+      {/* SA header row */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+        <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+        {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
+        <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
+        <span className="text-red-400 font-semibold whitespace-nowrap">{item.minutes_lost}m lost</span>
+        <span className="text-red-400/70 text-[9px]">{item.bounce_count} bounce{item.bounce_count !== 1 ? 's' : ''}</span>
+        <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+          item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
+          item.status === 'Dispatched' ? 'bg-blue-950/50 text-blue-400' :
+          item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
+          item.status === 'En Route' ? 'bg-amber-950/50 text-amber-400' :
+          item.status === 'On Location' ? 'bg-cyan-950/50 text-cyan-400' :
+          'bg-slate-800 text-slate-400'
+        )}>{item.status || '—'}</span>
+        <span className={clsx('text-[8px] px-1 py-0.5 rounded',
+          isTowbook ? 'bg-fuchsia-950/40 text-fuchsia-400' : 'bg-blue-950/40 text-blue-400'
+        )}>{isTowbook ? 'TB' : 'FSL'}</span>
+        {offDriver && (
+          <span className="text-slate-400 text-[9px]">Driver: {offDriver}</span>
+        )}
+      </div>
+      {/* Assignment chain — garage/driver, how long they sat on it */}
+      {chain.length > 0 && (
+        <div className="flex flex-col gap-0.5 pl-16 text-[9px]">
+          {chain.map((c, i) => {
+            const isLast = i === chain.length - 1
+            const waited = c.gap_min != null ? c.gap_min : null
+            return (
+              <div key={i} className="flex items-center gap-2">
+                <span className={clsx('w-3 text-center', isLast ? 'text-emerald-400' : waited != null ? 'text-red-400' : 'text-slate-600')}>
+                  {isLast ? '✓' : waited != null ? '✗' : '→'}
+                </span>
+                <span className={clsx(
+                  'px-1.5 py-0.5 rounded font-medium',
+                  isLast ? 'bg-emerald-950/40 text-emerald-400' :
+                  waited != null ? 'bg-red-950/30 text-red-300' :
+                  'bg-slate-800/40 text-slate-400'
+                )}>{c.driver}</span>
+                {waited != null && !isLast && (
+                  <span className="text-red-400/80">{waited}m no response</span>
+                )}
+                {isLast && (
+                  <span className="text-emerald-400/70">accepted</span>
+                )}
+                {c.assigned_at && (
+                  <span className="text-slate-600 ml-auto">{c.assigned_at}</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Closest Driver Detail Row (SA + ranked drivers) ─────────────────────────
+function ClosestDriverDetailRow({ item, onViewOnMap }) {
+  const candidates = item.candidates || []
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? candidates : candidates.slice(0, 3)
+  const hasMore = candidates.length > 3
+
+  return (
+    <div className={clsx('rounded px-2.5 py-2 space-y-1 border-l-2',
+      item.is_closest
+        ? 'bg-blue-950/20 border-l-blue-500'
+        : 'bg-orange-950/20 border-l-orange-500'
+    )}>
+      {/* SA header row */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+        <span className="text-slate-400 font-mono">{item.number || '—'}</span>
+        {item.created_time && <span className="text-slate-600">{item.created_time}</span>}
+        <span className="text-slate-400 truncate">{item.work_type || '—'}</span>
+        <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+          item.is_auto ? 'bg-indigo-950/40 text-indigo-400' : 'bg-amber-950/40 text-amber-500'
+        )}>{item.is_auto ? 'System' : item.dispatcher}</span>
+        {item.is_closest ? (
+          <span className="text-blue-400 font-semibold"><CheckCircle2 className="w-3 h-3 inline mr-0.5" />closest</span>
+        ) : (
+          <span className="text-orange-400 font-semibold">+{item.extra_miles} mi extra</span>
+        )}
+        {onViewOnMap && (
+          <button onClick={(e) => { e.stopPropagation(); onViewOnMap(item.number) }}
+            className="ml-auto flex items-center gap-1 text-cyan-500 hover:text-cyan-400 transition-colors bg-cyan-950/30 hover:bg-cyan-950/50 px-1.5 py-0.5 rounded"
+            title="View SA + drivers on map">
+            <MapPin className="w-3 h-3" /><span className="text-[9px]">map</span>
+          </button>
+        )}
+      </div>
+
+      {/* Driver list — ranked by distance */}
+      <div className="ml-4 space-y-0.5">
+        {shown.map((d, i) => (
+          <div key={i} className={clsx('flex items-center gap-2 text-[10px] rounded px-2 py-0.5',
+            d.picked ? 'bg-slate-800/60 border border-slate-700/40' : ''
+          )}>
+            <span className={clsx('w-4 text-center font-bold text-[9px]',
+              i === 0 ? 'text-blue-400' : 'text-slate-600'
+            )}>#{i + 1}</span>
+            <span className={clsx('flex-1 truncate',
+              d.picked ? 'text-white font-semibold' : 'text-slate-400'
+            )}>{d.name}{d.picked && ' ← dispatched'}</span>
+            <span className={clsx('font-mono whitespace-nowrap',
+              d.picked && i === 0 ? 'text-blue-400' :
+              d.picked && i > 0 ? 'text-orange-400' :
+              i === 0 ? 'text-blue-400/60' : 'text-slate-500'
+            )}>{d.distance_mi} mi</span>
+          </div>
+        ))}
+        {hasMore && !expanded && (
+          <button onClick={() => setExpanded(true)}
+            className="text-[9px] text-slate-600 hover:text-slate-400 pl-6">
+            +{candidates.length - 3} more drivers...
+          </button>
+        )}
+        {expanded && hasMore && (
+          <button onClick={() => setExpanded(false)}
+            className="text-[9px] text-slate-600 hover:text-slate-400 pl-6">
+            show less
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── System vs Manual Dispatch KPI ────────────────────────────────────────────
+function DispatchSplitCard({ data }) {
+  const { no_human_count, no_human_pct, human_count, total } = data
+  const [drillData, setDrillData] = useState(null)
+  const [drillLoading, setDrillLoading] = useState(false)
+  const [drillError, setDrillError] = useState(null)
+  const [drillTab, setDrillTab] = useState(null) // null | 'manual' | 'auto'
+
+  const openDrill = (tab) => {
+    if (drillTab === tab) { setDrillTab(null); return }
+    setDrillTab(tab)
+    if (!drillData && !drillLoading) {
+      setDrillLoading(true)
+      fetchHumanIntervention()
+        .then(setDrillData)
+        .catch(e => setDrillError(e.message || 'Failed'))
+        .finally(() => setDrillLoading(false))
+    }
+  }
+
+  const drillList = drillData ? (drillTab === 'manual' ? drillData.human : drillData.auto) : []
+
+  return (
+    <div className="glass rounded-xl border border-slate-700/30 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Zap className="w-4 h-4 text-emerald-400" />
+        <span className="text-xs font-bold text-white uppercase tracking-wide">System vs Manual Dispatch</span>
+        <InfoTip text={"Auto Dispatch % across ALL ERS calls today.\n\nAuto Dispatch = the SA went through its entire lifecycle without a human dispatcher (Membership User) making any status change in ServiceAppointmentHistory. This applies to both FSL Platform calls (fleet + on-platform contractors) and Towbook (off-platform garages).\n\nManual Dispatch = a dispatcher touched the SA at any point — initial manual assignment, reassignment after rejection/decline, etc.\n\nBreakdown:\n• FSL auto/manual = calls on the FSL platform (fleet trucks + on-platform contractor drivers)\n• Towbook auto/manual = calls sent to off-platform garages via Towbook\n\nHistorical avg: ~60% auto / ~40% manual (Jan–Mar 2026)."} />
+        <span className="text-[10px] text-slate-500 ml-auto">{total} calls</span>
+      </div>
+
+      {/* Primary: Auto vs Manual donut */}
+      <div className="flex items-center gap-4">
+        <MiniDonut pct={no_human_pct} size={72} stroke={7} autoColor="#10b981" manualColor="#334155" />
+        <div className="flex-1 space-y-1.5">
+          <div className={clsx('flex items-center gap-2 rounded px-0.5 -mx-0.5 cursor-pointer hover:bg-slate-800/40',
+            drillTab === 'auto' && 'bg-slate-800/40')} onClick={() => openDrill('auto')}>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span className="text-xs text-slate-300 flex-1">Auto Dispatch</span>
+            <span className="text-sm font-bold text-white w-10 text-right">{no_human_count}</span>
+            {drillTab === 'auto' ? <ChevronUp className="w-3 h-3 text-blue-400" /> : <Eye className="w-3 h-3 text-slate-600" />}
+          </div>
+          <div className={clsx('flex items-center gap-2 rounded px-0.5 -mx-0.5 cursor-pointer hover:bg-slate-800/40',
+            drillTab === 'manual' && 'bg-slate-800/40')} onClick={() => openDrill('manual')}>
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+            <span className="text-xs text-slate-300 flex-1">Manual Dispatch</span>
+            <span className="text-sm font-bold text-white w-10 text-right">{human_count}</span>
+            {drillTab === 'manual' ? <ChevronUp className="w-3 h-3 text-blue-400" /> : <Eye className="w-3 h-3 text-slate-600" />}
+          </div>
+        </div>
+      </div>
+
+      {total === 0 && <div className="text-xs text-slate-600 text-center mt-3">No dispatches yet today</div>}
+
+      {/* Drill-down panel */}
+      {drillTab && (
+        <div className="mt-3 pt-3 border-t border-slate-700/30 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 mb-2">
+            <span className={clsx('text-[10px] font-semibold',
+              drillTab === 'manual' ? 'text-amber-400' : 'text-emerald-400')}>
+              {drillTab === 'manual' ? `Manual Dispatch (${drillData?.human_count ?? human_count})` : `Auto Dispatch (${drillData?.auto_count ?? no_human_count})`}
+            </span>
+            <button onClick={() => setDrillTab(null)} className="ml-auto text-slate-600 hover:text-slate-400">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="max-h-[350px] overflow-y-auto space-y-0.5 rounded-lg border border-slate-800/40 bg-slate-950/30 p-2">
+            {drillLoading && <div className="flex items-center gap-2 text-xs text-slate-500 py-4 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>}
+            {drillError && <div className="text-xs text-red-400 py-2 text-center">{drillError}</div>}
+            {!drillLoading && drillList.length === 0 && <div className="text-xs text-slate-600 py-3 text-center">No calls</div>}
+            {drillList.map((item, i) => (
+              <div key={i}>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
+                  <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+                  {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
+                  <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
+                  <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
+                  {item.dispatcher && <span className="text-amber-400 text-[9px] truncate max-w-[100px]" title={item.dispatcher}>{item.dispatcher}</span>}
+                  {item.ata_min != null && (
+                    <span className={clsx('font-semibold whitespace-nowrap', item.ata_min <= 45 ? 'text-emerald-400' : 'text-amber-400')}>{item.ata_min}m ATA</span>
+                  )}
+                  <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+                    item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
+                    item.status === 'Dispatched' ? 'bg-blue-950/50 text-blue-400' :
+                    item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
+                    item.status === 'En Route' ? 'bg-amber-950/50 text-amber-400' :
+                    'bg-slate-800 text-slate-400'
+                  )}>{item.status || '—'}</span>
+                  <span className={clsx('text-[8px] px-1 py-0.5 rounded',
+                    item.dispatch_method === 'Field Services' ? 'bg-blue-950/40 text-blue-400' : 'bg-fuchsia-950/40 text-fuchsia-400'
+                  )}>{item.dispatch_method === 'Field Services' ? 'FSL' : 'TB'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Today's Calls: click a status tile to expand full-width detail below ─────
+function TodayCalls({ ts, sp }) {
+  const [selectedStatus, setSelectedStatus] = useState(null)
+  const [detailData, setDetailData] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState(null)
+
+  const handleClick = (statusKey) => {
+    if (selectedStatus === statusKey) {
+      setSelectedStatus(null)
+      return
+    }
+    setSelectedStatus(statusKey)
+    setDetailData(null)
+    setDetailLoading(true)
+    setDetailError(null)
+    fetchStatusDetail(statusKey).then(d => setDetailData(d.calls))
+      .catch(e => setDetailError(e.message || 'Failed'))
+      .finally(() => setDetailLoading(false))
+  }
+
+  const pipeline = [
+    { label: 'Dispatched', val: ts.Dispatched, color: 'text-blue-400', bg: 'bg-blue-500/20', ring: 'ring-blue-500/40' },
+    { label: 'Accepted', val: ts.Accepted, color: 'text-sky-400', bg: 'bg-sky-500/20', ring: 'ring-sky-500/40' },
+    { label: 'Assigned', val: ts.Assigned, color: 'text-violet-400', bg: 'bg-violet-500/20', ring: 'ring-violet-500/40' },
+    { label: 'En Route', val: ts['En Route'], color: 'text-amber-400', bg: 'bg-amber-500/20', ring: 'ring-amber-500/40' },
+    { label: 'On Location', val: ts['On Location'], color: 'text-cyan-400', bg: 'bg-cyan-500/20', ring: 'ring-cyan-500/40' },
+  ]
+  const outcomes = [
+    { label: 'Completed', val: ts.Completed, color: 'text-emerald-400', bg: 'bg-emerald-500/20', ring: 'ring-emerald-500/40', status: 'Completed' },
+    { label: 'Canceled', val: ts.Canceled, color: 'text-slate-500', bg: 'bg-slate-500/20', ring: 'ring-slate-500/40', status: 'Canceled' },
+    { label: 'No-Show', val: ts['No-Show'], color: 'text-orange-400', bg: 'bg-orange-500/20', ring: 'ring-orange-500/40', status: 'No-Show' },
+    { label: 'Unable', val: ts['Unable to Complete'], color: 'text-red-400', bg: 'bg-red-500/20', ring: 'ring-red-500/40', status: 'Unable to Complete' },
+  ]
+
+  const StatusTile = ({ s, statusKey }) => {
+    const active = selectedStatus === statusKey
+    return (
+      <button onClick={() => s.val > 0 && handleClick(statusKey)}
+        className={clsx('text-center rounded-lg py-1.5 transition-all',
+          s.val > 0 ? 'cursor-pointer hover:ring-1' : 'cursor-default',
+          active ? `${s.bg} ring-1 ${s.ring}` : 'bg-slate-800/30',
+        )}>
+        <div className={clsx('text-sm font-bold', s.color)}>{s.val}</div>
+        <div className="text-[8px] text-slate-500 leading-tight">{s.label}</div>
+      </button>
+    )
+  }
+
+  return (<>
+    <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1">Active Pipeline</div>
+    <div className="grid grid-cols-5 gap-1.5 mb-1">
+      {pipeline.map(s => <StatusTile key={s.label} s={s} statusKey={s.label} />)}
+    </div>
+    <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1 mt-2">Outcomes</div>
+    <div className="grid grid-cols-4 gap-1.5">
+      {outcomes.map(s => <StatusTile key={s.label} s={s} statusKey={s.status} />)}
+    </div>
+    {/* Full-width detail panel below the grids */}
+    {selectedStatus && (
+      <div className="mt-2 space-y-0.5 animate-in fade-in duration-200 max-h-[350px] overflow-y-auto rounded-lg border border-slate-800/40 bg-slate-950/30 p-2">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[10px] text-slate-400 font-medium">{selectedStatus}</span>
+          <button onClick={() => setSelectedStatus(null)} className="text-slate-600 hover:text-slate-400 text-[10px]">Close</button>
+        </div>
+        {detailLoading && <div className="flex items-center gap-2 text-xs text-slate-500 py-4 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>}
+        {detailError && <div className="text-xs text-red-400 py-2 text-center">{detailError}</div>}
+        {detailData && detailData.length === 0 && !detailLoading && <div className="text-xs text-slate-600 py-3 text-center">No calls</div>}
+        {detailData && detailData.map((item, i) => <SADetailRow key={i} item={item} />)}
+      </div>
+    )}
+    {/* Fleet vs Contractor */}
+    {sp && sp.total_completed > 0 && (
+      <div className="mt-3 pt-3 border-t border-slate-800/60">
+        <div className="flex justify-between text-[10px] mb-1">
+          <span className="text-blue-400 font-medium">Fleet {sp.fleet_pct}%</span>
+          <span className="text-slate-600">{sp.total_completed} completed</span>
+          <span className="text-fuchsia-400 font-medium">Contractor {sp.contractor_pct}%</span>
+        </div>
+        <div className="h-3 rounded-full bg-slate-800 overflow-hidden flex">
+          <div className="bg-blue-500" style={{ width: `${sp.fleet_pct}%` }} />
+          <div className="bg-fuchsia-600" style={{ width: `${sp.contractor_pct}%` }} />
+        </div>
+      </div>
+    )}
+  </>)
+}
+
+// ── GPS driver row for GPS drill-down ────────────────────────────────────────
+function GpsDriverRow({ item }) {
+  const bucketColor = {
+    fresh: 'bg-emerald-950/50 text-emerald-400',
+    recent: 'bg-emerald-950/40 text-emerald-600',
+    stale: 'bg-amber-950/50 text-amber-400',
+    no_gps: 'bg-red-950/50 text-red-400',
+  }
+  const ageLabel = item.age_min != null
+    ? item.age_min < 60 ? `${item.age_min}m ago` : `${Math.round(item.age_min / 60)}h ago`
+    : 'Never'
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
+      <span className="text-slate-300 w-32 truncate font-medium">{item.name}</span>
+      {item.tech_id && <span className="text-slate-600 font-mono w-12">{item.tech_id}</span>}
+      <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase', bucketColor[item.gps_bucket] || 'bg-slate-800 text-slate-400')}>
+        {item.gps_bucket === 'no_gps' ? 'No GPS' : item.gps_bucket}
+      </span>
+      <span className={clsx('font-semibold',
+        item.gps_bucket === 'fresh' ? 'text-emerald-400' :
+        item.gps_bucket === 'recent' ? 'text-emerald-600' :
+        item.gps_bucket === 'stale' ? 'text-amber-400' : 'text-red-400'
+      )}>{ageLabel}</span>
+      {item.last_update && <span className="text-slate-600">{item.last_update}</span>}
+      {item.truck && <span className="w-full text-[9px] text-slate-600 truncate" title={item.truck}>{item.truck}</span>}
+    </div>
+  )
+}
+
+function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
+  const [insightsTab, setInsightsTab] = useState('today') // today | trends
+  const { auto_count, manual_count, towbook_count, auto_pct, no_human_count, no_human_pct, human_count, towbook_auto_count, towbook_human_count, auto_avg_response, manual_avg_response, auto_avg_speed, manual_avg_speed, auto_sla, manual_sla, auto_closest_pct, auto_closest_eval, auto_extra_miles, auto_wrong, manual_closest_pct, manual_closest_eval, manual_extra_miles, manual_wrong, towbook_closest_pct, towbook_closest_eval, towbook_extra_miles, towbook_wrong, total_extra_miles, dispatchers, total, fleet_total } = data
   const fg = ccData?.fleet_gps
   const ts = ccData?.today_status
   const sp = ccData?.today_split
@@ -1173,92 +1626,77 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
       && !/SPOT/i.test(t.name)
     )
     .sort((a, b) => {
-      // Prioritize by impact: open calls × max wait time
       const scoreA = (a.open || 0) * Math.max(a.max_wait || 1, 1)
       const scoreB = (b.open || 0) * Math.max(b.max_wait || 1, 1)
       return scoreB - scoreA
     })
 
   return (
-    <div className="w-full h-full bg-slate-950 overflow-y-auto pt-6 pb-6 px-6">
-      <div className="max-w-5xl mx-auto space-y-6">
+    <div className="w-full h-full bg-slate-950 overflow-y-auto pt-2 pb-6 px-6">
+      {/* ── Tab Bar ── */}
+      <div className="max-w-5xl mx-auto flex items-center gap-1 mb-4">
+        {[['today', 'Today'], ['trends', 'Trends (30d)']].map(([key, label]) => (
+          <button key={key} onClick={() => setInsightsTab(key)}
+            className={clsx('px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
+              insightsTab === key
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'
+            )}>{label}</button>
+        ))}
+      </div>
+
+      {insightsTab === 'trends' && <TrendsView />}
+
+      {insightsTab === 'today' && <div className="max-w-5xl mx-auto space-y-6">
 
         {/* ── Row 1: Dispatch Split + Closest Driver + Stats ── */}
         <div className="grid grid-cols-3 gap-4">
-          {/* Dispatch Split */}
-          <div className="glass rounded-xl border border-slate-700/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-indigo-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Dispatch Split</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Top-right number (e.g. '175 fleet') = total completed fleet calls today.\n• Donut chart % = share handled by the auto-scheduler.\n• Blue dot / 'System' number = calls the FSL Enhanced Scheduler auto-assigned (no human involved).\n• Orange dot / 'Dispatcher' number = calls a human dispatcher manually assigned.\n• Pink dot / 'Contractor' number (below the line) = Towbook contractor calls, dispatched outside FSL.\n\nSystem + Dispatcher = total fleet calls. Contractor is separate.\n\nWHAT IT MEANS:\nSystem = the scheduler picked the driver automatically.\nDispatcher = a person chose who to send.\n\nHOW IT'S CALCULATED:\nWe check who created the 'Assigned' status in ServiceAppointmentHistory. System accounts (Automated Process, Data Loader, FSL Enhanced) = System. Human names = Dispatcher.\n\nGOAL: Higher System % = the auto-scheduler is handling more fleet work without human intervention."} />
-              <span className="text-[10px] text-slate-500 ml-auto">{fleet_total || total} fleet</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <MiniDonut pct={auto_pct} size={72} stroke={7} />
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
-                  <span className="text-xs text-slate-300 flex-1">System</span>
-                  <span className="text-sm font-bold text-white">{auto_count}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                  <span className="text-xs text-slate-300 flex-1">Dispatcher</span>
-                  <span className="text-sm font-bold text-white">{manual_count}</span>
-                </div>
-                {towbook_count > 0 && (
-                  <>
-                    <div className="border-t border-slate-700/30 my-1" />
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-500" />
-                      <span className="text-xs text-slate-400 flex-1">Contractor (Towbook)</span>
-                      <span className="text-sm font-bold text-slate-400">{towbook_count}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-            {total === 0 && <div className="text-xs text-slate-600 text-center mt-3">No fleet dispatches yet today</div>}
-          </div>
+          {/* No Human Intervention — primary metric */}
+          <DispatchSplitCard data={data} />
 
           {/* Closest Driver */}
           <div className="glass rounded-xl border border-slate-700/30 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Navigation className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-bold text-white uppercase tracking-wide">Closest Driver Dispatched</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest available driver was sent.\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = how many calls had enough GPS data to evaluate (not all calls can be measured).\n\nFleet calls only — contractors don't have GPS in Salesforce.\n\nHOW IT'S CALCULATED:\nFor each completed fleet call, we compare the assigned driver's GPS distance to the member vs all other available drivers in that territory. Closest match = hit.\n\nGOAL: 100% = always sent the nearest driver. Lower % = wasted miles, longer wait for members."} />
+              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest available driver was sent.\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = how many calls had enough GPS data to evaluate (not all calls can be measured).\n\nClick the eye icon to drill down into each SA:\n• Blue left border = closest driver was dispatched\n• Orange left border = a closer driver was available\n• Click 'map' to see the SA + all drivers on the map\n\nFleet calls only — contractors don't have GPS in Salesforce.\n\nHOW IT'S CALCULATED:\nFor each completed fleet call, we compare the assigned driver's GPS distance to the member vs all other available drivers in that territory. Closest match = hit.\n\nGOAL: 100% = always sent the nearest driver. Lower % = wasted miles, longer wait for members."} />
             </div>
-            <div className="flex items-center justify-around">
-              {auto_closest_pct != null && (
-                <div className="text-center">
-                  <MiniDonut pct={auto_closest_pct} size={56} stroke={6} autoColor="#22c55e" manualColor="#1e293b" />
-                  <div className="text-[10px] text-indigo-400 mt-1">System</div>
-                  <div className="text-[9px] text-slate-600">{auto_closest_eval} eval</div>
-                </div>
-              )}
-              {manual_closest_pct != null && (
-                <div className="text-center">
-                  <MiniDonut pct={manual_closest_pct} size={56} stroke={6} autoColor="#f59e0b" manualColor="#1e293b" />
-                  <div className="text-[10px] text-amber-500 mt-1">Dispatcher</div>
-                  <div className="text-[9px] text-slate-600">{manual_closest_eval} eval</div>
-                </div>
-              )}
-              {auto_closest_pct == null && manual_closest_pct == null && (
-                <div className="text-xs text-slate-600 text-center py-4">No fleet GPS data available yet</div>
-              )}
-            </div>
-            {total_extra_miles != null && total_extra_miles > 0 && (
-              <div className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-3 py-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-red-400 font-medium">Extra Miles (wrong picks)<InfoTip text={"WHAT: Wasted mileage from wrong driver picks.\n\nWhen a farther driver is sent instead of the closest one, the difference in miles is the 'extra miles'. This adds up across all wrong picks.\n\nHOW: For each call where the closest driver wasn't sent, we calculate: (assigned driver distance) - (closest driver distance) = extra miles.\n\nGOAL: Zero extra miles means perfect dispatch. High numbers mean significant fuel, time, and member wait time wasted."} /></span>
-                  <span className="text-sm font-bold text-red-300">+{total_extra_miles} mi</span>
-                </div>
-                <div className="flex gap-3 mt-1 text-[9px] text-slate-500">
-                  {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
-                  {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
-                </div>
+            <DrillDown
+              fetchFn={() => fetchClosestDriverDetail().then(d => d.calls)}
+              renderRow={(item) => <ClosestDriverDetailRow item={item} onViewOnMap={onViewOnMap} />}
+              emptyMsg="No fleet calls with GPS data to evaluate">
+              <div className="flex items-center justify-around">
+                {auto_closest_pct != null && (
+                  <div className="text-center">
+                    <MiniDonut pct={auto_closest_pct} size={56} stroke={6} autoColor="#22c55e" manualColor="#1e293b" />
+                    <div className="text-[10px] text-indigo-400 mt-1">System</div>
+                    <div className="text-[9px] text-slate-600">{auto_closest_eval} eval</div>
+                  </div>
+                )}
+                {manual_closest_pct != null && (
+                  <div className="text-center">
+                    <MiniDonut pct={manual_closest_pct} size={56} stroke={6} autoColor="#f59e0b" manualColor="#1e293b" />
+                    <div className="text-[10px] text-amber-500 mt-1">Dispatcher</div>
+                    <div className="text-[9px] text-slate-600">{manual_closest_eval} eval</div>
+                  </div>
+                )}
+                {auto_closest_pct == null && manual_closest_pct == null && (
+                  <div className="text-xs text-slate-600 text-center py-4">No fleet GPS data available yet</div>
+                )}
               </div>
-            )}
+              {total_extra_miles != null && total_extra_miles > 0 && (
+                <div className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-red-400 font-medium">Extra Miles (wrong picks)<InfoTip text={"WHAT: Wasted mileage from wrong driver picks.\n\nWhen a farther driver is sent instead of the closest one, the difference in miles is the 'extra miles'. This adds up across all wrong picks.\n\nHOW: For each call where the closest driver wasn't sent, we calculate: (assigned driver distance) - (closest driver distance) = extra miles.\n\nGOAL: Zero extra miles means perfect dispatch. High numbers mean significant fuel, time, and member wait time wasted."} /></span>
+                    <span className="text-sm font-bold text-red-300">+{total_extra_miles} mi</span>
+                  </div>
+                  <div className="flex gap-3 mt-1 text-[9px] text-slate-500">
+                    {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
+                    {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
+                  </div>
+                </div>
+              )}
+            </DrillDown>
           </div>
 
           {/* Performance Stats */}
@@ -1301,14 +1739,14 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
           </div>
         </div>
 
-        {/* ── Row 2: Fleet GPS + Today's Calls + Fleet vs Contractor ── */}
+        {/* ── Row 2: On-Shift Driver GPS + Today's Calls + Fleet vs Contractor ── */}
         <div className="grid grid-cols-3 gap-4">
-          {/* Fleet GPS Health */}
+          {/* On-Shift Driver GPS Health */}
           <div className="glass rounded-xl border border-slate-700/30 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Truck className="w-4 h-4 text-blue-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet Drivers</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Drivers: Total active fleet drivers in Salesforce (excludes test accounts, SPOT placeholders, office staff).\n• GPS Tracking: % of fleet drivers the scheduler can currently locate (GPS updated within 4 hours).\n• On GPS: Drivers whose GPS is reporting right now (fresh + recent).\n\nBAR BREAKDOWN:\n• Green (fresh): GPS updated < 1 hour ago — trackable, likely on shift.\n• Dark green (recent): 1-4 hours — recently active, still trackable.\n• Amber (stale): GPS > 4 hours old — has GPS hardware but not reporting now.\n• Red (no GPS): Never reported GPS — may not have the FSL app installed.\n\nWHY IT MATTERS:\nThe scheduler needs live GPS to calculate travel times and pick the closest driver. Drivers without GPS get assigned based on territory only, which leads to longer ETAs and wasted miles.\n\nGOAL: During business hours, GPS Tracking should be 40%+. If most drivers show stale or no GPS, the scheduler is dispatching blind."} />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">On-Shift Drivers</span>
+              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Drivers: Fleet + On-Platform Contractor drivers currently logged into a truck (on shift).\n• GPS Tracking: % of on-shift drivers the scheduler can currently locate (GPS updated within 4 hours).\n• On GPS: Drivers whose GPS is reporting right now (fresh + recent).\n\nBAR BREAKDOWN:\n• Green (fresh): GPS updated < 1 hour ago — trackable, likely active.\n• Dark green (recent): 1-4 hours — recently active, still trackable.\n• Amber (stale): GPS > 4 hours old — logged in but not reporting.\n• Red (no GPS): Logged into truck but no GPS ever reported.\n\nWHO IS INCLUDED:\nFleet drivers (AAA employees) and On-Platform Contractors (external drivers using the FSL app). Off-Platform/Towbook drivers are excluded — they don't use the FSL app.\n\nWHY IT MATTERS:\nThe scheduler needs live GPS to calculate travel times and pick the closest driver. Drivers without GPS get assigned based on territory only, which leads to longer ETAs and wasted miles.\n\nGOAL: During business hours, GPS Tracking should be 40%+. If most drivers show stale or no GPS, the scheduler is dispatching blind."} />
             </div>
             {fg && fg.total > 0 ? (<>
               <div className="flex items-center gap-4 mb-3">
@@ -1333,14 +1771,19 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
                 {fg.stale > 0 && <div className="bg-amber-600" style={{ width: `${100*fg.stale/fg.total}%` }} title={`Stale: ${fg.stale}`} />}
                 {fg.no_gps > 0 && <div className="bg-red-800" style={{ width: `${100*fg.no_gps/fg.total}%` }} title={`No GPS: ${fg.no_gps}`} />}
               </div>
-              <div className="flex justify-between text-[9px] text-slate-500 mt-1">
-                <span className="text-emerald-500">{fg.fresh} fresh</span>
-                <span className="text-emerald-700">{fg.recent} recent</span>
-                <span className="text-amber-600">{fg.stale} stale</span>
-                {fg.no_gps > 0 && <span className="text-red-700">{fg.no_gps} no GPS</span>}
-              </div>
+              <DrillDown
+                fetchFn={() => fetchGpsDetail('all').then(d => d.drivers)}
+                renderRow={(item, j) => <GpsDriverRow key={j} item={item} />}
+                emptyMsg="No on-shift drivers found">
+                <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+                  <span className="text-emerald-500">{fg.fresh} fresh</span>
+                  <span className="text-emerald-700">{fg.recent} recent</span>
+                  <span className="text-amber-600">{fg.stale} stale</span>
+                  {fg.no_gps > 0 && <span className="text-red-700">{fg.no_gps} no GPS</span>}
+                </div>
+              </DrillDown>
             </>) : (
-              <div className="text-xs text-slate-600 text-center py-6">No fleet driver data available</div>
+              <div className="text-xs text-slate-600 text-center py-6">No on-shift driver data available</div>
             )}
           </div>
 
@@ -1352,53 +1795,7 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
               <span className="text-sm font-bold text-white ml-auto">{ts?.total || 0}</span>
               <InfoTip text={"WHAT: All roadside calls created today broken into pipeline stages and outcomes.\n\nPIPELINE (active calls):\n• Dispatched — Call entered, waiting for driver assignment\n• Accepted — Driver accepted, preparing to leave\n• Assigned — Driver assigned, not yet en route\n• En Route — Driver traveling to member\n• On Location — Driver arrived, working on site\n\nOUTCOMES (finished calls):\n• Completed — Service finished successfully\n• Canceled — Call canceled by member or dispatcher\n• No-Show — Driver arrived but member not present\n• Unable — Driver couldn't complete the service\n\nTow Drop-Offs excluded (second leg of a tow, not a new call)."} />
             </div>
-            {ts ? (<>
-              {/* Active pipeline */}
-              <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1">Active Pipeline</div>
-              <div className="grid grid-cols-5 gap-1.5 mb-2">
-                {[
-                  { label: 'Dispatched', val: ts.Dispatched, color: 'text-blue-400' },
-                  { label: 'Accepted', val: ts.Accepted, color: 'text-sky-400' },
-                  { label: 'Assigned', val: ts.Assigned, color: 'text-violet-400' },
-                  { label: 'En Route', val: ts['En Route'], color: 'text-amber-400' },
-                  { label: 'On Location', val: ts['On Location'], color: 'text-cyan-400' },
-                ].map(s => (
-                  <div key={s.label} className="text-center bg-slate-800/30 rounded-lg py-1.5">
-                    <div className={clsx('text-sm font-bold', s.color)}>{s.val || 0}</div>
-                    <div className="text-[8px] text-slate-500 leading-tight">{s.label}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Outcomes */}
-              <div className="text-[9px] text-slate-600 uppercase tracking-wider font-bold mb-1">Outcomes</div>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { label: 'Completed', val: ts.Completed, color: 'text-emerald-400' },
-                  { label: 'Canceled', val: ts.Canceled, color: 'text-slate-500' },
-                  { label: 'No-Show', val: ts['No-Show'], color: 'text-orange-400' },
-                  { label: 'Unable', val: ts['Unable to Complete'], color: 'text-red-400' },
-                ].map(s => (
-                  <div key={s.label} className="text-center bg-slate-800/30 rounded-lg py-1.5">
-                    <div className={clsx('text-sm font-bold', s.color)}>{s.val || 0}</div>
-                    <div className="text-[8px] text-slate-500 leading-tight">{s.label}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Fleet vs Contractor */}
-              {sp && sp.total_completed > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-800/60">
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-blue-400 font-medium">Fleet {sp.fleet_pct}%</span>
-                    <span className="text-slate-600">{sp.total_completed} completed</span>
-                    <span className="text-fuchsia-400 font-medium">Contractor {sp.contractor_pct}%</span>
-                  </div>
-                  <div className="h-3 rounded-full bg-slate-800 overflow-hidden flex">
-                    <div className="bg-blue-500" style={{ width: `${sp.fleet_pct}%` }} />
-                    <div className="bg-fuchsia-600" style={{ width: `${sp.contractor_pct}%` }} />
-                  </div>
-                </div>
-              )}
-            </>) : (
+            {ts ? (<TodayCalls ts={ts} sp={sp} />) : (
               <div className="text-xs text-slate-600 text-center py-6">No call data yet</div>
             )}
           </div>
@@ -1415,10 +1812,15 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
                 <div className="mb-3">
                   <div className="text-[9px] text-emerald-500/70 uppercase tracking-wider mb-1">Fastest</div>
                   {lb.top.map((d, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs py-0.5">
-                      <span className="text-slate-300 truncate mr-2">{d.name}</span>
-                      <span className="text-emerald-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
-                    </div>
+                    <DrillDown key={i}
+                      fetchFn={() => fetchDriverDetail(d.name).then(r => r.calls)}
+                      renderRow={(item) => <SADetailRow item={item} />}
+                      emptyMsg="No calls found">
+                      <div className="flex items-center justify-between text-xs py-0.5">
+                        <span className="text-slate-300 truncate mr-2">{d.name}</span>
+                        <span className="text-emerald-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
+                      </div>
+                    </DrillDown>
                   ))}
                 </div>
               )}
@@ -1426,10 +1828,15 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
                 <div>
                   <div className="text-[9px] text-red-500/70 uppercase tracking-wider mb-1">Slowest</div>
                   {lb.bottom.map((d, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs py-0.5">
-                      <span className="text-slate-300 truncate mr-2">{d.name}</span>
-                      <span className="text-red-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
-                    </div>
+                    <DrillDown key={i}
+                      fetchFn={() => fetchDriverDetail(d.name).then(r => r.calls)}
+                      renderRow={(item) => <SADetailRow item={item} />}
+                      emptyMsg="No calls found">
+                      <div className="flex items-center justify-between text-xs py-0.5">
+                        <span className="text-slate-300 truncate mr-2">{d.name}</span>
+                        <span className="text-red-400 font-semibold whitespace-nowrap">{d.avg_ata}m <span className="text-slate-600 font-normal">({d.calls})</span></span>
+                      </div>
+                    </DrillDown>
                   ))}
                 </div>
               )}
@@ -1441,53 +1848,28 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
 
         {/* ── Row 3: Reassignment Cost ── */}
         <div className={clsx('glass rounded-xl p-4', ra && ra.total_bounces > 0 ? 'border border-red-800/30 bg-red-950/10' : 'border border-slate-700/30')}>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-3">
             <RefreshCw className="w-4 h-4 text-red-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wide">Reassignment Cost</span>
-            <InfoTip text={"WHAT: Time lost when a garage gets assigned a call but doesn't respond, forcing a reassignment.\n\nHOW: We track every time a Service Appointment goes from 'Assigned' back to 'Dispatched' in Salesforce history. Each bounce = the garage received the call but didn't accept it. We measure the exact time between assignment and bounce-back.\n\nThe 'Top Offenders' shows which garages are bouncing the most calls today and how much total time was wasted waiting for them.\n\nGOAL: Zero bounces. Every bounce adds ~10+ minutes of wait time for the member. Chronic offenders may need follow-up or removal from rotation."} />
-            {ra && (
-              <div className="ml-auto flex items-center gap-4">
-                <div className="text-center">
-                  <div className="text-xl font-bold text-red-400">{ra.total_bounces}</div>
-                  <div className="text-[9px] text-slate-500">Bounces</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-red-400">{ra.affected_calls}</div>
-                  <div className="text-[9px] text-slate-500">Calls Affected</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-red-300">{ra.minutes_lost >= 60 ? `${Math.floor(ra.minutes_lost/60)}h ${ra.minutes_lost%60}m` : `${ra.minutes_lost}m`}</div>
-                  <div className="text-[9px] text-slate-500">Total Time Lost</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-amber-400">{ra.avg_bounce_min}m</div>
-                  <div className="text-[9px] text-slate-500">Avg per Bounce</div>
-                </div>
-              </div>
-            )}
+            <span className="text-xs font-bold text-white uppercase tracking-wide">Time Lost to Reassignments</span>
+            <InfoTip text={"WHAT: Total time lost today because calls had to be reassigned — a driver or garage didn't respond within 10 minutes, so the system moved it to someone else.\n\nHOW: We track every driver/garage assignment change in Salesforce history. Each 10+ minute gap between assignments = wasted time for the member.\n\nClick to see all affected calls with the full assignment history."} />
           </div>
           {!ra && <div className="text-xs text-slate-600 text-center py-2">Loading...</div>}
           {ra && ra.total_bounces === 0 && (
             <div className="text-xs text-emerald-400/70 text-center py-2">No reassignment delays today</div>
           )}
-          {ra && ra.top_offenders?.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[9px] text-red-400/70 uppercase tracking-wider font-bold">Top Offenders — Sorted by Time Lost</div>
-                <div className="text-[9px] text-slate-600">Avg delay = time garage sat on call before bouncing</div>
+          {ra && ra.total_bounces > 0 && (
+            <DrillDown
+              fetchFn={() => fetchReassignmentDetail().then(d => d.bounces)}
+              renderRow={(item) => <BounceDetailRow item={item} />}
+              emptyMsg="No bounce details available">
+              <div className="flex items-center justify-between cursor-pointer hover:bg-slate-800/30 rounded-lg px-2 py-1 -mx-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-red-400">{ra.hours_lost}h</span>
+                  <span className="text-xs text-slate-500">lost to reassignments</span>
+                </div>
+                <div className="text-xs text-slate-500">{ra.affected_calls} calls · {ra.total_bounces} bounces</div>
               </div>
-              <div className="grid grid-cols-1 gap-1">
-                {ra.top_offenders.slice(0, 5).map((g, i) => (
-                  <div key={i} className="flex items-center gap-3 text-xs bg-slate-900/40 rounded-lg px-3 py-2">
-                    <span className="w-5 h-5 rounded-full bg-red-950/60 border border-red-800/40 flex items-center justify-center text-[10px] font-bold text-red-400">{i+1}</span>
-                    <span className="text-slate-300 flex-1 truncate">{g.name}</span>
-                    <span className="text-red-400 font-bold">{g.count} bounce{g.count !== 1 ? 's' : ''}</span>
-                    <span className="text-amber-400 font-medium">{g.avg_delay || Math.round(g.minutes / Math.max(g.count, 1))}m avg</span>
-                    <span className="text-red-300 font-bold">{g.minutes}m lost</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            </DrillDown>
           )}
         </div>
 
@@ -1501,12 +1883,31 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
               <InfoTip text={"WHAT: Which dispatchers are manually assigning the most fleet calls today.\n\nHOW: When a call's dispatch method is not 'Field Services' (auto-scheduler), it was manually assigned. We look at who last modified the assignment to identify the dispatcher.\n\nGOAL: High manual counts may indicate the auto-scheduler isn't covering enough, or that dispatchers are overriding system assignments."} />
             </div>
             {dispatchers && dispatchers.length > 0 ? (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {dispatchers.map((d, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/30 last:border-0">
-                    <span className="text-slate-300">{d.name}</span>
-                    <span className="text-white font-bold">{d.count}</span>
-                  </div>
+                  <DrillDown key={i}
+                    fetchFn={() => fetchDispatcherDetail(d.name).then(r => r.calls)}
+                    renderRow={(item) => (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
+                        <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+                        {item.dispatched_at && <span className="text-blue-400 w-16">{item.dispatched_at}</span>}
+                        <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
+                        <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
+                        {item.ata_min != null && <span className={clsx('font-semibold whitespace-nowrap', item.ata_min <= 45 ? 'text-emerald-400' : 'text-amber-400')}>{item.ata_min}m ATA</span>}
+                        <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+                          item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
+                          item.status === 'Dispatched' ? 'bg-blue-950/50 text-blue-400' :
+                          item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
+                          'bg-slate-800 text-slate-400'
+                        )}>{item.status || '—'}</span>
+                      </div>
+                    )}
+                    emptyMsg="No calls found">
+                    <div className="flex items-center justify-between text-xs py-1 border-b border-slate-800/30 last:border-0">
+                      <span className="text-slate-300">{d.name}</span>
+                      <span className="text-white font-bold">{d.count}</span>
+                    </div>
+                  </DrillDown>
                 ))}
               </div>
             ) : (
@@ -1524,17 +1925,21 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
             {overCap.length > 0 ? (
               <div className="space-y-1.5">
                 {overCap.slice(0, 8).map(t => (
-                  <div key={t.id} className="flex items-center gap-2 text-xs">
-                    <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
-                      t.capacity === 'over' ? 'bg-red-950/60 text-red-400' : 'bg-amber-950/50 text-amber-400'
-                    )}>{t.capacity === 'over' ? 'Over' : 'Busy'}</span>
-                    <span className="text-slate-300 truncate flex-1">{t.name}{t.is_contractor ? ' ⓒ' : ''}</span>
-                    <span className="text-slate-500 whitespace-nowrap">
-                      {t.is_contractor
-                        ? `${t.open} open${t.max_wait ? ` · ${t.max_wait}m wait` : ''}`
-                        : `${t.open} open / ${t.avail_drivers} drv`}
-                    </span>
-                  </div>
+                  <DrillDown key={t.id}
+                    fetchFn={() => fetchCapacityDetail(t.name).then(d => d.calls)}
+                    renderRow={(item, j) => <SADetailRow key={j} item={item} />}>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
+                        t.capacity === 'over' ? 'bg-red-950/60 text-red-400' : 'bg-amber-950/50 text-amber-400'
+                      )}>{t.capacity === 'over' ? 'Over' : 'Busy'}</span>
+                      <span className="text-slate-300 truncate flex-1">{t.name}{t.is_contractor ? ' ⓒ' : ''}</span>
+                      <span className="text-slate-500 whitespace-nowrap">
+                        {t.is_contractor
+                          ? `${t.open} open${t.max_wait ? ` · ${t.max_wait}m wait` : ''}`
+                          : `${t.open} open / ${t.avail_drivers} drv`}
+                      </span>
+                    </div>
+                  </DrillDown>
                 ))}
               </div>
             ) : (
@@ -1558,18 +1963,22 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
                 {cb.reasons.map((r, i) => {
                   const isCnw = r.reason.toLowerCase().includes('could not wait')
                   return (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className={clsx('truncate', isCnw ? 'text-red-400 font-medium' : 'text-slate-300')}>{r.reason}</span>
-                          <span className={clsx('font-bold ml-2 whitespace-nowrap', isCnw ? 'text-red-400' : 'text-slate-400')}>{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                          <div className={clsx('h-full rounded-full', isCnw ? 'bg-red-500' : 'bg-orange-600/60')}
-                               style={{ width: `${r.pct}%` }} />
+                    <DrillDown key={i}
+                      fetchFn={() => fetchCancelDetail(r.reason).then(d => d.calls)}
+                      renderRow={(item, j) => <SADetailRow key={j} item={item} />}>
+                      <div className="flex items-center gap-2 text-xs">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className={clsx('truncate', isCnw ? 'text-red-400 font-medium' : 'text-slate-300')}>{r.reason}</span>
+                            <span className={clsx('font-bold ml-2 whitespace-nowrap', isCnw ? 'text-red-400' : 'text-slate-400')}>{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                            <div className={clsx('h-full rounded-full', isCnw ? 'bg-red-500' : 'bg-orange-600/60')}
+                                 style={{ width: `${r.pct}%` }} />
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    </DrillDown>
                   )
                 })}
               </div>
@@ -1589,17 +1998,21 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
             {db && db.total > 0 ? (
               <div className="space-y-1.5">
                 {db.reasons.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-slate-300 truncate">{r.reason}</span>
-                        <span className="text-slate-400 font-bold ml-2 whitespace-nowrap">{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                        <div className="h-full rounded-full bg-rose-600/60" style={{ width: `${r.pct}%` }} />
+                  <DrillDown key={i}
+                    fetchFn={() => fetchDeclineDetail(r.reason).then(d => d.calls)}
+                    renderRow={(item, j) => <SADetailRow key={j} item={item} />}>
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-slate-300 truncate">{r.reason}</span>
+                          <span className="text-slate-400 font-bold ml-2 whitespace-nowrap">{r.count} <span className="text-slate-600 font-normal">({r.pct}%)</span></span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div className="h-full rounded-full bg-rose-600/60" style={{ width: `${r.pct}%` }} />
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </DrillDown>
                 ))}
               </div>
             ) : (
@@ -1723,6 +2136,199 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData }) {
         <div className="text-[10px] text-slate-600 text-center">
           Fleet · {data.is_fallback ? 'Last 24h' : 'Today'} · 2m auto-refresh
         </div>
+      </div>}
+    </div>
+  )
+}
+
+// ── Trends View (30-day rolling) ────────────────────────────────────────────
+const CHART_COLORS = { blue: '#3b82f6', green: '#22c55e', amber: '#f59e0b', red: '#ef4444', cyan: '#06b6d4', purple: '#a855f7', slate: '#64748b' }
+
+function TrendChart({ title, tip, children, aspect = 2.5 }) {
+  return (
+    <div className="glass rounded-xl border border-slate-700/30 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs font-bold text-white uppercase tracking-wide">{title}</span>
+        {tip && <InfoTip text={tip} />}
+      </div>
+      <ResponsiveContainer width="100%" aspect={aspect}>
+        {children}
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function TrendsView() {
+  const [trends, setTrends] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetchTrends()
+      .then(setTrends)
+      .catch(e => setError(e.message || 'Failed to load trends'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div className="max-w-5xl mx-auto flex items-center justify-center py-20">
+      <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+      <span className="ml-2 text-sm text-slate-500">Loading 30-day trends...</span>
+    </div>
+  )
+  if (error) return <div className="max-w-5xl mx-auto text-center text-red-400 py-10 text-sm">{error}</div>
+  if (!trends?.days?.length) return <div className="max-w-5xl mx-auto text-center text-slate-600 py-10 text-sm">No trend data available</div>
+
+  const days = trends.days.map(d => ({ ...d, label: d.date.slice(5) })) // "03-15"
+
+  const customTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null
+    return (
+      <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl">
+        <div className="font-semibold text-slate-300 mb-1">{label}</div>
+        {payload.map((p, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
+            <span className="text-slate-400">{p.name}:</span>
+            <span className="font-semibold text-white">{p.value != null ? (typeof p.value === 'number' && p.value % 1 !== 0 ? p.value.toFixed(1) : p.value) : '—'}{p.unit || ''}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+
+      {/* Row 1: Volume + Completion | Auto Dispatch % */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="Daily Volume + Completion Rate"
+          tip="Gray bars = total calls. Green bars = completed.\nGreen line = completion %.\nGap between bars = canceled + in-progress.\nMonday is typically the busiest day (1.8x Sunday).">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis yAxisId="vol" tick={{ fill: '#64748b', fontSize: 10 }} />
+            <YAxis yAxisId="pct" orientation="right" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Bar yAxisId="vol" dataKey="volume" name="Total" fill="#334155" radius={[2, 2, 0, 0]} />
+            <Bar yAxisId="vol" dataKey="completed" name="Completed" fill={CHART_COLORS.green} fillOpacity={0.5} radius={[2, 2, 0, 0]} />
+            <Line yAxisId="pct" dataKey="completion_pct" name="Completion %" stroke={CHART_COLORS.green} strokeWidth={2} dot={false} unit="%" />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Auto Dispatch %"
+          tip="% of all calls (Fleet + Towbook) handled without any human dispatcher intervention.\nA Membership User making ANY status change on the SA = human touch.\nTarget: 60%+. Higher = more efficient operation.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="auto_pct" name="Auto %" stroke={CHART_COLORS.blue} fill={CHART_COLORS.blue} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" />
+            <Line dataKey={() => 60} name="Target" stroke="#475569" strokeDasharray="5 5" strokeWidth={1} dot={false} />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Row 2: SLA % | Response Time */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="45-min SLA Hit Rate"
+          tip="% of Fleet calls where the driver arrived within 45 minutes.\nFleet only — Towbook uses SAHistory for arrival time (less consistent for SLA tracking).\nTarget: AAA accreditation standard.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="sla_pct" name="SLA %" stroke={CHART_COLORS.green} fill={CHART_COLORS.green} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Avg Response Time (ATA)"
+          tip="Average minutes from call creation to driver arriving on scene.\nBlue = Fleet (ActualStartTime, reliable).\nAmber = Towbook (SAHistory 'On Location' timestamp).\nGuardrail: 0-480 min, excludes outliers.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}m`} />
+            <RechartsTooltip content={customTooltip} />
+            <Line dataKey="fleet_ata" name="Fleet" stroke={CHART_COLORS.blue} strokeWidth={2} dot={false} unit=" min" />
+            <Line dataKey="towbook_ata" name="Towbook" stroke={CHART_COLORS.amber} strokeWidth={2} dot={false} unit=" min" />
+            <Line dataKey={() => 45} name="45-min target" stroke="#475569" strokeDasharray="5 5" strokeWidth={1} dot={false} />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Row 3: Reassignments | Satisfaction */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="Reassignments / Day"
+          tip="Number of driver/garage reassignment changes per day.\nSource: SAHistory ERS_Assigned_Resource__c changes (deduplicated).\nHigh count = calls bouncing, garages declining, longer member wait times.\nLower is better — means calls get accepted on first try.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+            <RechartsTooltip content={customTooltip} />
+            <Bar dataKey="reassignments" name="Reassignments" fill={CHART_COLORS.red} fillOpacity={0.6} radius={[2, 2, 0, 0]} />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Member Satisfaction"
+          tip="% of survey respondents who selected 'Totally Satisfied'.\nSurveys arrive days after the call, so recent days may have fewer responses.\nShown as 7-day rolling average to smooth the lag.\nTarget: ~82% (accreditation standard).">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="satisfaction_pct" name="Totally Satisfied %" stroke={CHART_COLORS.purple} fill={CHART_COLORS.purple} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" connectNulls />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Row 4: Top & Bottom Garages */}
+      {(trends.top_garages?.length > 0 || trends.bottom_garages?.length > 0) && (
+        <div className="grid grid-cols-2 gap-4">
+          {trends.top_garages?.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Top Garages (30d)</span>
+                <InfoTip text="Best garages by response time (ATA) with >85% completion rate.\nMinimum 20 calls to qualify." />
+              </div>
+              <div className="space-y-1.5">
+                {trends.top_garages.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] bg-emerald-950/20 rounded px-3 py-1.5">
+                    <span className="text-emerald-400 font-bold w-4">#{i + 1}</span>
+                    <span className="text-slate-300 flex-1 truncate" title={g.name}>{g.name}</span>
+                    <span className="text-emerald-400 font-semibold">{g.ata}m</span>
+                    <span className="text-slate-500">{g.completion_pct}%</span>
+                    <span className="text-slate-600">{g.volume} calls</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {trends.bottom_garages?.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Needs Improvement (30d)</span>
+                <InfoTip text="Garages with highest response times or lowest completion rates.\nMinimum 20 calls to qualify." />
+              </div>
+              <div className="space-y-1.5">
+                {trends.bottom_garages.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] bg-red-950/20 rounded px-3 py-1.5">
+                    <span className="text-red-400 font-bold w-4">#{i + 1}</span>
+                    <span className="text-slate-300 flex-1 truncate" title={g.name}>{g.name}</span>
+                    <span className="text-red-400 font-semibold">{g.ata}m</span>
+                    <span className="text-slate-500">{g.completion_pct}%</span>
+                    <span className="text-slate-600">{g.volume} calls</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="text-[10px] text-slate-600 text-center">
+        Last 30 complete days (excludes today) · Refreshes nightly at 12:05 AM · Excludes Tow Drop-Off
       </div>
     </div>
   )

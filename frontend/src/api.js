@@ -57,6 +57,19 @@ export const fetchDecomposition = (id, start, end) =>
 export const fetchForecast = (territoryId, weeks = 8) =>
   api.get(`/territory/${territoryId}/forecast?weeks_history=${weeks}`).then(r => r.data)
 
+// Dispatch Insights Drill-Down (lazy, on-demand)
+export const fetchReassignmentDetail = () => api.get('/insights/reassignment-detail').then(r => r.data)
+export const fetchDispatcherDetail = (name) => api.get(`/insights/dispatcher-detail/${encodeURIComponent(name)}`).then(r => r.data)
+export const fetchDriverDetail = (name) => api.get(`/insights/driver-detail/${encodeURIComponent(name)}`).then(r => r.data)
+export const fetchCancelDetail = (reason) => api.get(`/insights/cancel-detail/${encodeURIComponent(reason)}`).then(r => r.data)
+export const fetchDeclineDetail = (reason) => api.get(`/insights/decline-detail/${encodeURIComponent(reason)}`).then(r => r.data)
+export const fetchStatusDetail = (status) => api.get(`/insights/status-detail/${encodeURIComponent(status)}`).then(r => r.data)
+export const fetchCapacityDetail = (name) => api.get(`/insights/capacity-detail/${encodeURIComponent(name)}`).then(r => r.data)
+export const fetchGpsDetail = (bucket) => api.get(`/insights/gps-detail/${encodeURIComponent(bucket)}`).then(r => r.data)
+export const fetchHumanIntervention = () => api.get('/insights/human-intervention').then(r => r.data)
+export const fetchClosestDriverDetail = () => api.get('/insights/closest-driver-detail').then(r => r.data)
+export const fetchTrends = () => api.get('/insights/trends').then(r => r.data)
+
 // Daily Operations (correct PTA/ATA)
 export const fetchOpsTerritories = () => api.get('/ops/territories').then(r => r.data)
 export const fetchOpsTerritory = (id) => api.get(`/ops/territory/${id}`).then(r => r.data)

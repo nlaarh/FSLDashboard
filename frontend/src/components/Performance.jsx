@@ -17,31 +17,7 @@ function today() {
   return new Date().toISOString().split('T')[0]
 }
 
-function getWeek(offset = 0) {
-  const now = new Date()
-  const diff = now.getDay() === 0 ? -6 : 1 - now.getDay()
-  const mon = new Date(now)
-  mon.setDate(now.getDate() + diff + offset * 7)
-  const sun = new Date(mon)
-  sun.setDate(mon.getDate() + 6)
-  const fmt = d => d.toISOString().split('T')[0]
-  const lbl = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return {
-    start: fmt(mon), end: fmt(sun),
-    label: `${lbl(mon)} – ${lbl(sun)}`,
-    offset,
-  }
-}
-
-function getMonth(offset = 0) {
-  const now = new Date()
-  const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
-  const start = d.toISOString().split('T')[0]
-  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-  const end = last.toISOString().split('T')[0]
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  return { start, end, label, offset }
-}
+import { getWeek, getMonth } from '../utils/dateHelpers'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -200,7 +176,9 @@ function DecompositionPanel({ garageId, start, end }) {
   const leaderboard = data?.driver_leaderboard || []
   const declines = data?.decline_analysis
   const cancels = data?.cancel_analysis
-  const isTowbook = data?.garage_type === 'towbook'
+  const garageType = data?.garage_type || 'fleet'
+  const isTowbook = garageType === 'towbook'
+  const isFleet = garageType === 'fleet'
 
   return (
     <div className="glass rounded-xl overflow-hidden">
@@ -293,8 +271,8 @@ function DecompositionPanel({ garageId, start, end }) {
               {leaderboard.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                    {isTowbook ? 'Contractor Leaderboard (by volume)' : 'Driver Leaderboard (by avg response time)'}
-                    {isTowbook && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-400 font-medium normal-case">Towbook</span>}
+                    {isFleet ? 'Driver Leaderboard (by avg response time)' : 'Contractor Leaderboard (by volume)'}
+                    {!isFleet && <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium normal-case ${isTowbook ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400'}`}>{isTowbook ? 'Towbook' : 'On-Platform'}</span>}
                   </h4>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">

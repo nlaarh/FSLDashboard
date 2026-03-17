@@ -2,11 +2,10 @@
 
 import math
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from collections import defaultdict
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
 
-_ET = ZoneInfo('America/New_York')
+from utils import _ET
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 
 # Cycle times (minutes) — verified from 10K+ SA timestamps
 TOW_CYCLE = 115

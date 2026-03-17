@@ -9,50 +9,12 @@ SAs, skills: from Salesforce (relationship queries)
 Driver GPS positions: from Salesforce (live data)
 """
 
-import math
 from datetime import datetime, date, timedelta, timezone
-from zoneinfo import ZoneInfo
 from collections import defaultdict
+
+from utils import _ET, parse_dt as _parse_dt, to_eastern as _to_eastern, haversine
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 import cache
-
-_ET = ZoneInfo('America/New_York')
-
-
-def haversine(lat1, lon1, lat2, lon2):
-    if None in (lat1, lon1, lat2, lon2):
-        return None
-    R = 3959
-    la1, la2 = math.radians(lat1), math.radians(lat2)
-    dl = math.radians(lat2 - lat1)
-    dn = math.radians(lon2 - lon1)
-    a = math.sin(dl / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin(dn / 2) ** 2
-    return round(R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 2)
-
-
-def _parse_dt(dt_str):
-    if not dt_str:
-        return None
-    if isinstance(dt_str, datetime):
-        return dt_str
-    try:
-        return datetime.fromisoformat(
-            str(dt_str).replace('+0000', '+00:00').replace('Z', '+00:00'))
-    except Exception:
-        return None
-
-
-def _to_eastern(dt_str):
-    """Convert SF datetime string to Eastern (DST-aware). Also handles datetime objects."""
-    if isinstance(dt_str, datetime):
-        dt = dt_str
-    else:
-        dt = _parse_dt(dt_str)
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_ET)
 
 
 def simulate_day(territory_id: str, date_str: str) -> list[dict]:
@@ -94,6 +56,8 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
                    ServiceResource.LastKnownLocationDate, TerritoryType
             FROM ServiceTerritoryMember
             WHERE ServiceTerritoryId = '{territory_id}'
+              AND ServiceResource.IsActive = true
+              AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
         """),
     )
 
@@ -109,8 +73,7 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
         'lon': t_row.get('Longitude'),
     }
 
-    members = [m for m in data['members']
-               if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
+    members = data['members']
     driver_ids = list(set(m['ServiceResourceId'] for m in members))
 
     # Query AssignedResource to find actual driver for each SA
