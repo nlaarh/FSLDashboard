@@ -1414,7 +1414,7 @@ def _fetch_trends_range(start_utc: str, end_utc: str) -> list[dict]:
     return rows
 
 
-@router.post("/api/insights/trends/refresh")
+@router.get("/api/insights/trends/refresh")
 def api_trends_force_refresh():
     """Force-refresh 30-day trends. Smart: fetches only missing days (≤7) or triggers full refresh."""
     import threading, logging as _lg
