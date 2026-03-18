@@ -154,7 +154,6 @@ def pta_advisor():
                   AND EffectiveStartDate <= TODAY
                   AND (EffectiveEndDate = null OR EffectiveEndDate >= TODAY)
                   AND ServiceResource.IsActive = true
-                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """),
             # Current PTA settings per territory+type
             pta_settings=lambda: _sqa("""

@@ -341,7 +341,6 @@ def scheduler_insights():
                 WHERE TerritoryType IN ('P','S')
                   AND ServiceResource.IsActive = true
                   AND ServiceResource.ResourceType = 'T'
-                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """)
 
         def _get_trucks():

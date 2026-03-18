@@ -135,8 +135,15 @@ def _nightly_trends_refresh():
             log.info("Nightly trends refresh starting...")
             cache.disk_invalidate('insights_trends_30d')
             cache.invalidate('insights_trends_30d')
-            dispatch_routes.api_trends()
-            log.info("Nightly trends refresh complete.")
+            dispatch_routes.api_trends()  # starts bg thread
+            # Poll up to 20 min for the bg thread to populate cache
+            for _i in range(120):
+                time.sleep(10)
+                if cache.get('insights_trends_30d'):
+                    log.info("Nightly trends refresh complete.")
+                    break
+            else:
+                raise RuntimeError("Trends bg thread did not complete in 20 min")
         except Exception as e:
             log.warning(f"Nightly trends refresh failed: {e}")
             time.sleep(300)  # Retry in 5 min on failure
@@ -146,6 +153,16 @@ def _nightly_trends_refresh():
 async def startup_warmup():
     # Start nightly trends refresh thread
     threading.Thread(target=_nightly_trends_refresh, daemon=True).start()
+
+    # If disk cache is stale/missing on startup, trigger immediate background refresh
+    # (covers deploys that happen after 12:05 AM — nightly thread won't fire until tomorrow)
+    def _startup_trends_check():
+        time.sleep(15)  # let warmup finish first
+        if not cache.disk_get('insights_trends_30d'):
+            import logging
+            logging.getLogger('startup').info("Trends cache stale/missing — triggering immediate refresh on startup")
+            dispatch_routes.api_trends()
+    threading.Thread(target=_startup_trends_check, daemon=True).start()
 
     if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure
         import random

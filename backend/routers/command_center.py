@@ -55,7 +55,6 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 WHERE RecordType.Name = 'ERS Truck'
                   AND ERS_Driver__c != null
                   AND ERS_Driver__r.IsActive = true
-                  AND ERS_Driver__r.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """)
 
         def _get_cc_drivers():
@@ -69,7 +68,6 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 WHERE TerritoryType IN ('P','S')
                   AND ServiceResource.IsActive = true
                   AND ServiceResource.ResourceType = 'T'
-                  AND ServiceResource.ERS_Driver_Type__c != null
             """)
 
         # All GPS-capable drivers: Fleet + On-Platform Contractors (both use FSL app)

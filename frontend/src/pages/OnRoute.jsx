@@ -90,7 +90,7 @@ export default function OnRoute() {
     setTrackingState(s => ({ ...s, [sa.sa_id]: { loading: true } }))
     try {
       const res = await createTrackingLink(sa.sa_id)
-      const fullUrl = res.full_url || (window.location.origin + res.url)
+      const fullUrl = window.location.origin + res.url
       // Update the sa in data to reflect new tracking_url
       setData(prev => prev.map(r => r.sa_id === sa.sa_id ? { ...r, tracking_url: res.url, tracking_full_url: fullUrl } : r))
       setTrackingState(s => ({ ...s, [sa.sa_id]: { url: fullUrl } }))

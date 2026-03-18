@@ -150,7 +150,6 @@ def ops_brief():
                 WHERE RecordType.Name = 'ERS Truck'
                   AND ERS_Driver__c != null
                   AND ERS_Driver__r.IsActive = true
-                  AND ERS_Driver__r.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """)
 
         def _get_hourly_baseline():

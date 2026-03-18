@@ -57,7 +57,6 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
             FROM ServiceTerritoryMember
             WHERE ServiceTerritoryId = '{territory_id}'
               AND ServiceResource.IsActive = true
-              AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
         """),
     )
 

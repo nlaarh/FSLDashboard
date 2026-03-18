@@ -6,10 +6,10 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from utils import parse_dt as _parse_dt, is_fleet_territory
-from sf_client import sf_query_all, sanitize_soql
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from dispatch import (
     get_live_queue, recommend_drivers, get_cascade_status,
-    get_forecast,
+    get_forecast, _classify_worktype, _driver_tier, _can_cover,
 )
 import cache
 
@@ -708,6 +708,26 @@ def api_closest_driver_detail():
                   AND Name != 'Travel User'
             """)
 
+        def _get_logged_in():
+            """Asset-based login: drivers currently assigned to a truck = on shift."""
+            return sf_query_all("""
+                SELECT ERS_Driver__c, ERS_Truck_Capabilities__c
+                FROM Asset
+                WHERE RecordType.Name = 'ERS Truck'
+                  AND ERS_Driver__c != null
+            """)
+
+        def _get_active_assignments():
+            """All assigned resources for today's SAs — used to determine driver busy status."""
+            return sf_query_all(f"""
+                SELECT ServiceResourceId, ServiceAppointmentId,
+                       ServiceAppointment.CreatedDate,
+                       ServiceAppointment.Status
+                FROM AssignedResource
+                WHERE ServiceAppointment.CreatedDate >= {cutoff_utc}
+                  AND ServiceAppointment.Status IN ('Dispatched','Assigned','In Progress','En Route','On Location')
+            """)
+
         def _get_members():
             return sf_query_all("""
                 SELECT ServiceResourceId, ServiceTerritoryId
@@ -720,12 +740,22 @@ def api_closest_driver_detail():
         data = sf_parallel(
             sas=_get_sas, assigned=_get_assigned,
             drivers=_get_drivers, members=_get_members,
+            logged_in=_get_logged_in,
+            active_assignments=_get_active_assignments,
         )
 
         sas_raw = data['sas']
         assigned_raw = data['assigned']
         all_drivers = data['drivers']
         members_raw = data['members']
+        logged_in_ids = set()
+        driver_capabilities = {}  # driver_id -> set of capability strings
+        for a in data['logged_in']:
+            dr_id = a.get('ERS_Driver__c')
+            if dr_id:
+                logged_in_ids.add(dr_id)
+                caps = (a.get('ERS_Truck_Capabilities__c') or '').lower()
+                driver_capabilities[dr_id] = {c.strip() for c in caps.split(';') if c.strip()}
         # Exclude Tow Drop-Off
         sas = [s for s in sas_raw if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
 
@@ -754,10 +784,11 @@ def api_closest_driver_detail():
         for d in all_drivers:
             driver_names[d['Id']] = d.get('Name', '?')
 
-        # Fleet GPS: drivers with GPS coordinates are active (FSL mobile app reports position)
-        # The _get_drivers query already filters to Fleet Driver / Transit Auto Detail types
+        # Fleet GPS: only drivers actually logged into a truck (Asset-based login)
         fleet_driver_gps = {}
         for d in all_drivers:
+            if d['Id'] not in logged_in_ids:
+                continue  # Not on shift — skip
             lat, lon = d.get('LastKnownLatitude'), d.get('LastKnownLongitude')
             if lat and lon:
                 fleet_driver_gps[d['Id']] = (float(lat), float(lon))
@@ -769,6 +800,24 @@ def api_closest_driver_detail():
             dr_id = m.get('ServiceResourceId')
             if tid and dr_id and dr_id in fleet_driver_gps:
                 territory_drivers[tid].add(dr_id)
+
+        # Build driver → list of active SA ids (to check busy status at dispatch time)
+        # A driver is "busy" for a given SA if they had another active SA at that time
+        driver_active_sas = defaultdict(list)  # driver_id → [(sa_id, created_dt)]
+        for ar in data['active_assignments']:
+            dr_id = ar.get('ServiceResourceId')
+            sa_id = ar.get('ServiceAppointmentId')
+            sa_obj = ar.get('ServiceAppointment') or {}
+            created = _parse_dt(sa_obj.get('CreatedDate'))
+            if dr_id and sa_id and created:
+                driver_active_sas[dr_id].append((sa_id, created))
+
+        def _driver_busy_for_sa(dr_id, sa_id, sa_created_dt):
+            """Check if driver had another active SA before this SA was created."""
+            for other_sa_id, other_created in driver_active_sas.get(dr_id, []):
+                if other_sa_id != sa_id and other_created < sa_created_dt:
+                    return True
+            return False
 
         # Build per-SA detail
         results = []
@@ -787,34 +836,67 @@ def api_closest_driver_detail():
                 continue
 
             tid = s.get('ServiceTerritoryId')
-            candidates = [(dr_id, fleet_driver_gps[dr_id]) for dr_id in territory_drivers.get(tid, set()) if dr_id in fleet_driver_gps]
-            if len(candidates) < 2:
+            wt_name = (s.get('WorkType') or {}).get('Name', '')
+            call_tier = _classify_worktype(wt_name)
+            sa_created_dt = _parse_dt(s.get('CreatedDate'))
+
+            # Only include drivers whose truck can handle this work type
+            eligible_candidates = []
+            for dr_id in territory_drivers.get(tid, set()):
+                if dr_id not in fleet_driver_gps:
+                    continue
+                caps = driver_capabilities.get(dr_id, set())
+                dr_tier = _driver_tier(';'.join(caps)) if caps else 'light'
+                if _can_cover(dr_tier, call_tier):
+                    eligible_candidates.append((dr_id, fleet_driver_gps[dr_id]))
+                elif dr_id == assigned_dr:
+                    # Always include the assigned driver even if skill mismatch
+                    eligible_candidates.append((dr_id, fleet_driver_gps[dr_id]))
+
+            if len(eligible_candidates) < 2:
                 continue
 
             # Dispatch-time geolocation for assigned driver if available
             disp_lat = s.get('ERS_Dispatched_Geolocation__Latitude__s')
             disp_lon = s.get('ERS_Dispatched_Geolocation__Longitude__s')
 
+            # Build driver list with availability status
             drivers_list = []
-            for dr_id, (dlat, dlon) in candidates:
+            for dr_id, (dlat, dlon) in eligible_candidates:
                 if dr_id == assigned_dr and disp_lat and disp_lon:
                     dist = _haversine(sa_lat, sa_lon, float(disp_lat), float(disp_lon))
                 else:
                     dist = _haversine(sa_lat, sa_lon, dlat, dlon)
+                busy = _driver_busy_for_sa(dr_id, s['Id'], sa_created_dt) if sa_created_dt else False
                 drivers_list.append({
                     'name': driver_names.get(dr_id, '?'),
                     'distance_mi': dist,
                     'picked': dr_id == assigned_dr,
+                    'busy': busy,
                 })
 
             drivers_list.sort(key=lambda x: x['distance_mi'])
+
+            # Separate available (idle) vs all for metrics
+            available_drivers = [d for d in drivers_list if not d['busy']]
+            total_on_shift = len(drivers_list)
+            total_available = len(available_drivers)
+
+            # Use only AVAILABLE drivers for closest-driver calculation
+            if available_drivers:
+                closest_dist = available_drivers[0]['distance_mi']
+                closest_name = available_drivers[0]['name']
+            else:
+                # All busy — fall back to all drivers
+                closest_dist = drivers_list[0]['distance_mi']
+                closest_name = drivers_list[0]['name']
+
             total_evaluated += 1
 
-            closest_dist = drivers_list[0]['distance_mi']
             picked_driver = next((d for d in drivers_list if d['picked']), None)
             picked_dist = picked_driver['distance_mi'] if picked_driver else closest_dist
-            is_closest = drivers_list[0]['picked']
-            extra_mi = round(picked_dist - closest_dist, 1) if not is_closest else 0
+            is_closest = (closest_name == (picked_driver or {}).get('name'))
+            extra_mi = round(picked_dist - closest_dist, 1) if not is_closest and picked_dist > closest_dist else 0
 
             if is_closest:
                 total_closest_picked += 1
@@ -825,19 +907,21 @@ def api_closest_driver_detail():
 
             results.append({
                 'number': s.get('AppointmentNumber', ''),
-                'work_type': (s.get('WorkType') or {}).get('Name', ''),
+                'work_type': wt_name,
                 'status': s.get('Status', ''),
                 'territory': (s.get('ServiceTerritory') or {}).get('Name', ''),
                 'created_time': _fmt_et(s.get('CreatedDate')),
                 '_created_iso': s.get('CreatedDate', ''),
                 'assigned_driver': sa_to_driver_name.get(s['Id'], '?'),
                 'assigned_distance': picked_dist,
-                'closest_driver': drivers_list[0]['name'],
+                'closest_driver': closest_name,
                 'closest_distance': closest_dist,
                 'extra_miles': extra_mi,
                 'is_closest': is_closest,
                 'dispatcher': disp_info.get('name', '?'),
                 'is_auto': disp_info.get('is_auto', True),
+                'on_shift': total_on_shift,
+                'available': total_available,
                 'candidates': drivers_list,
             })
 
@@ -1162,17 +1246,247 @@ def api_trends():
         cache.put('insights_trends_30d', disk, 86400)
         return disk
     # No cache at all — trigger background generation, return empty immediately
-    import threading
+    import threading, logging as _lg
     def _bg():
-        try:
-            result = _fetch()
-            cache.put('insights_trends_30d', result, 86400)
-            cache.disk_put('insights_trends_30d', result, 86400)
-        except Exception as e:
-            import logging
-            logging.getLogger('trends').warning(f"Background trends fetch failed: {e}")
+        _log = _lg.getLogger('trends')
+        for attempt in range(3):
+            try:
+                result = _fetch()
+                cache.put('insights_trends_30d', result, 86400)
+                cache.disk_put('insights_trends_30d', result, 86400)
+                _log.info("Trends 30d background generation complete.")
+                return
+            except Exception as e:
+                _log.warning(f"Trends 30d fetch failed (attempt {attempt+1}/3): {e}")
+                if attempt < 2:
+                    import time as _t; _t.sleep(300)  # retry in 5 min
+        _log.error("Trends 30d fetch failed after 3 attempts — cache not updated.")
     threading.Thread(target=_bg, daemon=True).start()
     return {'days': [], 'top_garages': [], 'bottom_garages': [], 'loading': True}
+
+
+def _fetch_trends_range(start_utc: str, end_utc: str) -> list[dict]:
+    """Fetch trend daily rows for a specific UTC datetime range [start_utc, end_utc).
+    Skips garage ranking (too expensive for small ranges — caller keeps existing rankings).
+    start_utc / end_utc format: '2026-03-17T00:00:00Z'
+    """
+    import re as _re
+
+    def _get_sas():
+        return sf_query_all(f"""
+            SELECT Id, CreatedDate, Status, ActualStartTime, ERS_PTA__c,
+                   ERS_Dispatch_Method__c, WorkType.Name
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritoryId != null
+        """)
+
+    def _get_hist():
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, NewValue, CreatedBy.Profile.Name
+            FROM ServiceAppointmentHistory
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND Field = 'Status'
+        """)
+
+    def _get_reassign():
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND Field = 'ERS_Assigned_Resource__c'
+        """)
+
+    def _get_sat():
+        return sf_query_all(f"""
+            SELECT DAY_ONLY(CreatedDate) d, ERS_Overall_Satisfaction__c sat, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+            GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c
+        """)
+
+    data = sf_parallel(sas=_get_sas, hist=_get_hist, reassign=_get_reassign, sat=_get_sat)
+
+    # Human-touched IDs and Towbook on-location times
+    human_touched = set()
+    on_location: dict = {}
+    for r in data['hist']:
+        sa_id = r.get('ServiceAppointmentId')
+        if not sa_id:
+            continue
+        profile = ((r.get('CreatedBy') or {}).get('Profile') or {}).get('Name', '')
+        if profile == 'Membership User':
+            human_touched.add(sa_id)
+        if r.get('NewValue') == 'On Location':
+            ts = _parse_dt(r.get('CreatedDate'))
+            if ts and (sa_id not in on_location or ts < on_location[sa_id]):
+                on_location[sa_id] = ts
+
+    # Reassignments per day (name-only rows only)
+    _sf_id_pat = _re.compile(r'^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$')
+    reassign_by_day: dict = defaultdict(int)
+    for r in data['reassign']:
+        new_val = (r.get('NewValue') or '').strip()
+        if not new_val or _sf_id_pat.match(new_val):
+            continue
+        date_str = (r.get('CreatedDate') or '')[:10]
+        if date_str:
+            reassign_by_day[date_str] += 1
+
+    # Satisfaction by day
+    sat_by_day: dict = defaultdict(lambda: {'totally_satisfied': 0, 'total': 0})
+    for r in data['sat']:
+        date_str = r.get('d', '')
+        sat_val = (r.get('sat') or '').strip()
+        cnt = r.get('cnt', 0) or 0
+        if date_str and sat_val:
+            sat_by_day[date_str]['total'] += cnt
+            if sat_val.lower() == 'totally satisfied':
+                sat_by_day[date_str]['totally_satisfied'] += cnt
+
+    # Build daily buckets
+    daily: dict = defaultdict(lambda: {
+        'volume': 0, 'completed': 0,
+        'fleet_ata_sum': 0.0, 'fleet_ata_count': 0,
+        'towbook_ata_sum': 0.0, 'towbook_ata_count': 0,
+        'sla_hits': 0, 'sla_eligible': 0,
+        'auto_count': 0, 'total_for_auto': 0,
+    })
+
+    for sa in data['sas']:
+        wt = (sa.get('WorkType') or {}).get('Name', '') or ''
+        if 'drop' in wt.lower():
+            continue
+        date_str = (sa.get('CreatedDate') or '')[:10]
+        if not date_str:
+            continue
+        d = daily[date_str]
+        d['volume'] += 1
+        if sa.get('Status') == 'Completed':
+            d['completed'] += 1
+        d['total_for_auto'] += 1
+        if sa.get('Id') not in human_touched:
+            d['auto_count'] += 1
+        dm = sa.get('ERS_Dispatch_Method__c') or ''
+        if sa.get('Status') == 'Completed':
+            if dm == 'Field Services':
+                created = _parse_dt(sa.get('CreatedDate'))
+                actual = _parse_dt(sa.get('ActualStartTime'))
+                if created and actual:
+                    diff = (actual - created).total_seconds() / 60
+                    if 0 < diff < 480:
+                        d['fleet_ata_sum'] += diff
+                        d['fleet_ata_count'] += 1
+                        d['sla_eligible'] += 1
+                        if diff <= 45:
+                            d['sla_hits'] += 1
+            elif dm == 'Towbook':
+                on_loc = on_location.get(sa.get('Id'))
+                if on_loc:
+                    created = _parse_dt(sa.get('CreatedDate'))
+                    if created:
+                        diff = (on_loc - created).total_seconds() / 60
+                        if 0 < diff < 480:
+                            d['towbook_ata_sum'] += diff
+                            d['towbook_ata_count'] += 1
+
+    # Assemble output rows
+    rows = []
+    for date_str in sorted(daily.keys()):
+        d = daily[date_str]
+        vol = d['volume']
+        comp = d['completed']
+        sat_info = sat_by_day.get(date_str, {})
+        rows.append({
+            'date': date_str,
+            'volume': vol,
+            'completed': comp,
+            'completion_pct': round(100 * comp / vol) if vol else 0,
+            'auto_pct': round(100 * d['auto_count'] / d['total_for_auto']) if d['total_for_auto'] else None,
+            'sla_pct': round(100 * d['sla_hits'] / d['sla_eligible']) if d['sla_eligible'] else None,
+            'fleet_ata': round(d['fleet_ata_sum'] / d['fleet_ata_count']) if d['fleet_ata_count'] else None,
+            'towbook_ata': round(d['towbook_ata_sum'] / d['towbook_ata_count']) if d['towbook_ata_count'] else None,
+            'reassignments': reassign_by_day.get(date_str, 0),
+            'closest_pct': None,
+            'satisfaction_pct': round(100 * sat_info['totally_satisfied'] / sat_info['total']) if sat_info.get('total') else None,
+        })
+    return rows
+
+
+@router.post("/api/insights/trends/refresh")
+def api_trends_force_refresh():
+    """Force-refresh 30-day trends. Smart: fetches only missing days (≤7) or triggers full refresh."""
+    import threading, logging as _lg
+    from datetime import date as _date, timedelta as _td, timezone as _tz
+
+    log = _lg.getLogger('trends_refresh')
+    today_utc = _date.today()  # UTC date
+    yesterday_utc = today_utc - _td(days=1)
+
+    # Expected last 30 complete days (UTC dates, as stored in cache)
+    expected = {(yesterday_utc - _td(days=i)).isoformat() for i in range(30)}
+
+    current = cache.disk_get_stale('insights_trends_30d')
+    cached_dates = {d['date'] for d in (current or {}).get('days', [])} if current else set()
+    missing = sorted(expected - cached_dates)
+
+    if not missing:
+        return {'status': 'up_to_date', 'missing_days': 0, 'cached_through': yesterday_utc.isoformat()}
+
+    log.info(f"Trends force-refresh: {len(missing)} missing days ({missing[0]} … {missing[-1]})")
+
+    if len(missing) <= 7 and current:
+        # Incremental path: only fetch the missing date range
+        start_utc = f"{missing[0]}T00:00:00Z"
+        end_utc = f"{((_date.fromisoformat(missing[-1])) + _td(days=1)).isoformat()}T00:00:00Z"
+        try:
+            new_rows = _fetch_trends_range(start_utc, end_utc)
+            # Merge: keep existing days not in new_rows, add new_rows
+            new_dates = {r['date'] for r in new_rows}
+            merged_days = [d for d in current['days'] if d['date'] not in new_dates] + new_rows
+            merged_days.sort(key=lambda x: x['date'])
+            # Keep last 30 days only
+            merged_days = merged_days[-30:]
+            merged = {**current, 'days': merged_days}
+            cache.put('insights_trends_30d', merged, 86400)
+            cache.disk_put('insights_trends_30d', merged, 86400)
+            log.info(f"Incremental trends merge complete: added {len(new_rows)} days.")
+            return {'status': 'updated', 'missing_days': len(missing), 'new_days': len(new_rows), 'data': merged}
+        except Exception as e:
+            log.warning(f"Incremental fetch failed, falling back to full refresh: {e}")
+            # Fall through to full refresh
+
+    # Full refresh path
+    cache.disk_invalidate('insights_trends_30d')
+    cache.invalidate('insights_trends_30d')
+
+    def _bg():
+        _log = _lg.getLogger('trends_refresh')
+        for attempt in range(3):
+            try:
+                result = api_trends()  # re-uses existing _fetch via bg thread logic
+                if result and not result.get('loading'):
+                    _log.info("Full refresh bg complete.")
+                    return
+                # _fetch is still running in its own daemon thread; give it time
+                import time as _t
+                for _ in range(90):
+                    _t.sleep(10)
+                    done = cache.get('insights_trends_30d')
+                    if done and not done.get('loading'):
+                        _log.info("Full refresh complete (polled).")
+                        return
+                raise TimeoutError("Full refresh timed out after 15min")
+            except Exception as e:
+                _log.warning(f"Full refresh attempt {attempt+1}/3 failed: {e}")
+                if attempt < 2:
+                    import time as _t2; _t2.sleep(60)
+
+    # Trigger the first api_trends call to start the bg thread
+    api_trends()
+    threading.Thread(target=_bg, daemon=True).start()
+    return {'status': 'full_refresh_triggered', 'missing_days': len(missing), 'loading': True}
 
 
 ## NOTE: /api/garages/{territory_id}/decomposition is in routers/garages.py

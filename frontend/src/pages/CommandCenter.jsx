@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends, forceTrendsRefresh } from '../api'
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Area, Legend } from 'recharts'
 import { getMapConfig } from '../mapStyles'
 import {
@@ -1325,6 +1325,7 @@ function ClosestDriverDetailRow({ item, onViewOnMap }) {
   const [expanded, setExpanded] = useState(false)
   const shown = expanded ? candidates : candidates.slice(0, 3)
   const hasMore = candidates.length > 3
+  const busyCount = candidates.filter(d => d.busy).length
 
   return (
     <div className={clsx('rounded px-2.5 py-2 space-y-1 border-l-2',
@@ -1341,9 +1342,12 @@ function ClosestDriverDetailRow({ item, onViewOnMap }) {
           item.is_auto ? 'bg-indigo-950/40 text-indigo-400' : 'bg-amber-950/40 text-amber-500'
         )}>{item.is_auto ? 'System' : item.dispatcher}</span>
         {item.is_closest ? (
-          <span className="text-blue-400 font-semibold"><CheckCircle2 className="w-3 h-3 inline mr-0.5" />closest</span>
+          <span className="text-blue-400 font-semibold"><CheckCircle2 className="w-3 h-3 inline mr-0.5" />closest available</span>
         ) : (
           <span className="text-orange-400 font-semibold">+{item.extra_miles} mi extra</span>
+        )}
+        {item.available != null && (
+          <span className="text-[8px] text-slate-600">{item.available}/{item.on_shift} avail</span>
         )}
         {onViewOnMap && (
           <button onClick={(e) => { e.stopPropagation(); onViewOnMap(item.number) }}
@@ -1354,21 +1358,23 @@ function ClosestDriverDetailRow({ item, onViewOnMap }) {
         )}
       </div>
 
-      {/* Driver list — ranked by distance */}
+      {/* Driver list — ranked by distance, busy drivers dimmed */}
       <div className="ml-4 space-y-0.5">
         {shown.map((d, i) => (
           <div key={i} className={clsx('flex items-center gap-2 text-[10px] rounded px-2 py-0.5',
-            d.picked ? 'bg-slate-800/60 border border-slate-700/40' : ''
+            d.picked ? 'bg-slate-800/60 border border-slate-700/40' : '',
+            d.busy && !d.picked ? 'opacity-40' : ''
           )}>
             <span className={clsx('w-4 text-center font-bold text-[9px]',
-              i === 0 ? 'text-blue-400' : 'text-slate-600'
+              d.busy ? 'text-slate-700' : i === 0 ? 'text-blue-400' : 'text-slate-600'
             )}>#{i + 1}</span>
             <span className={clsx('flex-1 truncate',
-              d.picked ? 'text-white font-semibold' : 'text-slate-400'
-            )}>{d.name}{d.picked && ' ← dispatched'}</span>
+              d.picked ? 'text-white font-semibold' : d.busy ? 'text-slate-600' : 'text-slate-400'
+            )}>{d.name}{d.picked && ' ← dispatched'}{d.busy && ' (busy)'}</span>
             <span className={clsx('font-mono whitespace-nowrap',
-              d.picked && i === 0 ? 'text-blue-400' :
-              d.picked && i > 0 ? 'text-orange-400' :
+              d.busy && !d.picked ? 'text-slate-700' :
+              d.picked && !d.busy ? 'text-blue-400' :
+              d.picked && d.busy ? 'text-orange-400' :
               i === 0 ? 'text-blue-400/60' : 'text-slate-500'
             )}>{d.distance_mi} mi</span>
           </div>
@@ -1376,7 +1382,7 @@ function ClosestDriverDetailRow({ item, onViewOnMap }) {
         {hasMore && !expanded && (
           <button onClick={() => setExpanded(true)}
             className="text-[9px] text-slate-600 hover:text-slate-400 pl-6">
-            +{candidates.length - 3} more drivers...
+            +{candidates.length - 3} more{busyCount > 0 ? ` (${busyCount} busy)` : ''}...
           </button>
         )}
         {expanded && hasMore && (
@@ -1658,8 +1664,8 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
           <div className="glass rounded-xl border border-slate-700/30 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Navigation className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Closest Driver Dispatched</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest available driver was sent.\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = how many calls had enough GPS data to evaluate (not all calls can be measured).\n\nClick the eye icon to drill down into each SA:\n• Blue left border = closest driver was dispatched\n• Orange left border = a closer driver was available\n• Click 'map' to see the SA + all drivers on the map\n\nFleet calls only — contractors don't have GPS in Salesforce.\n\nHOW IT'S CALCULATED:\nFor each completed fleet call, we compare the assigned driver's GPS distance to the member vs all other available drivers in that territory. Closest match = hit.\n\nGOAL: 100% = always sent the nearest driver. Lower % = wasted miles, longer wait for members."} />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">Closest Available Driver</span>
+              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest AVAILABLE (idle) driver was dispatched.\n• Busy drivers (already on another call) are excluded from the 'closest' comparison.\n• Only drivers with matching skills/truck capability for the work type are included.\n• Only drivers logged into a truck (on-shift) are counted.\n\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = calls with enough data to evaluate.\n\nIn the drill-down:\n• Blue left border = closest available driver was dispatched\n• Orange left border = a closer available driver existed\n• Dimmed rows = drivers who were busy on another call\n• 'X/Y avail' = available vs on-shift drivers\n• Click 'map' to see the SA + all drivers on the map\n\nGOAL: 100% = always sent the nearest idle, skilled driver."} />
             </div>
             <DrillDown
               fetchFn={() => fetchClosestDriverDetail().then(d => d.calls)}
@@ -2162,6 +2168,8 @@ function TrendsView() {
   const [trends, setTrends] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState(null)
 
   useEffect(() => {
     fetchTrends()
@@ -2169,6 +2177,35 @@ function TrendsView() {
       .catch(e => setError(e.message || 'Failed to load trends'))
       .finally(() => setLoading(false))
   }, [])
+
+  const handleForceRefresh = async () => {
+    setRefreshing(true)
+    setRefreshMsg(null)
+    try {
+      const res = await forceTrendsRefresh()
+      if (res.status === 'up_to_date') {
+        setRefreshMsg({ type: 'ok', text: 'Already up to date.' })
+      } else if (res.status === 'updated') {
+        setRefreshMsg({ type: 'ok', text: `Added ${res.new_days} missing day${res.new_days !== 1 ? 's' : ''}.` })
+        setTrends(res.data)
+      } else {
+        // full_refresh_triggered — poll until cache is populated
+        setRefreshMsg({ type: 'info', text: 'Full refresh triggered — checking in 30s…' })
+        await new Promise(r => setTimeout(r, 30000))
+        const fresh = await fetchTrends()
+        if (fresh && !fresh.loading && fresh.days?.length) {
+          setTrends(fresh)
+          setRefreshMsg({ type: 'ok', text: 'Refreshed successfully.' })
+        } else {
+          setRefreshMsg({ type: 'warn', text: 'Still generating — check back in 1–2 min.' })
+        }
+      }
+    } catch (e) {
+      setRefreshMsg({ type: 'err', text: e.response?.data?.detail || e.message })
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   if (loading) return (
     <div className="max-w-5xl mx-auto flex items-center justify-center py-20">
@@ -2334,8 +2371,26 @@ function TrendsView() {
         </div>
       )}
 
-      <div className="text-[10px] text-slate-600 text-center">
-        Last 30 complete days (excludes today) · Refreshes nightly at 12:05 AM · Excludes Tow Drop-Off
+      <div className="flex items-center justify-center gap-3">
+        <div className="text-[10px] text-slate-600 text-center">
+          Last 30 complete days (excludes today) · Refreshes nightly at 12:05 AM · Excludes Tow Drop-Off
+        </div>
+        <button
+          onClick={handleForceRefresh}
+          disabled={refreshing}
+          title="Fetch missing days only (smart incremental refresh)"
+          className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition disabled:opacity-40 bg-slate-800/50 hover:bg-slate-700/50 px-2 py-1 rounded-md border border-slate-700/40"
+        >
+          <RefreshCw className={clsx('w-3 h-3', refreshing && 'animate-spin')} />
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+        {refreshMsg && (
+          <span className={clsx('text-[10px]',
+            refreshMsg.type === 'ok' ? 'text-emerald-400' :
+            refreshMsg.type === 'warn' ? 'text-amber-400' :
+            refreshMsg.type === 'err' ? 'text-red-400' : 'text-slate-400'
+          )}>{refreshMsg.text}</span>
+        )}
       </div>
     </div>
   )

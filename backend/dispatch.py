@@ -230,7 +230,6 @@ def recommend_drivers(sa_id: str):
                 WHERE ServiceTerritoryId = '{tid}'
                   AND TerritoryType IN ('P','S')
                   AND ServiceResource.IsActive = true
-                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """),
             active_sas=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt
@@ -389,7 +388,6 @@ def get_cascade_status(territory_id: str):
                 WHERE ServiceTerritoryId = '{territory_id}'
                   AND TerritoryType IN ('P','S')
                   AND ServiceResource.IsActive = true
-                  AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
             """),
             assigned=lambda: sf_query_all(f"""
                 SELECT ServiceResourceId, COUNT(Id) cnt

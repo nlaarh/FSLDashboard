@@ -69,6 +69,7 @@ export const fetchGpsDetail = (bucket) => api.get(`/insights/gps-detail/${encode
 export const fetchHumanIntervention = () => api.get('/insights/human-intervention').then(r => r.data)
 export const fetchClosestDriverDetail = () => api.get('/insights/closest-driver-detail').then(r => r.data)
 export const fetchTrends = () => api.get('/insights/trends').then(r => r.data)
+export const forceTrendsRefresh = () => api.post('/insights/trends/refresh').then(r => r.data)
 
 // Daily Operations (correct PTA/ATA)
 export const fetchOpsTerritories = () => api.get('/ops/territories').then(r => r.data)
