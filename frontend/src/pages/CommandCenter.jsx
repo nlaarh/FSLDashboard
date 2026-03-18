@@ -2184,6 +2184,9 @@ function TrendsView() {
     try {
       const res = await forceTrendsRefresh()
       if (res.status === 'up_to_date') {
+        // Cache is fresh — reload to make sure displayed data matches
+        const fresh = await fetchTrends()
+        if (fresh && !fresh.loading && fresh.days?.length) setTrends(fresh)
         setRefreshMsg({ type: 'ok', text: 'Already up to date.' })
       } else if (res.status === 'updated') {
         setRefreshMsg({ type: 'ok', text: `Added ${res.new_days} missing day${res.new_days !== 1 ? 's' : ''}.` })
@@ -2243,6 +2246,29 @@ function TrendsView() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
+
+      {/* Header: title + refresh button */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-slate-500">Last 30 complete days · Excludes today &amp; Tow Drop-Off</div>
+        <div className="flex items-center gap-2">
+          {refreshMsg && (
+            <span className={clsx('text-[11px]',
+              refreshMsg.type === 'ok' ? 'text-emerald-400' :
+              refreshMsg.type === 'warn' ? 'text-amber-400' :
+              refreshMsg.type === 'err' ? 'text-red-400' : 'text-slate-400'
+            )}>{refreshMsg.text}</span>
+          )}
+          <button
+            onClick={handleForceRefresh}
+            disabled={refreshing}
+            title="Fetch only missing days (smart incremental refresh)"
+            className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition disabled:opacity-40 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700/50"
+          >
+            <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+            {refreshing ? 'Refreshing…' : 'Refresh Data'}
+          </button>
+        </div>
+      </div>
 
       {/* Row 1: Volume + Completion | Auto Dispatch % */}
       <div className="grid grid-cols-2 gap-4">
@@ -2371,26 +2397,8 @@ function TrendsView() {
         </div>
       )}
 
-      <div className="flex items-center justify-center gap-3">
-        <div className="text-[10px] text-slate-600 text-center">
-          Last 30 complete days (excludes today) · Refreshes nightly at 12:05 AM · Excludes Tow Drop-Off
-        </div>
-        <button
-          onClick={handleForceRefresh}
-          disabled={refreshing}
-          title="Fetch missing days only (smart incremental refresh)"
-          className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition disabled:opacity-40 bg-slate-800/50 hover:bg-slate-700/50 px-2 py-1 rounded-md border border-slate-700/40"
-        >
-          <RefreshCw className={clsx('w-3 h-3', refreshing && 'animate-spin')} />
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
-        {refreshMsg && (
-          <span className={clsx('text-[10px]',
-            refreshMsg.type === 'ok' ? 'text-emerald-400' :
-            refreshMsg.type === 'warn' ? 'text-amber-400' :
-            refreshMsg.type === 'err' ? 'text-red-400' : 'text-slate-400'
-          )}>{refreshMsg.text}</span>
-        )}
+      <div className="text-[10px] text-slate-600 text-center">
+        Refreshes nightly at 12:05 AM ET
       </div>
     </div>
   )
