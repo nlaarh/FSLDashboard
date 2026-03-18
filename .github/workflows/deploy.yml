@@ -32,8 +32,12 @@ jobs:
 
     - name: Copy frontend build to backend
       run: |
+        cp backend/static/track.html /tmp/track.html
+        cp backend/static/track_demo.html /tmp/track_demo.html
         rm -rf backend/static
         cp -r frontend/dist backend/static
+        cp /tmp/track.html backend/static/track.html
+        cp /tmp/track_demo.html backend/static/track_demo.html
 
     - name: Create deployment package
       working-directory: backend

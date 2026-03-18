@@ -267,28 +267,35 @@ def api_human_intervention():
         sa_map = {s['Id']: s for s in sas}
         sa_ids = list(sa_map.keys())
 
-        # Batch query SAHistory — find SAs touched by Membership User
-        human_sas = {}      # sa_id -> dispatcher name who touched it
+        # Manual dispatch = SA was reassigned (ERS_Assigned_Resource__c changed >1 time)
+        # AND a human (Membership User) was involved in any of those changes.
+        # Each assignment creates 2 history rows (display name + SF ID), so count > 2
+        # means the resource changed at least once after initial assignment.
+        hist_count: dict[str, int] = {}    # sa_id -> total SAHistory rows for field
+        human_sas: dict[str, str] = {}     # sa_id -> dispatcher name (first human found)
         batch_size = 150
         for i in range(0, len(sa_ids), batch_size):
             batch = sa_ids[i:i + batch_size]
             id_str = "','".join(batch)
             rows = sf_query_all(f"""
-                SELECT ServiceAppointmentId, CreatedBy.Name,
-                       CreatedBy.Profile.Name, NewValue, CreatedDate
+                SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointmentId IN ('{id_str}')
-                  AND Field = 'Status'
+                  AND Field = 'ERS_Assigned_Resource__c'
             """)
             for r in rows:
                 sa_id = r.get('ServiceAppointmentId')
+                if not sa_id:
+                    continue
+                hist_count[sa_id] = hist_count.get(sa_id, 0) + 1
                 cb = r.get('CreatedBy') or {}
                 profile = (cb.get('Profile') or {}).get('Name', '')
-                if profile == 'Membership User':
-                    name = cb.get('Name', '?')
-                    # Keep the first dispatcher who touched it
-                    if sa_id not in human_sas:
-                        human_sas[sa_id] = name
+                if profile == 'Membership User' and sa_id not in human_sas:
+                    human_sas[sa_id] = cb.get('Name', '?')
+
+        # Only manual if reassigned (count > 2) AND human was involved
+        human_sas = {sa_id: name for sa_id, name in human_sas.items()
+                     if hist_count.get(sa_id, 0) > 2}
 
         human_list, auto_list = [], []
         for sa in sas:
@@ -737,11 +744,22 @@ def api_closest_driver_detail():
                   AND ServiceResource.ResourceType = 'T'
             """)
 
+        def _get_sa_hist():
+            """SAHistory rows for manual dispatch detection: manual = count > 2 AND human involved."""
+            return sf_query_all(f"""
+                SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
+                FROM ServiceAppointmentHistory
+                WHERE ServiceAppointment.CreatedDate >= {cutoff_utc}
+                  AND ServiceAppointment.ERS_Dispatch_Method__c = 'Field Services'
+                  AND Field = 'ERS_Assigned_Resource__c'
+            """)
+
         data = sf_parallel(
             sas=_get_sas, assigned=_get_assigned,
             drivers=_get_drivers, members=_get_members,
             logged_in=_get_logged_in,
             active_assignments=_get_active_assignments,
+            sa_hist=_get_sa_hist,
         )
 
         sas_raw = data['sas']
@@ -762,22 +780,39 @@ def api_closest_driver_detail():
         if not sas:
             return {'calls': [], 'summary': {'evaluated': 0, 'closest_picked': 0, 'total_extra_miles': 0}}
 
-        # SA → assigned driver + dispatcher info
+        # SA → assigned driver (from current AR record)
         sa_to_driver = {}
         sa_to_driver_name = {}
-        sa_to_dispatcher = {}
         for ar in assigned_raw:
             sa_id = ar.get('ServiceAppointmentId')
             dr_id = ar.get('ServiceResourceId')
             if sa_id and dr_id:
                 sa_to_driver[sa_id] = dr_id
                 sa_to_driver_name[sa_id] = (ar.get('ServiceResource') or {}).get('Name', '?')
-                cb = ar.get('CreatedBy') or {}
-                profile = (cb.get('Profile') or {}).get('Name', '')
-                sa_to_dispatcher[sa_id] = {
-                    'name': cb.get('Name', '?'),
-                    'is_auto': profile != 'Membership User',
-                }
+
+        # Manual dispatch: SA was reassigned (SAHistory count > 2) AND a human (Membership User) was involved.
+        # Each assignment creates 2 SAHistory rows (display name + SF ID).
+        # count > 2 means at least one reassignment happened.
+        # Single assignment (by anyone, including a human) = auto.
+        _hist_count: dict = {}   # sa_id -> total SAHistory rows
+        _hist_human: dict = {}   # sa_id -> human dispatcher name (first found)
+        for row in data['sa_hist']:
+            sa_id = row.get('ServiceAppointmentId')
+            if not sa_id:
+                continue
+            _hist_count[sa_id] = _hist_count.get(sa_id, 0) + 1
+            cb = row.get('CreatedBy') or {}
+            profile = (cb.get('Profile') or {}).get('Name', '')
+            if profile == 'Membership User' and sa_id not in _hist_human:
+                _hist_human[sa_id] = cb.get('Name', '?')
+
+        sa_to_dispatcher = {}
+        for sa_id in sa_to_driver:
+            is_manual = _hist_count.get(sa_id, 0) > 2 and sa_id in _hist_human
+            sa_to_dispatcher[sa_id] = {
+                'name': _hist_human.get(sa_id, '?') if is_manual else 'System',
+                'is_auto': not is_manual,
+            }
 
         # Driver name lookup
         driver_names = {}
@@ -974,8 +1009,7 @@ def api_trends():
 
         def _get_status_history():
             return sf_query_all("""
-                SELECT ServiceAppointmentId, CreatedDate,
-                       NewValue, CreatedBy.Profile.Name
+                SELECT ServiceAppointmentId, CreatedDate, NewValue
                 FROM ServiceAppointmentHistory
                 WHERE CreatedDate = LAST_N_DAYS:31
                   AND CreatedDate < TODAY
@@ -1003,35 +1037,63 @@ def api_trends():
                 GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c
             """)
 
+        def _get_reassign_with_creator():
+            """SAHistory rows for manual dispatch detection.
+            Manual = count > 2 (reassigned at least once) AND a human (Membership User) was involved.
+            Each assignment creates 2 rows (display name + SF ID), so count > 2 = reassigned.
+            """
+            return sf_query_all("""
+                SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
+                FROM ServiceAppointmentHistory
+                WHERE CreatedDate = LAST_N_DAYS:31
+                  AND CreatedDate < TODAY
+                  AND Field = 'ERS_Assigned_Resource__c'
+                  AND ServiceAppointment.ServiceTerritoryId != null
+            """)
+
         data = sf_parallel(
             sas=_get_sas,
             status_hist=_get_status_history,
             reassign_hist=_get_reassignment_history,
             satisfaction=_get_satisfaction,
+            assign_hist=_get_reassign_with_creator,
         )
 
         all_sas = data['sas']
         status_hist = data['status_hist']
         reassign_hist = data['reassign_hist']
         satisfaction_rows = data['satisfaction']
+        assign_hist_rows = data['assign_hist']
 
         import logging
         _log = logging.getLogger('trends')
-        _log.info(f"Trends fetch: sas={len(all_sas)}, status_hist={len(status_hist)}, reassign={len(reassign_hist)}, satisfaction={len(satisfaction_rows)}")
+        _log.info(f"Trends fetch: sas={len(all_sas)}, status_hist={len(status_hist)}, reassign={len(reassign_hist)}, satisfaction={len(satisfaction_rows)}, assign_hist={len(assign_hist_rows)}")
 
         # ── Pre-process history data ─────────────────────────────────
 
-        # 1. Human-touched SA IDs (any status change by Membership User)
-        human_touched_ids = set()
+        # 1. Manual dispatch: SA was reassigned (SAHistory count > 2) AND a human was involved.
+        #    Each assignment creates 2 SAHistory rows (display name + SF ID).
+        #    count > 2 means at least one reassignment happened.
+        #    Single assignment (by anyone) = auto.
+        _hist_count: dict = {}
+        _hist_human: set = set()
+        for r in assign_hist_rows:
+            sa_id = r.get('ServiceAppointmentId')
+            if not sa_id:
+                continue
+            _hist_count[sa_id] = _hist_count.get(sa_id, 0) + 1
+            profile = ((r.get('CreatedBy') or {}).get('Profile') or {}).get('Name', '')
+            if profile == 'Membership User':
+                _hist_human.add(sa_id)
+        human_touched_ids = {sa_id for sa_id, cnt in _hist_count.items()
+                             if cnt > 2 and sa_id in _hist_human}
+
         # 2. Towbook on-location times: {sa_id: earliest 'On Location' datetime}
         towbook_on_location = {}
         for r in status_hist:
             sa_id = r.get('ServiceAppointmentId')
             if not sa_id:
                 continue
-            profile = ((r.get('CreatedBy') or {}).get('Profile') or {}).get('Name', '')
-            if profile == 'Membership User':
-                human_touched_ids.add(sa_id)
             if r.get('NewValue') == 'On Location':
                 ts = _parse_dt(r.get('CreatedDate'))
                 if ts:
@@ -1283,7 +1345,7 @@ def _fetch_trends_range(start_utc: str, end_utc: str) -> list[dict]:
 
     def _get_hist():
         return sf_query_all(f"""
-            SELECT ServiceAppointmentId, CreatedDate, NewValue, CreatedBy.Profile.Name
+            SELECT ServiceAppointmentId, CreatedDate, NewValue
             FROM ServiceAppointmentHistory
             WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
               AND Field = 'Status'
@@ -1306,18 +1368,43 @@ def _fetch_trends_range(start_utc: str, end_utc: str) -> list[dict]:
             GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c
         """)
 
-    data = sf_parallel(sas=_get_sas, hist=_get_hist, reassign=_get_reassign, sat=_get_sat)
+    def _get_assign_hist():
+        """SAHistory rows for manual dispatch detection.
+        Manual = count > 2 (reassigned at least once) AND a human (Membership User) was involved.
+        Each assignment creates 2 rows (display name + SF ID), so count > 2 = reassigned.
+        """
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
+            FROM ServiceAppointmentHistory
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND Field = 'ERS_Assigned_Resource__c'
+              AND ServiceAppointment.ServiceTerritoryId != null
+        """)
 
-    # Human-touched IDs and Towbook on-location times
-    human_touched = set()
+    data = sf_parallel(sas=_get_sas, hist=_get_hist, reassign=_get_reassign, sat=_get_sat, assign_hist=_get_assign_hist)
+
+    # Manual dispatch: SA was reassigned (SAHistory count > 2) AND a human was involved.
+    # Each assignment creates 2 SAHistory rows (display name + SF ID).
+    # count > 2 means at least one reassignment happened.
+    _hist_count: dict = {}
+    _hist_human: set = set()
+    for r in data['assign_hist']:
+        sa_id = r.get('ServiceAppointmentId')
+        if not sa_id:
+            continue
+        _hist_count[sa_id] = _hist_count.get(sa_id, 0) + 1
+        profile = ((r.get('CreatedBy') or {}).get('Profile') or {}).get('Name', '')
+        if profile == 'Membership User':
+            _hist_human.add(sa_id)
+    human_touched = {sa_id for sa_id, cnt in _hist_count.items()
+                     if cnt > 2 and sa_id in _hist_human}
+
+    # Towbook on-location times
     on_location: dict = {}
     for r in data['hist']:
         sa_id = r.get('ServiceAppointmentId')
         if not sa_id:
             continue
-        profile = ((r.get('CreatedBy') or {}).get('Profile') or {}).get('Name', '')
-        if profile == 'Membership User':
-            human_touched.add(sa_id)
         if r.get('NewValue') == 'On Location':
             ts = _parse_dt(r.get('CreatedDate'))
             if ts and (sa_id not in on_location or ts < on_location[sa_id]):
