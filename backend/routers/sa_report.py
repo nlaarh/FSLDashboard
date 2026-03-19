@@ -328,8 +328,28 @@ def sa_report(sa_number: str):
         sa_number = f'SA-{sa_number}'
 
     def _fetch():
-        # ── Round trip 1: SA lookup ───────────────────────────────────────
-        sa_list = sf_query_all(_SA_FIELDS.format(number=sa_number))
+        # ── Single parallel round trip: SA + History + AR + Members ──────
+        # Query history/AR by AppointmentNumber (cross-object filter) so we
+        # don't need the SA Id first — saves a full SF round trip.
+        p0 = sf_parallel(
+            sa=lambda: sf_query_all(_SA_FIELDS.format(number=sa_number)),
+            hist=lambda: sf_query_all(f"""
+                SELECT ServiceAppointmentId, Field, NewValue, CreatedDate,
+                       CreatedBy.Name, CreatedBy.Profile.Name
+                FROM ServiceAppointmentHistory
+                WHERE ServiceAppointment.AppointmentNumber = '{sa_number}'
+                  AND Field IN ('Status', 'ERS_Assigned_Resource__c')
+                ORDER BY CreatedDate ASC
+            """),
+            ar=lambda: sf_query_all(f"""
+                SELECT ServiceResourceId, ServiceResource.Name, CreatedDate
+                FROM AssignedResource
+                WHERE ServiceAppointment.AppointmentNumber = '{sa_number}'
+                ORDER BY CreatedDate DESC LIMIT 1
+            """),
+        )
+
+        sa_list = p0['sa']
         if not sa_list:
             return None
         sa     = sa_list[0]
@@ -346,45 +366,24 @@ def sa_report(sa_number: str):
                     'narrative': _build_narrative(sa_summary, [], []),
                     'phases': [], 'is_towbook': is_towbook}
 
-        # ── Round trip 2: SAHistory + AR + members (parallel) ────────────
-        def _get_hist():
-            return sf_query_all(f"""
-                SELECT ServiceAppointmentId, Field, NewValue, CreatedDate,
-                       CreatedBy.Name, CreatedBy.Profile.Name
-                FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId = '{sa_id}'
-                  AND Field IN ('Status', 'ERS_Assigned_Resource__c')
-                ORDER BY CreatedDate ASC
-            """)
+        # Members query needs tid from SA lookup — runs as a separate call
+        members_raw = sf_query_all(f"""
+            SELECT ServiceResourceId, ServiceResource.Name,
+                   ServiceResource.LastKnownLatitude, ServiceResource.LastKnownLongitude,
+                   ServiceResource.IsActive, TerritoryType
+            FROM ServiceTerritoryMember
+            WHERE ServiceTerritoryId = '{tid}'
+              AND TerritoryType IN ('P', 'S')
+              AND ServiceResource.IsActive = true
+              AND ServiceResource.ResourceType = 'T'
+        """)
 
-        def _get_ar():
-            return sf_query_all(f"""
-                SELECT ServiceResourceId, ServiceResource.Name, CreatedDate
-                FROM AssignedResource
-                WHERE ServiceAppointmentId = '{sa_id}'
-                ORDER BY CreatedDate DESC LIMIT 1
-            """)
-
-        def _get_members():
-            return sf_query_all(f"""
-                SELECT ServiceResourceId, ServiceResource.Name,
-                       ServiceResource.LastKnownLatitude, ServiceResource.LastKnownLongitude,
-                       ServiceResource.IsActive, TerritoryType
-                FROM ServiceTerritoryMember
-                WHERE ServiceTerritoryId = '{tid}'
-                  AND TerritoryType IN ('P', 'S')
-                  AND ServiceResource.IsActive = true
-                  AND ServiceResource.ResourceType = 'T'
-            """)
-
-        p1 = sf_parallel(hist=_get_hist, ar=_get_ar, members=_get_members)
-
-        # Build timeline directly from shared hist rows (no extra SF call)
-        timeline = _build_timeline(p1['hist'], sa_id)
+        # Build timeline from hist rows (already fetched in p0)
+        timeline = _build_timeline(p0['hist'], sa_id)
 
         # Parse assign events from the same hist rows
-        assign_rows = [r for r in p1['hist'] if r.get('Field') == 'ERS_Assigned_Resource__c']
-        status_rows = [r for r in p1['hist'] if r.get('Field') == 'Status']
+        assign_rows = [r for r in p0['hist'] if r.get('Field') == 'ERS_Assigned_Resource__c']
+        status_rows = [r for r in p0['hist'] if r.get('Field') == 'Status']
         assign_events_map = parse_assign_events(assign_rows, {sa_id})
         sa_events   = assign_events_map.get(sa_id, [])
         dispatch_dt = (sa_events[0]['ts'] if sa_events else None) or _parse_dt(sa.get('CreatedDate'))
@@ -405,10 +404,10 @@ def sa_report(sa_number: str):
                 if match and match.get('reason'):
                     tl_ev['reason'] = match['reason']
 
-        ar_row        = p1['ar'][0] if p1['ar'] else None
+        ar_row        = p0['ar'][0] if p0['ar'] else None
         assigned_sr_id = ar_row.get('ServiceResourceId') if ar_row else None
 
-        members = [m for m in p1['members']
+        members = [m for m in members_raw
                    if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
 
         # ── Round trip 2b: cascade fallback (Towbook territory → find original fleet tid)
@@ -598,4 +597,8 @@ def sa_report(sa_number: str):
     result = cache.cached_query(f'sa_report_{sa_number}', _fetch, ttl=120)
     if result is None:
         raise HTTPException(status_code=404, detail=f'SA {sa_number} not found')
+    # Completed/Canceled SAs won't change — extend cache to 1 hour
+    status = (result.get('sa_summary') or {}).get('status', '')
+    if status in ('Completed', 'Canceled', 'Unable to Complete', 'No-Show'):
+        cache.put(f'sa_report_{sa_number}', result, ttl=3600)
     return result
