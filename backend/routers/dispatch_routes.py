@@ -1060,13 +1060,15 @@ def api_trends():
                   AND ServiceAppointment.ServiceTerritoryId != null
             """)
 
-        data = sf_parallel(
-            sas=_get_sas,
-            status_hist=_get_status_history,
-            reassign_hist=_get_reassignment_history,
-            satisfaction=_get_satisfaction,
-            assign_hist=_get_reassign_with_creator,
-        )
+        # Run sequentially to avoid starving SF API for user requests
+        # (this runs in a background thread for nightly refresh)
+        import time as _time
+        data = {}
+        for name, fn in [('sas', _get_sas), ('status_hist', _get_status_history),
+                          ('reassign_hist', _get_reassignment_history),
+                          ('satisfaction', _get_satisfaction), ('assign_hist', _get_reassign_with_creator)]:
+            data[name] = fn()
+            _time.sleep(0.5)
 
         all_sas = data['sas']
         status_hist = data['status_hist']

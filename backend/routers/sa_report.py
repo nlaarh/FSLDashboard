@@ -506,7 +506,8 @@ def sa_report(sa_number: str):
                 return []
             # NewValue/OldValue can't be filtered in SOQL — fetch all ERS_Driver__c
             # changes in the time window and filter by driver SR Id in Python.
-            login_start = (min(all_step_times) - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            # 2h lookback is enough to determine on-truck status at dispatch time.
+            login_start = (min(all_step_times) - timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
             login_end   = (max(all_step_times) + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
             rows = sf_query_all(f"""
                 SELECT OldValue, NewValue, CreatedDate

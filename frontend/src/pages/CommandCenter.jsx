@@ -2591,8 +2591,9 @@ function MonthTrendsView({ month }) {
   if (!data?.days?.length) return (
     <div className="max-w-5xl mx-auto text-center py-10">
       <Loader2 className="w-5 h-5 animate-spin text-blue-500 mx-auto mb-2" />
-      <div className="text-sm text-slate-500">Generating {monthLabel} data...</div>
-      <div className="text-xs text-slate-600 mt-1">This takes about 1 minute. Auto-refreshing every 10s.</div>
+      <div className="text-sm text-slate-500">Generating {monthLabel} data in the background...</div>
+      <div className="text-xs text-slate-600 mt-1">This takes about 1 minute. You can navigate to other screens — data will be ready when you come back.</div>
+      <div className="text-[10px] text-slate-700 mt-2">Auto-checking every 10 seconds</div>
     </div>
   )
 
@@ -2638,14 +2639,17 @@ function MonthTrendsView({ month }) {
       {/* Header + Summary Stats */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-slate-500">{monthLabel} · Excludes Tow Drop-Off</div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition disabled:opacity-40 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700/50"
-        >
-          <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
-          {refreshing ? 'Recalculating…' : 'Refresh Data'}
-        </button>
+        <div className="flex items-center gap-3">
+          {refreshing && <span className="text-[10px] text-slate-500">Calculating in background — you can navigate away</span>}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition disabled:opacity-40 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700/50"
+          >
+            <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+            {refreshing ? 'Recalculating…' : 'Refresh Data'}
+          </button>
+        </div>
       </div>
 
       {/* Summary row */}
