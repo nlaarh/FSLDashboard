@@ -431,7 +431,7 @@ export default function SAReportModal({ saNumber, onClose }) {
                 const phases = report.phases
                 const totalMin = phases.reduce((s, p) => s + p.minutes, 0)
                 const fmtMin = v => v < 1 ? '<1m' : `${Math.round(v)}m`
-                const fmtTotal = totalMin < 1 ? '<1 min' : `${Math.round(totalMin)} min`
+                const fmtTotal = totalMin < 1 ? '<1 min' : `${Math.round(totalMin * 10) / 10} min`
                 return (
                   <section style={{ marginBottom: 24 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',

@@ -152,7 +152,16 @@ def _build_timeline(hist_rows: list, sa_id: str) -> list:
             return False
         return any(abs((e['ts'] - dt).total_seconds()) <= 60 for dt in driver_ts_list)
 
-    return [e for e in sorted_tl if not _is_dupe_status(e)]
+    filtered = [e for e in sorted_tl if not _is_dupe_status(e)]
+
+    # Remove back-to-back identical status events (e.g. two "En Route" within 2 min)
+    deduped = []
+    for e in filtered:
+        if deduped and e['event'] == deduped[-1]['event'] and 'driver' not in e and 'driver' not in deduped[-1]:
+            if e.get('ts') and deduped[-1].get('ts') and abs((e['ts'] - deduped[-1]['ts']).total_seconds()) < 120:
+                continue  # skip duplicate
+        deduped.append(e)
+    return deduped
 
 
 # ── Narrative ─────────────────────────────────────────────────────────────────
