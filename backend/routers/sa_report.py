@@ -333,7 +333,8 @@ def sa_report(sa_number: str):
 
         if not tid:
             return {'sa_summary': sa_summary, 'timeline': [], 'assign_steps': [],
-                    'narrative': _build_narrative(sa_summary, [], []), 'is_towbook': is_towbook}
+                    'narrative': _build_narrative(sa_summary, [], []),
+                    'phases': [], 'is_towbook': is_towbook}
 
         # ── Round trip 2: SAHistory + AR + members (parallel) ────────────
         def _get_hist():
@@ -426,7 +427,8 @@ def sa_report(sa_number: str):
         if not members:
             narrative = _build_narrative(sa_summary, timeline, [])
             return {'sa_summary': sa_summary, 'timeline': timeline, 'assign_steps': [],
-                    'narrative': narrative, 'is_towbook': is_towbook}
+                    'narrative': narrative, 'phases': _build_phases(timeline, sa_summary),
+                    'is_towbook': is_towbook}
 
         all_sr_ids = list({m.get('ServiceResourceId') for m in members if m.get('ServiceResourceId')})
         if assigned_sr_id and assigned_sr_id not in all_sr_ids:
