@@ -282,9 +282,10 @@ def _build_phases(timeline: list, sa_summary: dict) -> list:
         curr = sorted_tl[i]
         nxt = sorted_tl[i + 1]
         event = curr['event']
-        minutes = round((nxt['ts'] - curr['ts']).total_seconds() / 60)
-        if minutes <= 0:
+        seconds = (nxt['ts'] - curr['ts']).total_seconds()
+        if seconds < 0:
             continue
+        minutes = round(seconds / 60, 1)  # keep 1 decimal for sub-minute phases
 
         label = _PHASE_LABELS.get(event, event)
         color = _PHASE_COLORS.get(event, '#475569')

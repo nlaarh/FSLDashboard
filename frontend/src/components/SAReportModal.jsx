@@ -430,11 +430,13 @@ export default function SAReportModal({ saNumber, onClose }) {
               {report.phases?.length > 0 && (() => {
                 const phases = report.phases
                 const totalMin = phases.reduce((s, p) => s + p.minutes, 0)
+                const fmtMin = v => v < 1 ? '<1m' : `${Math.round(v)}m`
+                const fmtTotal = totalMin < 1 ? '<1 min' : `${Math.round(totalMin)} min`
                 return (
                   <section style={{ marginBottom: 24 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
                                   textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
-                      Time Breakdown — {totalMin} min total
+                      Time Breakdown — {fmtTotal} total
                     </div>
                     {/* Visual bar */}
                     <div style={{
@@ -452,7 +454,7 @@ export default function SAReportModal({ saNumber, onClose }) {
                               borderRight: i < phases.length - 1 ? '1px solid #0b1120' : 'none',
                               whiteSpace: 'nowrap', overflow: 'hidden', cursor: 'default',
                             }}>
-                            {pct > 8 ? `${p.minutes}m` : ''}
+                            {pct > 8 ? fmtMin(p.minutes) : ''}
                           </div>
                         )
                       })}
@@ -463,7 +465,7 @@ export default function SAReportModal({ saNumber, onClose }) {
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}>
                           <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, flexShrink: 0 }} />
                           <span style={{ color: '#94a3b8' }}>{p.label}</span>
-                          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{p.minutes}m</span>
+                          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{fmtMin(p.minutes)}</span>
                           {p.driver && <span style={{ color: '#64748b' }}>({p.driver})</span>}
                           {p.reason && <span style={{ color: '#fb923c', fontSize: 9, fontStyle: 'italic' }}>{p.reason}</span>}
                         </div>
