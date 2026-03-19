@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react'
-import { MapContainer, TileLayer, GeoJSON, Marker, CircleMarker, Tooltip, Popup } from 'react-leaflet'
+import React, { useState, useEffect, useRef } from 'react'
+import { MapContainer, TileLayer, GeoJSON, Marker, CircleMarker, Tooltip, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { Layers, Loader2 } from 'lucide-react'
+import { Layers, Loader2, Search, X } from 'lucide-react'
 import { fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchCommandCenter } from '../api'
 import { getMapConfig } from '../mapStyles'
+import SALink from '../components/SALink'
 
 const SA_COLORS = {
   Dispatched: '#3b82f6',
@@ -65,6 +66,45 @@ function makeWeatherIcon(station) {
   })
 }
 
+// Fly map to a position when SA search result arrives
+function FlyTo({ pos }) {
+  const map = useMap()
+  useEffect(() => {
+    if (pos) map.flyTo(pos, 13, { duration: 1.2 })
+  }, [pos])
+  return null
+}
+
+function makeSaSearchIcon(color) {
+  return L.divIcon({
+    className: '',
+    iconSize: [28, 36],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -36],
+    html: `<svg width="28" height="36" viewBox="0 0 28 36">
+      <path d="M14 0 C6.3 0 0 6.3 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.3 21.7 0 14 0Z"
+            fill="${color}" stroke="#0f172a" stroke-width="1.5"/>
+      <circle cx="14" cy="14" r="6" fill="white" opacity="0.9"/>
+    </svg>`,
+  })
+}
+
+function makeDriverHistIcon(isAssigned) {
+  const color = isAssigned ? '#f59e0b' : '#818cf8'
+  return L.divIcon({
+    className: '',
+    iconSize: [22, 18],
+    iconAnchor: [11, 18],
+    popupAnchor: [0, -18],
+    html: `<div style="opacity:0.85"><svg width="22" height="18" viewBox="0 0 22 18">
+      <rect x="1" y="4" width="20" height="11" rx="2.5" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
+      <rect x="14" y="1.5" width="8" height="7" rx="1.5" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
+      <circle cx="6"  cy="17" r="2" fill="#0f172a" stroke="${color}" stroke-width="1.2"/>
+      <circle cx="16" cy="17" r="2" fill="#0f172a" stroke="${color}" stroke-width="1.2"/>
+    </svg></div>`,
+  })
+}
+
 const LAYER_DEFS = [
   { key: 'grid',    emoji: '🗺️', label: 'Grid Boundaries', color: 'text-indigo-400' },
   { key: 'drivers', emoji: '🚛', label: 'Drivers (GPS)',    color: 'text-amber-400' },
@@ -97,6 +137,35 @@ export default function MapPage() {
 
   const [loading, setLoading] = useState({ grid: false, drivers: false, sas: false, weather: false })
   const [errors,  setErrors]  = useState({ grid: null,  drivers: null,  sas: null,  weather: null })
+
+  // SA search
+  const [searchInput, setSearchInput] = useState('')
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState(null)
+  const [searchResult, setSearchResult] = useState(null)  // { sa, drivers }
+  const searchRef = useRef(null)
+
+  function handleSearch(e) {
+    e.preventDefault()
+    const num = searchInput.trim()
+    if (!num) return
+    setSearchLoading(true)
+    setSearchError(null)
+    setSearchResult(null)
+    fetch(`/api/sa/${encodeURIComponent(num)}`)
+      .then(r => {
+        if (!r.ok) throw new Error(r.status === 404 ? `SA ${num} not found` : `Error ${r.status}`)
+        return r.json()
+      })
+      .then(data => { setSearchResult(data); setSearchLoading(false) })
+      .catch(err => { setSearchError(err.message); setSearchLoading(false) })
+  }
+
+  function clearSearch() {
+    setSearchInput('')
+    setSearchResult(null)
+    setSearchError(null)
+  }
 
   // Load grid data once
   useEffect(() => {
@@ -220,6 +289,48 @@ export default function MapPage() {
           )
         })}
 
+        {/* ── SA Search result ── */}
+        {searchResult?.sa?.lat && searchResult?.sa?.lon && (() => {
+          const sa = searchResult.sa
+          const color = sa.status === 'Completed' ? '#22c55e' : sa.status === 'Canceled' ? '#6b7280' : '#f59e0b'
+          return <>
+            <FlyTo pos={[sa.lat, sa.lon]} />
+            {/* SA pin */}
+            <Marker position={[sa.lat, sa.lon]} icon={makeSaSearchIcon(color)} zIndexOffset={1000}>
+              <Popup maxWidth={280}>
+                <div style={{fontFamily:'system-ui',fontSize:13}}>
+                  <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>SA <SALink number={sa.number} style={{fontSize:14}} /></div>
+                  <div><b>Status:</b> {sa.status}</div>
+                  <div><b>Work Type:</b> {sa.work_type}</div>
+                  <div><b>Territory:</b> {sa.territory}</div>
+                  <div><b>Created:</b> {sa.created}</div>
+                  {sa.started && <div><b>Arrived:</b> {sa.started}</div>}
+                  {sa.response_min != null && <div><b>Response:</b> {sa.response_min} min</div>}
+                  {sa.address && <div style={{marginTop:4,color:'#64748b'}}>{sa.address}</div>}
+                  {sa.dispatched_lat && <div style={{marginTop:4,fontSize:11,color:'#94a3b8'}}>Dispatch GPS available</div>}
+                </div>
+              </Popup>
+            </Marker>
+            {/* Drivers at dispatch time */}
+            {(searchResult.drivers || []).map((d, i) => {
+              if (!d.lat || !d.lon) return null
+              return (
+                <Marker key={i} position={[d.lat, d.lon]} icon={makeDriverHistIcon(d.is_assigned)} zIndexOffset={500}>
+                  <Popup>
+                    <div style={{fontFamily:'system-ui',fontSize:12}}>
+                      <div style={{fontWeight:700}}>{d.name}{d.is_assigned && ' ★'}</div>
+                      {d.truck && <div>Truck: {d.truck}</div>}
+                      <div>GPS: {d.gps_time}</div>
+                      {d.distance != null && <div>Distance: {d.distance.toFixed(1)} mi</div>}
+                      {d.is_assigned && <div style={{color:'#f59e0b',fontWeight:600}}>Assigned driver</div>}
+                    </div>
+                  </Popup>
+                </Marker>
+              )
+            })}
+          </>
+        })()}
+
         {/* ── Weather layer ── */}
         {layers.weather && weather.map((s, i) => {
           if (s.error || s.temp_f == null) return null
@@ -236,6 +347,58 @@ export default function MapPage() {
           )
         })}
       </MapContainer>
+
+      {/* ── SA Search bar (top-left) ── */}
+      <div className="absolute top-4 left-4 z-[1000]" style={{ minWidth: 260 }}>
+        <form onSubmit={handleSearch} className="flex gap-1.5">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              placeholder="Search SA number…"
+              className="w-full pl-8 pr-8 py-2 text-sm bg-slate-900/95 border border-slate-700/70 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 backdrop-blur"
+            />
+            {searchInput && (
+              <button type="button" onClick={clearSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <button type="submit" disabled={searchLoading}
+            className="px-3 py-2 bg-brand-600 hover:bg-brand-500 text-white text-sm rounded-lg font-medium flex items-center gap-1.5 disabled:opacity-50">
+            {searchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+          </button>
+        </form>
+
+        {searchError && (
+          <div className="mt-1.5 px-3 py-2 bg-red-900/80 border border-red-700/60 rounded-lg text-xs text-red-300 backdrop-blur">
+            {searchError}
+          </div>
+        )}
+
+        {searchResult?.sa && (
+          <div className="mt-1.5 bg-slate-900/95 border border-amber-700/60 rounded-lg px-3 py-2.5 text-xs backdrop-blur">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-semibold text-amber-400">SA <SALink number={searchResult.sa.number} style={{color:'#fbbf24'}} /></span>
+              <button onClick={clearSearch} className="text-slate-500 hover:text-white"><X className="w-3 h-3" /></button>
+            </div>
+            <div className="text-slate-300">{searchResult.sa.work_type} · {searchResult.sa.status}</div>
+            <div className="text-slate-400">{searchResult.sa.territory} · {searchResult.sa.created}</div>
+            {searchResult.sa.response_min != null && (
+              <div className="text-slate-400">Response: {searchResult.sa.response_min} min</div>
+            )}
+            {searchResult.drivers?.length > 0 && (
+              <div className="mt-1.5 text-slate-500 text-xs">
+                {searchResult.drivers.length} driver{searchResult.drivers.length > 1 ? 's' : ''} shown at dispatch time
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ── Floating layer control panel ── */}
       <div className="absolute top-4 right-4 z-[1000] select-none" style={{ minWidth: 190 }}>

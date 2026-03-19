@@ -8,7 +8,7 @@ from collections import defaultdict
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
-    is_fleet_territory,
+    is_fleet_territory, haversine,
 )
 from ops import get_ops_territories, get_ops_territory_detail, get_ops_garages
 import cache
@@ -37,14 +37,8 @@ def ops_garages():
     return get_ops_garages()
 
 
-# ── Haversine helper ─────────────────────────────────────────────────────────
-
-def _haversine_mi(lat1, lon1, lat2, lon2):
-    R = 3958.8  # Earth radius in miles
-    dlat = _math.radians(lat2 - lat1)
-    dlon = _math.radians(lon2 - lon1)
-    a = _math.sin(dlat/2)**2 + _math.cos(_math.radians(lat1)) * _math.cos(_math.radians(lat2)) * _math.sin(dlon/2)**2
-    return round(R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1-a)), 1)
+# haversine imported from utils — _haversine_mi removed
+_haversine_mi = haversine  # alias so call sites don't need updating
 
 
 # ── Skill hierarchy for driver-call matching ─────────────────────────────────

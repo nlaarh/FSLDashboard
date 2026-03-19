@@ -38,6 +38,7 @@ export const fetchScore = (id, weeks = 4) => api.get(`/garages/${id}/score?weeks
 export const fetchCommandCenter = (hours = 24) => api.get(`/command-center?hours=${hours}`).then(r => r.data)
 export const fetchSchedulerInsights = () => api.get('/scheduler-insights').then(r => r.data)
 export const lookupSA = (number) => api.get(`/sa/${number}`).then(r => r.data)
+export const fetchSAReport = (number) => api.get(`/sa/${number}/report`).then(r => r.data)
 export const fetchPerformance = (id, start, end) =>
   api.get(`/garages/${id}/performance?period_start=${start}&period_end=${end}`).then(r => r.data)
 export const fetchMapGrids = () => api.get('/map/grids').then(r => r.data)
@@ -70,6 +71,8 @@ export const fetchHumanIntervention = () => api.get('/insights/human-interventio
 export const fetchClosestDriverDetail = () => api.get('/insights/closest-driver-detail').then(r => r.data)
 export const fetchTrends = () => api.get('/insights/trends').then(r => r.data)
 export const forceTrendsRefresh = () => api.get('/insights/trends/refresh').then(r => r.data)
+export const fetchMonthTrends = (month) => api.get(`/insights/trends/month?month=${month}`).then(r => r.data)
+export const refreshMonthTrends = (month) => api.get(`/insights/trends/month/refresh?month=${month}`).then(r => r.data)
 
 // Daily Operations (correct PTA/ATA)
 export const fetchOpsTerritories = () => api.get('/ops/territories').then(r => r.data)

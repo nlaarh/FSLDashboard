@@ -857,10 +857,10 @@ def _classify_and_fetch_context(question: str) -> str:
             except Exception:
                 pass
 
-        # ── 8. SA-specific lookup only if an 8-digit number is mentioned (not cached — targeted) ──
-        sa_match = _re.search(r'\b(\d{8})\b', q)
+        # ── 8. SA-specific lookup — match "SA-717120" or bare 6-8 digit number ──
+        sa_match = _re.search(r'\b(?:SA-)?(\d{6,8})\b', q, _re.IGNORECASE)
         if sa_match:
-            sa_num = sa_match.group(1)
+            sa_num = f'SA-{sa_match.group(1)}'
             try:
                 data = cache.cached_query(f'sa_lookup_{sa_num}', lambda: _lookup_sa_impl(sa_num), ttl=30)
                 if data:

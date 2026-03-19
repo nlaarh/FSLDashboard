@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends, forceTrendsRefresh } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends, forceTrendsRefresh, fetchMonthTrends, refreshMonthTrends } from '../api'
+import SALink from '../components/SALink'
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Area, Legend } from 'recharts'
 import { getMapConfig } from '../mapStyles'
 import {
@@ -249,16 +250,12 @@ export default function CommandCenter() {
     const iv = setInterval(load, REFRESH_MS)
     return () => clearInterval(iv)
   }, [load])
-  // Scheduler insights — today's data, refresh every hour
+  // Scheduler insights — always fetched fresh (no cache), loaded when user visits page
   const loadScheduler = useCallback(() => {
     fetchSchedulerInsights().then(setSchedulerData).catch(() => {})
     fetchGpsHealth().then(setGpsHealth).catch(() => {})
   }, [])
   useEffect(() => { loadScheduler() }, [loadScheduler])
-  useEffect(() => {
-    const iv = setInterval(loadScheduler, 3600_000)
-    return () => clearInterval(iv)
-  }, [loadScheduler])
   useEffect(() => {
     const t = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000)
     return () => clearInterval(t)
@@ -415,7 +412,8 @@ export default function CommandCenter() {
 
           {/* SA Lookup markers */}
           {saResult && saResult.sa.lat && saResult.sa.lon && (() => {
-            const closestDriver = saResult.drivers.find(d => d.lat && d.lon)
+            const assignedDriver = saResult.drivers.find(d => d.is_assigned && d.lat && d.lon)
+            const closestDriver = assignedDriver || saResult.drivers.find(d => d.lat && d.lon)
             return (
               <>
                 <Marker position={[saResult.sa.lat, saResult.sa.lon]} icon={customerIcon}>
@@ -424,29 +422,29 @@ export default function CommandCenter() {
                       <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 3 }}>{saResult.sa.customer || 'Member'}</div>
                       <div style={{ color: '#94a3b8' }}>
                         {saResult.sa.address}{saResult.sa.zip && ` (${saResult.sa.zip})`}<br />
-                        SA# <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{saResult.sa.number}</span>
+                        SA# <SALink number={saResult.sa.number} style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 12 }} />
                         {' — '}<span style={{ color: '#e2e8f0' }}>{saResult.sa.work_type}</span><br />
                         Status: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{saResult.sa.status}</span>
                         {saResult.sa.response_min && (
                           <><br />Response: <span style={{ color: saResult.sa.response_min <= 45 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{saResult.sa.response_min} min</span></>
                         )}
                       </div>
-                      {closestDriver && (
-                        <div style={{ marginTop: 5, padding: '3px 6px', background: 'rgba(34,197,94,0.1)', borderRadius: 5, border: '1px solid rgba(34,197,94,0.25)' }}>
-                          <span style={{ color: '#22c55e', fontWeight: 700, fontSize: 11 }}>Closest: </span>
-                          <span style={{ color: '#22c55e', fontWeight: 600 }}>{closestDriver.name}</span>
-                          <span style={{ color: '#e2e8f0', fontWeight: 700 }}> — {closestDriver.distance ?? '?'} mi</span>
+                      {assignedDriver && (
+                        <div style={{ marginTop: 5, padding: '3px 6px', background: 'rgba(245,158,11,0.1)', borderRadius: 5, border: '1px solid rgba(245,158,11,0.25)' }}>
+                          <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 11 }}>Assigned: </span>
+                          <span style={{ color: '#f59e0b', fontWeight: 600 }}>{assignedDriver.name}</span>
+                          <span style={{ color: '#e2e8f0', fontWeight: 700 }}> — {assignedDriver.distance ?? '?'} mi</span>
                         </div>
                       )}
                     </div>
                   </Tooltip>
                 </Marker>
-                {closestDriver && (
+                {assignedDriver && (
                   <>
-                    <Polyline positions={[[closestDriver.lat, closestDriver.lon], [saResult.sa.lat, saResult.sa.lon]]}
-                      pathOptions={{ color: '#22c55e', weight: 3, opacity: 0.7, dashArray: '8,6' }} />
-                    <CircleMarker center={[closestDriver.lat, closestDriver.lon]} radius={18}
-                      pathOptions={{ color: '#22c55e', weight: 2, fillOpacity: 0.06, opacity: 0.35 }} />
+                    <Polyline positions={[[assignedDriver.lat, assignedDriver.lon], [saResult.sa.lat, saResult.sa.lon]]}
+                      pathOptions={{ color: '#f59e0b', weight: 3, opacity: 0.8, dashArray: '8,6' }} />
+                    <CircleMarker center={[assignedDriver.lat, assignedDriver.lon]} radius={20}
+                      pathOptions={{ color: '#f59e0b', weight: 2, fillOpacity: 0.08, opacity: 0.4 }} />
                   </>
                 )}
               </>
@@ -455,24 +453,19 @@ export default function CommandCenter() {
 
           {saResult && saResult.drivers.filter(d => d.lat && d.lon).map((d, i) => (
             <React.Fragment key={d.id}>
-              <Marker position={[d.lat, d.lon]} icon={driverIcon(d.distance, i === 0)}>
+              <Marker position={[d.lat, d.lon]} icon={driverIcon(d.distance, d.is_assigned)}>
                 <Tooltip direction="top" offset={[0, -36]} opacity={0.95} className="cc-tooltip">
                   <div style={{ fontSize: 12, color: '#e2e8f0', minWidth: 210, padding: 2 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                      <strong style={{ fontSize: 14, color: i === 0 ? '#22c55e' : '#e2e8f0' }}>{d.name}</strong>
-                      {i === 0 && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.3)' }}>CLOSEST</span>}
+                      <strong style={{ fontSize: 14, color: d.is_assigned ? '#f59e0b' : '#e2e8f0' }}>{d.name}</strong>
+                      {d.is_assigned && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>ASSIGNED</span>}
                     </div>
                     <div style={{ color: '#94a3b8' }}>
                       Distance: <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{d.distance ?? '?'} mi</span><br />
-                      GPS: {d.gps_time} — {d.territory_type}
+                      GPS at: {d.gps_time}{d.territory_type ? ` — ${d.territory_type}` : ''}
                     </div>
-                    {d.next_job ? (
-                      <div style={{ marginTop: 4, padding: '3px 6px', background: 'rgba(234,179,8,0.08)', borderRadius: 5, border: '1px solid rgba(234,179,8,0.2)' }}>
-                        <span style={{ color: '#eab308', fontWeight: 700, fontSize: 10 }}>NEXT: </span>
-                        <span style={{ color: '#94a3b8' }}>SA# {d.next_job.number} — {d.next_job.work_type}</span>
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: 3, color: '#22c55e', fontSize: 11, fontWeight: 600 }}>Available</div>
+                    {!d.is_assigned && (
+                      <div style={{ marginTop: 3, color: '#94a3b8', fontSize: 11 }}>Available at dispatch time</div>
                     )}
                   </div>
                 </Tooltip>
@@ -781,7 +774,7 @@ export default function CommandCenter() {
                                   <div className="flex items-center gap-2">
                                     <span className={clsx('text-sm font-bold tabular-nums', textColor)}>{fmtWait(c.wait_min)}</span>
                                     <span className="text-[10px] text-slate-500 truncate flex-1">{c.work_type?.replace('Tow ', 'T-')}</span>
-                                    <span className="text-[10px] text-slate-600 font-mono">{c.number}</span>
+                                    <SALink number={c.number} className="text-[10px] font-mono" />
                                   </div>
                                   {/* SLA progress bar */}
                                   <div className="h-1 bg-slate-800 rounded-full mt-1 overflow-hidden">
@@ -872,7 +865,9 @@ export default function CommandCenter() {
                       {saResult && (
                         <div className="space-y-3">
                           <div className="bg-slate-800/60 rounded-lg p-3">
-                            <div className="text-sm font-bold text-white mb-1">{saResult.sa.customer || 'Member'} — SA# {saResult.sa.number}</div>
+                            <div className="text-sm font-bold text-white mb-1">
+                              {saResult.sa.customer || 'Member'} — SA# <SALink number={saResult.sa.number} />
+                            </div>
                             <div className="text-xs text-slate-400 space-y-0.5">
                               <div>{saResult.sa.work_type} — <span className="font-semibold text-white">{saResult.sa.status}</span></div>
                               <div>{saResult.sa.address}</div>
@@ -901,7 +896,7 @@ export default function CommandCenter() {
                                     </span>
                                   </div>
                                   {d.next_job ? (
-                                    <div className="mt-1 text-[10px] text-amber-400">Busy: SA# {d.next_job.number}</div>
+                                    <div className="mt-1 text-[10px] text-amber-400">Busy: SA# <SALink number={d.next_job.number} style={{ fontSize: 10 }} /></div>
                                   ) : (
                                     <div className="mt-1 text-[10px] text-emerald-400 font-medium">Available</div>
                                   )}
@@ -1216,7 +1211,10 @@ function SADetailRow({ item }) {
   const reason = item.reject_reason || item.cancel_reason || ''
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
-      <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+      {item.number
+        ? <SALink number={item.number} style={{ fontFamily: 'monospace', fontSize: 10, width: 64, display: 'inline-block' }} />
+        : <span className="text-slate-500 font-mono w-16">—</span>
+      }
       {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
       {item.customer && <span className="text-slate-300 w-24 truncate" title={item.customer}>{item.customer}</span>}
       <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
@@ -1255,60 +1253,116 @@ function SADetailRow({ item }) {
   )
 }
 
-// ── Bounce Detail Row (SA + driver chain) ────────────────────────────────────
+// ── Bounce Detail Row (SA + full reassignment timeline) ──────────────────────
+function fmtMin(m) {
+  if (m == null) return null
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  const rem = m % 60
+  return rem > 0 ? `${h}h ${rem}m` : `${h}h`
+}
+
+const _OUTCOME = {
+  Rejected:     { color: 'text-red-400',     icon: '✗', label: 'Rejected' },
+  Declined:     { color: 'text-orange-400',  icon: '⊘', label: 'Declined' },
+  Released:     { color: 'text-slate-500',   icon: '↩', label: 'Released (no response)' },
+  Accepted:     { color: 'text-emerald-400', icon: '✓', label: 'Accepted' },
+  'In Progress':{ color: 'text-blue-400',   icon: '⟳', label: 'In Progress' },
+}
+
 function BounceDetailRow({ item }) {
   const chain = item.bounce_chain || []
   const isTowbook = item.dispatch_method === 'Towbook'
-  const offDriver = item.off_platform_driver
+
   return (
-    <div className="bg-slate-900/40 rounded px-2.5 py-2 space-y-1">
-      {/* SA header row */}
+    <div className="bg-slate-900/40 rounded px-2.5 py-2 space-y-1.5">
+      {/* SA header */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
-        <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
-        {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
-        <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
-        <span className="text-red-400 font-semibold whitespace-nowrap">{item.minutes_lost}m lost</span>
-        <span className="text-red-400/70 text-[9px]">{item.bounce_count} bounce{item.bounce_count !== 1 ? 's' : ''}</span>
+        {item.number
+          ? <SALink number={item.number} style={{ fontFamily: 'monospace', fontSize: 10 }} />
+          : <span className="text-slate-500 font-mono">—</span>
+        }
+        {item.created_time && <span className="text-slate-600">{item.created_time}</span>}
+        <span className="text-slate-400">{item.work_type || '—'}</span>
+        {item.minutes_lost != null && (
+          <span className="text-red-400 font-semibold">{fmtMin(item.minutes_lost)} total dispatch time</span>
+        )}
+        <span className="text-red-400/70 text-[9px]">{item.bounce_count} reassignment{item.bounce_count !== 1 ? 's' : ''}</span>
         <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
-          item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
-          item.status === 'Dispatched' ? 'bg-blue-950/50 text-blue-400' :
+          item.status === 'Completed'      ? 'bg-emerald-950/50 text-emerald-400' :
+          item.status === 'Dispatched'     ? 'bg-blue-950/50 text-blue-400' :
           item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
-          item.status === 'En Route' ? 'bg-amber-950/50 text-amber-400' :
-          item.status === 'On Location' ? 'bg-cyan-950/50 text-cyan-400' :
           'bg-slate-800 text-slate-400'
         )}>{item.status || '—'}</span>
         <span className={clsx('text-[8px] px-1 py-0.5 rounded',
           isTowbook ? 'bg-fuchsia-950/40 text-fuchsia-400' : 'bg-blue-950/40 text-blue-400'
-        )}>{isTowbook ? 'TB' : 'FSL'}</span>
-        {offDriver && (
-          <span className="text-slate-400 text-[9px]">Driver: {offDriver}</span>
-        )}
+        )}>{isTowbook ? 'Towbook' : 'Fleet'}</span>
       </div>
-      {/* Assignment chain — garage/driver, how long they sat on it */}
+
+      {/* Full assignment timeline */}
       {chain.length > 0 && (
-        <div className="flex flex-col gap-0.5 pl-16 text-[9px]">
+        <div className="ml-1 border-l-2 border-slate-700/40 pl-3 space-y-2 text-[9px]">
           {chain.map((c, i) => {
             const isLast = i === chain.length - 1
-            const waited = c.gap_min != null ? c.gap_min : null
+            const prevTerritory = i > 0 ? chain[i - 1].territory : null
+            const isNewGarage = !prevTerritory || c.territory !== prevTerritory
+            const isSameGarageReassign = !isNewGarage   // same garage, next attempt
+            const o = _OUTCOME[c.outcome] || _OUTCOME.Released
+
             return (
-              <div key={i} className="flex items-center gap-2">
-                <span className={clsx('w-3 text-center', isLast ? 'text-emerald-400' : waited != null ? 'text-red-400' : 'text-slate-600')}>
-                  {isLast ? '✓' : waited != null ? '✗' : '→'}
-                </span>
-                <span className={clsx(
-                  'px-1.5 py-0.5 rounded font-medium',
-                  isLast ? 'bg-emerald-950/40 text-emerald-400' :
-                  waited != null ? 'bg-red-950/30 text-red-300' :
-                  'bg-slate-800/40 text-slate-400'
-                )}>{c.driver}</span>
-                {waited != null && !isLast && (
-                  <span className="text-red-400/80">{waited}m no response</span>
+              <div key={i} className="space-y-0.5">
+
+                {/* ── Garage / territory header ── */}
+                {(i === 0 || isNewGarage) && c.territory && (
+                  <div className={clsx(
+                    'flex items-center gap-1.5 font-semibold text-[8px] uppercase tracking-wide py-0.5',
+                    i === 0 ? 'text-slate-400' : 'text-indigo-400'
+                  )}>
+                    <span>{i === 0 ? '⌂' : '↷'}</span>
+                    <span>{i === 0 ? 'Garage:' : 'Cascaded to garage:'}</span>
+                    <span className={clsx('font-bold normal-case tracking-normal text-[9px]',
+                      i === 0 ? 'text-slate-200' : 'text-indigo-200'
+                    )} title={c.territory}>{c.territory}</span>
+                  </div>
                 )}
-                {isLast && (
-                  <span className="text-emerald-400/70">accepted</span>
-                )}
-                {c.assigned_at && (
-                  <span className="text-slate-600 ml-auto">{c.assigned_at}</span>
+
+                {/* ── Driver assignment line ── */}
+                <div className="flex items-center gap-1.5 pl-3">
+                  <span className={isSameGarageReassign ? 'text-amber-400' : 'text-slate-500'}>
+                    {isSameGarageReassign ? '↔' : '→'}
+                  </span>
+                  <span className={clsx('font-semibold',
+                    isSameGarageReassign ? 'text-amber-300/80' : 'text-slate-400'
+                  )}>
+                    {isSameGarageReassign ? 'Re-offered driver:' : 'Assigned driver:'}
+                  </span>
+                  <span className="text-white font-medium truncate max-w-[140px]" title={c.driver}>
+                    {c.driver}
+                  </span>
+                  {c.assigned_at && (
+                    <span className="text-slate-600 ml-auto shrink-0">{c.assigned_at}</span>
+                  )}
+                </div>
+
+                {/* ── Outcome line ── */}
+                <div className="flex items-center gap-1.5 pl-3">
+                  <span className={o.color}>{o.icon}</span>
+                  <span className={clsx('font-semibold', o.color)}>{o.label}</span>
+                  {c.duration_min != null && (
+                    <span className="text-slate-600">after {fmtMin(c.duration_min)}</span>
+                  )}
+                  {c.outcome_at && (
+                    <span className="text-slate-600 ml-auto shrink-0">{c.outcome_at}</span>
+                  )}
+                </div>
+
+                {/* ── Gap to next attempt ── */}
+                {c.gap_to_next_min != null && !isLast && (
+                  <div className="pl-3 text-[8px] text-slate-600 italic">
+                    {c.gap_to_next_min > 0
+                      ? `↓ ${fmtMin(c.gap_to_next_min)} before next assignment`
+                      : '↓ immediately reassigned'}
+                  </div>
                 )}
               </div>
             )
@@ -1335,7 +1389,10 @@ function ClosestDriverDetailRow({ item, onViewOnMap }) {
     )}>
       {/* SA header row */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
-        <span className="text-slate-400 font-mono">{item.number || '—'}</span>
+        {item.number
+          ? <SALink number={item.number} style={{ fontFamily: 'monospace', fontSize: 10 }} />
+          : <span className="text-slate-400 font-mono">—</span>
+        }
         {item.created_time && <span className="text-slate-600">{item.created_time}</span>}
         <span className="text-slate-400 truncate">{item.work_type || '—'}</span>
         <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
@@ -1469,7 +1526,10 @@ function DispatchSplitCard({ data }) {
             {drillList.map((item, i) => (
               <div key={i}>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
-                  <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+                  {item.number
+                    ? <SALink number={item.number} style={{ fontFamily: 'monospace', fontSize: 10, width: 64, display: 'inline-block' }} />
+                    : <span className="text-slate-500 font-mono w-16">—</span>
+                  }
                   {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
                   <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
                   <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
@@ -1640,18 +1700,44 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
   return (
     <div className="w-full h-full bg-slate-950 overflow-y-auto pt-2 pb-6 px-6">
       {/* ── Tab Bar ── */}
-      <div className="max-w-5xl mx-auto flex items-center gap-1 mb-4">
-        {[['today', 'Today'], ['trends', 'Trends (30d)']].map(([key, label]) => (
-          <button key={key} onClick={() => setInsightsTab(key)}
-            className={clsx('px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
-              insightsTab === key
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'
-            )}>{label}</button>
-        ))}
+      <div className="max-w-5xl mx-auto mb-4 space-y-2">
+        {/* Primary tabs */}
+        <div className="flex items-center gap-1">
+          {[['today', 'Today'], ['trends', 'Monthly Trend']].map(([key, label]) => (
+            <button key={key} onClick={() => setInsightsTab(key)}
+              className={clsx('px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                insightsTab === key
+                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'
+              )}>{label}</button>
+          ))}
+        </div>
+        {/* Month tabs — current year Jan through current month */}
+        <div className="flex items-center gap-1 pl-1">
+          <span className="text-[10px] text-slate-600 mr-1">{new Date().getFullYear()}</span>
+          {(() => {
+            const now = new Date()
+            const currentMonth = now.getMonth() // 0-based
+            const tabs = []
+            for (let m = 0; m <= currentMonth; m++) {
+              const key = `month-${now.getFullYear()}-${String(m + 1).padStart(2, '0')}`
+              const label = new Date(now.getFullYear(), m, 1).toLocaleDateString('en-US', { month: 'short' })
+              tabs.push(
+                <button key={key} onClick={() => setInsightsTab(key)}
+                  className={clsx('px-3 py-1 rounded-md text-[11px] font-medium transition-all',
+                    insightsTab === key
+                      ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                      : 'text-slate-600 hover:text-slate-300 hover:bg-slate-800/40'
+                  )}>{label}</button>
+              )
+            }
+            return tabs
+          })()}
+        </div>
       </div>
 
       {insightsTab === 'trends' && <TrendsView />}
+      {insightsTab.startsWith('month-') && <MonthTrendsView month={insightsTab.slice(6)} />}
 
       {insightsTab === 'today' && <div className="max-w-5xl mx-auto space-y-6">
 
@@ -1660,49 +1746,50 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
           {/* No Human Intervention — primary metric */}
           <DispatchSplitCard data={data} />
 
-          {/* Closest Driver */}
+          {/* Hourly Volume */}
           <div className="glass rounded-xl border border-slate-700/30 p-4">
             <div className="flex items-center gap-2 mb-3">
-              <Navigation className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Closest Available Driver</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Each donut shows the % of calls where the closest AVAILABLE (idle) driver was dispatched.\n• Busy drivers (already on another call) are excluded from the 'closest' comparison.\n• Only drivers with matching skills/truck capability for the work type are included.\n• Only drivers logged into a truck (on-shift) are counted.\n\n• Blue donut / 'System' = auto-scheduled calls.\n• Orange donut / 'Dispatcher' = manually dispatched calls.\n• 'eval' below each = calls with enough data to evaluate.\n\nIn the drill-down:\n• Blue left border = closest available driver was dispatched\n• Orange left border = a closer available driver existed\n• Dimmed rows = drivers who were busy on another call\n• 'X/Y avail' = available vs on-shift drivers\n• Click 'map' to see the SA + all drivers on the map\n\nGOAL: 100% = always sent the nearest idle, skilled driver."} />
+              <BarChart3 className="w-4 h-4 text-sky-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">Hourly Volume</span>
+              <InfoTip text={"WHAT: Call volume by hour today (Eastern Time).\n\nShows when calls are coming in so you can spot peak hours and staffing gaps.\n\nPeak hours are highlighted. If peaks don't align with your shift coverage, you may need to adjust driver start times.\n\nGOAL: Smooth coverage across peak hours. No hour should have 3x the average without extra drivers available."} />
             </div>
-            <DrillDown
-              fetchFn={() => fetchClosestDriverDetail().then(d => d.calls)}
-              renderRow={(item) => <ClosestDriverDetailRow item={item} onViewOnMap={onViewOnMap} />}
-              emptyMsg="No fleet calls with GPS data to evaluate">
-              <div className="flex items-center justify-around">
-                {auto_closest_pct != null && (
-                  <div className="text-center">
-                    <MiniDonut pct={auto_closest_pct} size={56} stroke={6} autoColor="#22c55e" manualColor="#1e293b" />
-                    <div className="text-[10px] text-indigo-400 mt-1">System</div>
-                    <div className="text-[9px] text-slate-600">{auto_closest_eval} eval</div>
+            {hv && hv.length > 0 ? (<>
+              {(() => {
+                const maxCount = Math.max(...hv.map(h => h.count), 1)
+                const nowHour = new Date().getHours()
+                const filtered = hv.filter(h => h.hour >= 6 && h.hour <= 23)
+                return (
+                  <div className="flex items-end gap-px h-24">
+                    {filtered.map(h => {
+                      const pct = Math.max(h.count / maxCount * 100, 2)
+                      const isPeak = h.count >= maxCount * 0.7
+                      const isCurrent = h.hour === nowHour
+                      return (
+                        <div key={h.hour} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                          <div className={clsx('w-full rounded-t-sm transition-colors',
+                            isCurrent ? 'bg-sky-400' : isPeak ? 'bg-sky-500/80' : 'bg-slate-700/60'
+                          )} style={{ height: `${pct}%` }} />
+                          {h.hour % 3 === 0 && (
+                            <span className="text-[7px] text-slate-600 mt-0.5">
+                              {h.hour > 12 ? `${h.hour - 12}p` : h.hour === 0 ? '12a' : h.hour === 12 ? '12p' : `${h.hour}a`}
+                            </span>
+                          )}
+                          <div className="absolute bottom-full mb-1 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                            {h.hour > 12 ? `${h.hour - 12}:00 PM` : h.hour === 0 ? '12:00 AM' : h.hour === 12 ? '12:00 PM' : `${h.hour}:00 AM`}: {h.count} calls
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                )}
-                {manual_closest_pct != null && (
-                  <div className="text-center">
-                    <MiniDonut pct={manual_closest_pct} size={56} stroke={6} autoColor="#f59e0b" manualColor="#1e293b" />
-                    <div className="text-[10px] text-amber-500 mt-1">Dispatcher</div>
-                    <div className="text-[9px] text-slate-600">{manual_closest_eval} eval</div>
-                  </div>
-                )}
-                {auto_closest_pct == null && manual_closest_pct == null && (
-                  <div className="text-xs text-slate-600 text-center py-4">No fleet GPS data available yet</div>
-                )}
+                )
+              })()}
+              <div className="flex justify-between text-[9px] text-slate-600 mt-1">
+                <span>Total: {hv.reduce((s, h) => s + h.count, 0)} calls</span>
+                <span>Peak: {Math.max(...hv.map(h => h.count))}</span>
               </div>
-              {total_extra_miles != null && total_extra_miles > 0 && (
-                <div className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-3 py-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-red-400 font-medium">Extra Miles (wrong picks)<InfoTip text={"WHAT: Wasted mileage from wrong driver picks.\n\nWhen a farther driver is sent instead of the closest one, the difference in miles is the 'extra miles'. This adds up across all wrong picks.\n\nHOW: For each call where the closest driver wasn't sent, we calculate: (assigned driver distance) - (closest driver distance) = extra miles.\n\nGOAL: Zero extra miles means perfect dispatch. High numbers mean significant fuel, time, and member wait time wasted."} /></span>
-                    <span className="text-sm font-bold text-red-300">+{total_extra_miles} mi</span>
-                  </div>
-                  <div className="flex gap-3 mt-1 text-[9px] text-slate-500">
-                    {auto_wrong > 0 && <span>Sys: {auto_extra_miles}mi ({auto_wrong})</span>}
-                    {manual_wrong > 0 && <span>Disp: {manual_extra_miles}mi ({manual_wrong})</span>}
-                  </div>
-                </div>
-              )}
-            </DrillDown>
+            </>) : (
+              <div className="text-xs text-slate-600 text-center py-6">No hourly data yet</div>
+            )}
           </div>
 
           {/* Performance Stats */}
@@ -1895,7 +1982,10 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
                     fetchFn={() => fetchDispatcherDetail(d.name).then(r => r.calls)}
                     renderRow={(item) => (
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] bg-slate-900/40 rounded px-2.5 py-1.5">
-                        <span className="text-slate-500 font-mono w-16">{item.number || '—'}</span>
+                        {item.number
+                          ? <SALink number={item.number} style={{ fontFamily: 'monospace', fontSize: 10, width: 64, display: 'inline-block' }} />
+                          : <span className="text-slate-500 font-mono w-16">—</span>
+                        }
                         {item.dispatched_at && <span className="text-blue-400 w-16">{item.dispatched_at}</span>}
                         <span className="text-slate-400 w-20 truncate">{item.work_type || '—'}</span>
                         <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
@@ -2027,116 +2117,66 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
           </div>
         </div>
 
-        {/* ── Row 6: Fleet Utilization + Hourly Volume ── */}
-        <div className="grid grid-cols-2 gap-4">
-          {/* Fleet Utilization Gauge */}
-          <div className="glass rounded-xl border border-slate-700/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Activity className="w-4 h-4 text-violet-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet Utilization</span>
-              <InfoTip text={"WHAT: How much of your on-shift fleet is currently busy vs idle.\n\nOn Shift = drivers logged into a truck (Asset). Busy = on an active SA (Dispatched/Assigned/In Progress/En Route/On Location).\n\nBroken down by tier:\n• Tow = can do tow + light service + battery\n• Light = tire/lockout/fuel/winch + battery\n• Battery = battery-only trucks\n\nGOAL: 60-80% utilization is healthy. Below 50% = overstaffed. Above 90% = no capacity buffer for surges."} />
-            </div>
-            {fu && fu.total_on_shift > 0 ? (<>
-              {/* Big gauge */}
-              <div className="flex items-center gap-4 mb-3">
-                <div className="relative w-20 h-20">
-                  <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
-                    <circle cx="18" cy="18" r="14" fill="none" stroke="#1e293b" strokeWidth="4" />
-                    <circle cx="18" cy="18" r="14" fill="none"
-                      stroke={fu.utilization_pct >= 90 ? '#ef4444' : fu.utilization_pct >= 60 ? '#a78bfa' : '#22c55e'}
-                      strokeWidth="4" strokeDasharray={`${fu.utilization_pct * 0.88} 88`} strokeLinecap="round" />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className={clsx('text-lg font-bold',
-                      fu.utilization_pct >= 90 ? 'text-red-400' : fu.utilization_pct >= 60 ? 'text-violet-400' : 'text-emerald-400'
-                    )}>{fu.utilization_pct}%</span>
-                  </div>
-                </div>
-                <div className="flex-1 space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">On Shift</span>
-                    <span className="text-white font-bold">{fu.total_on_shift}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Busy</span>
-                    <span className="text-violet-400 font-bold">{fu.total_busy}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Idle</span>
-                    <span className="text-emerald-400 font-bold">{fu.total_on_shift - fu.total_busy}</span>
-                  </div>
-                </div>
-              </div>
-              {/* Tier breakdown */}
-              <div className="border-t border-slate-800/50 pt-2 space-y-1">
-                {['tow', 'light', 'battery'].map(tier => {
-                  const t = fu.by_tier?.[tier]
-                  if (!t || t.on_shift === 0) return null
-                  const pct = Math.round(100 * t.busy / Math.max(t.on_shift, 1))
-                  return (
-                    <div key={tier} className="flex items-center gap-2 text-[10px]">
-                      <span className="text-slate-500 w-12 uppercase font-medium">{tier}</span>
-                      <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
-                        <div className={clsx('h-full rounded-full',
-                          pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-violet-500' : 'bg-emerald-500'
-                        )} style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-slate-400 w-16 text-right">{t.busy}/{t.on_shift} <span className="text-slate-600">({pct}%)</span></span>
-                    </div>
-                  )
-                })}
-              </div>
-            </>) : (
-              <div className="text-xs text-slate-600 text-center py-6">No drivers on shift yet</div>
-            )}
+        {/* ── Row 6: Fleet Utilization ── */}
+        <div className="glass rounded-xl border border-slate-700/30 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Activity className="w-4 h-4 text-violet-400" />
+            <span className="text-xs font-bold text-white uppercase tracking-wide">Fleet Utilization</span>
+            <InfoTip text={"WHAT: How much of your on-shift fleet is currently busy vs idle.\n\nOn Shift = drivers logged into a truck (Asset). Busy = on an active SA (Dispatched/Assigned/In Progress/En Route/On Location).\n\nBroken down by tier:\n• Tow = can do tow + light service + battery\n• Light = tire/lockout/fuel/winch + battery\n• Battery = battery-only trucks\n\nGOAL: 60-80% utilization is healthy. Below 50% = overstaffed. Above 90% = no capacity buffer for surges."} />
           </div>
-
-          {/* Hourly Volume */}
-          <div className="glass rounded-xl border border-slate-700/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart3 className="w-4 h-4 text-sky-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">Hourly Volume</span>
-              <InfoTip text={"WHAT: Call volume by hour today (Eastern Time).\n\nShows when calls are coming in so you can spot peak hours and staffing gaps.\n\nPeak hours are highlighted. If peaks don't align with your shift coverage, you may need to adjust driver start times.\n\nGOAL: Smooth coverage across peak hours. No hour should have 3x the average without extra drivers available."} />
+          {fu && fu.total_on_shift > 0 ? (<>
+            {/* Big gauge */}
+            <div className="flex items-center gap-4 mb-3">
+              <div className="relative w-20 h-20">
+                <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#1e293b" strokeWidth="4" />
+                  <circle cx="18" cy="18" r="14" fill="none"
+                    stroke={fu.utilization_pct >= 90 ? '#ef4444' : fu.utilization_pct >= 60 ? '#a78bfa' : '#22c55e'}
+                    strokeWidth="4" strokeDasharray={`${fu.utilization_pct * 0.88} 88`} strokeLinecap="round" />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className={clsx('text-lg font-bold',
+                    fu.utilization_pct >= 90 ? 'text-red-400' : fu.utilization_pct >= 60 ? 'text-violet-400' : 'text-emerald-400'
+                  )}>{fu.utilization_pct}%</span>
+                </div>
+              </div>
+              <div className="flex-1 space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500">On Shift</span>
+                  <span className="text-white font-bold">{fu.total_on_shift}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500">Busy</span>
+                  <span className="text-violet-400 font-bold">{fu.total_busy}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500">Idle</span>
+                  <span className="text-emerald-400 font-bold">{fu.total_on_shift - fu.total_busy}</span>
+                </div>
+              </div>
             </div>
-            {hv && hv.length > 0 ? (<>
-              {(() => {
-                const maxCount = Math.max(...hv.map(h => h.count), 1)
-                const nowHour = new Date().getHours()
-                const filtered = hv.filter(h => h.hour >= 6 && h.hour <= 23)
+            {/* Tier breakdown */}
+            <div className="border-t border-slate-800/50 pt-2 space-y-1">
+              {['tow', 'light', 'battery'].map(tier => {
+                const t = fu.by_tier?.[tier]
+                if (!t || t.on_shift === 0) return null
+                const pct = Math.round(100 * t.busy / Math.max(t.on_shift, 1))
                 return (
-                  <div className="flex items-end gap-px h-24">
-                    {filtered.map(h => {
-                      const pct = Math.max(h.count / maxCount * 100, 2)
-                      const isPeak = h.count >= maxCount * 0.7
-                      const isCurrent = h.hour === nowHour
-                      return (
-                        <div key={h.hour} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-                          <div className={clsx('w-full rounded-t-sm transition-colors',
-                            isCurrent ? 'bg-sky-400' : isPeak ? 'bg-sky-500/80' : 'bg-slate-700/60'
-                          )} style={{ height: `${pct}%` }} />
-                          {h.hour % 3 === 0 && (
-                            <span className="text-[7px] text-slate-600 mt-0.5">
-                              {h.hour > 12 ? `${h.hour - 12}p` : h.hour === 0 ? '12a' : h.hour === 12 ? '12p' : `${h.hour}a`}
-                            </span>
-                          )}
-                          <div className="absolute bottom-full mb-1 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                            {h.hour > 12 ? `${h.hour - 12}:00 PM` : h.hour === 0 ? '12:00 AM' : h.hour === 12 ? '12:00 PM' : `${h.hour}:00 AM`}: {h.count} calls
-                          </div>
-                        </div>
-                      )
-                    })}
+                  <div key={tier} className="flex items-center gap-2 text-[10px]">
+                    <span className="text-slate-500 w-12 uppercase font-medium">{tier}</span>
+                    <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div className={clsx('h-full rounded-full',
+                        pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-violet-500' : 'bg-emerald-500'
+                      )} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-slate-400 w-16 text-right">{t.busy}/{t.on_shift} <span className="text-slate-600">({pct}%)</span></span>
                   </div>
                 )
-              })()}
-              <div className="flex justify-between text-[9px] text-slate-600 mt-1">
-                <span>Total: {hv.reduce((s, h) => s + h.count, 0)} calls</span>
-                <span>Peak: {Math.max(...hv.map(h => h.count))}</span>
-              </div>
-            </>) : (
-              <div className="text-xs text-slate-600 text-center py-6">No hourly data yet</div>
-            )}
-          </div>
-
+              })}
+            </div>
+          </>) : (
+            <div className="text-xs text-slate-600 text-center py-6">No drivers on shift yet</div>
+          )}
         </div>
 
         <div className="text-[10px] text-slate-600 text-center">
@@ -2228,6 +2268,30 @@ function TrendsView() {
 
   const days = trends.days.map(d => ({ ...d, label: d.date.slice(5) })) // "03-15"
 
+  const monthlyData = (() => {
+    const byMonth = {}
+    trends.days.forEach(d => {
+      const key = d.date.slice(0, 7)
+      if (!byMonth[key]) byMonth[key] = []
+      byMonth[key].push(d)
+    })
+    return Object.keys(byMonth).sort().map(key => {
+      const ds = byMonth[key]
+      const label = new Date(key + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      const vol = ds.reduce((s, d) => s + (d.volume || 0), 0)
+      const completed = ds.reduce((s, d) => s + (d.completed || 0), 0)
+      const avg = f => { const vs = ds.map(d => d[f]).filter(v => v != null && !isNaN(v)); return vs.length ? vs.reduce((s, v) => s + v, 0) / vs.length : null }
+      return {
+        label, days: ds.length, vol, completed,
+        completion: vol > 0 ? (completed / vol * 100) : null,
+        auto: avg('auto_pct'), sla: avg('sla_pct'),
+        fleet_ata: avg('fleet_ata'), towbook_ata: avg('towbook_ata'),
+        reassignments: ds.reduce((s, d) => s + (d.reassignments || 0), 0),
+        satisfaction: avg('satisfaction_pct'),
+      }
+    })
+  })()
+
   const customTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null
     return (
@@ -2287,7 +2351,7 @@ function TrendsView() {
         </TrendChart>
 
         <TrendChart title="Auto Dispatch %"
-          tip="% of all calls (Fleet + Towbook) handled without any human dispatcher intervention.\nA Membership User making ANY status change on the SA = human touch.\nTarget: 60%+. Higher = more efficient operation.">
+          tip="% of all calls (Fleet + Towbook) dispatched without a human reassignment.\nManual = SA was assigned 2+ times AND a human dispatcher was involved in the reassignment.\nSingle-assignment calls (even if created by a human) count as Auto.\nTarget: 60%+. Higher = more efficient operation.">
           <ComposedChart data={days}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
             <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
@@ -2351,6 +2415,54 @@ function TrendsView() {
         </TrendChart>
       </div>
 
+      {/* Monthly Summary Table */}
+      {monthlyData.length > 0 && (
+        <div className="glass rounded-xl border border-slate-700/30 p-4">
+          <div className="text-xs font-bold text-white uppercase tracking-wide mb-3">Monthly Summary</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-700/50">
+                  <th className="text-left pb-2 pr-4 font-medium">Month</th>
+                  <th className="text-right pb-2 px-2 font-medium">Days</th>
+                  <th className="text-right pb-2 px-2 font-medium">Calls</th>
+                  <th className="text-right pb-2 px-2 font-medium">Completed</th>
+                  <th className="text-right pb-2 px-2 font-medium">Complt%</th>
+                  <th className="text-right pb-2 px-2 font-medium">Auto%</th>
+                  <th className="text-right pb-2 px-2 font-medium">SLA%</th>
+                  <th className="text-right pb-2 px-2 font-medium">Fleet ATA</th>
+                  <th className="text-right pb-2 px-2 font-medium">TB ATA</th>
+                  <th className="text-right pb-2 px-2 font-medium">Reassign</th>
+                  <th className="text-right pb-2 pl-2 font-medium">Satisf%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyData.map((m, i) => {
+                  const fmt1 = v => v != null ? v.toFixed(1) : '—'
+                  const fmt0 = v => v != null ? Math.round(v) : '—'
+                  const isLast = i === monthlyData.length - 1
+                  return (
+                    <tr key={m.label} className={clsx('border-b border-slate-800/40 hover:bg-slate-800/20', isLast && 'text-slate-200')}>
+                      <td className="py-1.5 pr-4 text-slate-300 font-medium whitespace-nowrap">{m.label}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-500">{m.days}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-300">{m.vol.toLocaleString()}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-400">{m.completed.toLocaleString()}</td>
+                      <td className="py-1.5 px-2 text-right text-emerald-400">{fmt1(m.completion)}%</td>
+                      <td className="py-1.5 px-2 text-right text-blue-400">{fmt1(m.auto)}%</td>
+                      <td className="py-1.5 px-2 text-right text-green-400">{fmt1(m.sla)}%</td>
+                      <td className="py-1.5 px-2 text-right text-blue-300">{fmt0(m.fleet_ata)}m</td>
+                      <td className="py-1.5 px-2 text-right text-amber-400">{fmt0(m.towbook_ata)}m</td>
+                      <td className="py-1.5 px-2 text-right text-red-400">{m.reassignments.toLocaleString()}</td>
+                      <td className="py-1.5 pl-2 text-right text-purple-400">{fmt1(m.satisfaction)}%</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Row 4: Top & Bottom Garages */}
       {(trends.top_garages?.length > 0 || trends.bottom_garages?.length > 0) && (
         <div className="grid grid-cols-2 gap-4">
@@ -2404,6 +2516,282 @@ function TrendsView() {
   )
 }
 
+function MonthTrendsView({ month }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const retryRef = useRef(null)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    fetchMonthTrends(month)
+      .then(res => {
+          if (cancelled) return
+          if (res?.loading) {
+            // Backend is generating — auto-retry in 10s
+            setData(null)
+            setLoading(false)
+            retryRef.current = setTimeout(() => { if (!cancelled) load() }, 10000)
+          } else {
+            setData(res)
+            setLoading(false)
+          }
+        })
+        .catch(e => {
+          if (!cancelled) {
+            setError(e.response?.data?.detail || e.message || 'Failed to load')
+            setLoading(false)
+          }
+        })
+  }, [month])
+
+  useEffect(() => {
+    let cancelled = false
+    if (retryRef.current) clearTimeout(retryRef.current)
+    const wrapped = () => { if (!cancelled) load() }
+    wrapped()
+    return () => { cancelled = true; if (retryRef.current) clearTimeout(retryRef.current) }
+  }, [load])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await refreshMonthTrends(month)
+      // Backend clears cache and starts regeneration — poll until ready
+      const poll = () => {
+        fetchMonthTrends(month).then(res => {
+          if (res?.loading) {
+            retryRef.current = setTimeout(poll, 5000)
+          } else {
+            setData(res)
+            setRefreshing(false)
+          }
+        }).catch(() => setRefreshing(false))
+      }
+      retryRef.current = setTimeout(poll, 3000)
+    } catch {
+      setRefreshing(false)
+    }
+  }
+
+  const monthLabel = (() => {
+    const [y, m] = month.split('-')
+    return new Date(+y, +m - 1, 2).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  })()
+
+  if (loading) return (
+    <div className="max-w-5xl mx-auto flex items-center justify-center py-20">
+      <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+      <span className="ml-2 text-sm text-slate-500">Loading {monthLabel}...</span>
+    </div>
+  )
+  if (error) return <div className="max-w-5xl mx-auto text-center text-red-400 py-10 text-sm">{error}</div>
+  if (!data?.days?.length) return (
+    <div className="max-w-5xl mx-auto text-center py-10">
+      <Loader2 className="w-5 h-5 animate-spin text-blue-500 mx-auto mb-2" />
+      <div className="text-sm text-slate-500">Generating {monthLabel} data...</div>
+      <div className="text-xs text-slate-600 mt-1">This takes about 1 minute. Auto-refreshing every 10s.</div>
+    </div>
+  )
+
+  const days = data.days.map(d => ({ ...d, label: d.date.slice(8) })) // day of month "01", "02"
+
+  // Aggregate summary for the month
+  const summary = (() => {
+    const ds = data.days
+    const vol = ds.reduce((s, d) => s + (d.volume || 0), 0)
+    const completed = ds.reduce((s, d) => s + (d.completed || 0), 0)
+    const avg = f => { const vs = ds.map(d => d[f]).filter(v => v != null && !isNaN(v)); return vs.length ? Math.round(vs.reduce((s, v) => s + v, 0) / vs.length) : null }
+    return {
+      vol, completed,
+      completion: vol > 0 ? Math.round(100 * completed / vol) : null,
+      auto: avg('auto_pct'), sla: avg('sla_pct'),
+      fleet_ata: avg('fleet_ata'), towbook_ata: avg('towbook_ata'),
+      reassignments: ds.reduce((s, d) => s + (d.reassignments || 0), 0),
+      satisfaction: avg('satisfaction_pct'),
+    }
+  })()
+
+  const customTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null
+    return (
+      <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl">
+        <div className="font-semibold text-slate-300 mb-1">Day {label}</div>
+        {payload.map((p, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
+            <span className="text-slate-400">{p.name}:</span>
+            <span className="font-semibold text-white">{p.value != null ? (typeof p.value === 'number' && p.value % 1 !== 0 ? p.value.toFixed(1) : p.value) : '—'}{p.unit || ''}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const fmt0 = v => v != null ? Math.round(v) : '—'
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+
+      {/* Header + Summary Stats */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-slate-500">{monthLabel} · Excludes Tow Drop-Off</div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition disabled:opacity-40 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700/50"
+        >
+          <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+          {refreshing ? 'Recalculating…' : 'Refresh Data'}
+        </button>
+      </div>
+
+      {/* Summary row */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          ['Calls', summary.vol?.toLocaleString(), 'text-slate-200'],
+          ['Completion', summary.completion != null ? `${summary.completion}%` : '—', 'text-emerald-400'],
+          ['Auto %', summary.auto != null ? `${summary.auto}%` : '—', 'text-blue-400'],
+          ['Fleet ATA', summary.fleet_ata != null ? `${summary.fleet_ata}m` : '—', 'text-blue-300'],
+          ['SLA %', summary.sla != null ? `${summary.sla}%` : '—', 'text-green-400'],
+        ].map(([lbl, val, clr]) => (
+          <div key={lbl} className="glass rounded-xl border border-slate-700/30 p-3 text-center">
+            <div className="text-[9px] text-slate-500 uppercase tracking-wide mb-1">{lbl}</div>
+            <div className={clsx('text-xl font-bold', clr)}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Row 1: Volume + Completion | Auto % */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="Daily Volume + Completion Rate"
+          tip="Gray bars = total calls. Green bars = completed.\nGreen line = completion %.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis yAxisId="vol" tick={{ fill: '#64748b', fontSize: 10 }} />
+            <YAxis yAxisId="pct" orientation="right" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Bar yAxisId="vol" dataKey="volume" name="Total" fill="#334155" radius={[2, 2, 0, 0]} />
+            <Bar yAxisId="vol" dataKey="completed" name="Completed" fill={CHART_COLORS.green} fillOpacity={0.5} radius={[2, 2, 0, 0]} />
+            <Line yAxisId="pct" dataKey="completion_pct" name="Completion %" stroke={CHART_COLORS.green} strokeWidth={2} dot={false} unit="%" />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Auto Dispatch %"
+          tip="% of calls dispatched without a human reassignment.\nManual = SA was assigned 2+ times AND a human dispatcher was involved.\nTarget: 60%+.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="auto_pct" name="Auto %" stroke={CHART_COLORS.blue} fill={CHART_COLORS.blue} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" />
+            <Line dataKey={() => 60} name="Target" stroke="#475569" strokeDasharray="5 5" strokeWidth={1} dot={false} />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Row 2: SLA % | ATA */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="45-min SLA Hit Rate"
+          tip="% of Fleet calls where the driver arrived within 45 minutes.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="sla_pct" name="SLA %" stroke={CHART_COLORS.green} fill={CHART_COLORS.green} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Avg Response Time (ATA)"
+          tip="Blue = Fleet (ActualStartTime). Amber = Towbook (SAHistory 'On Location').">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}m`} />
+            <RechartsTooltip content={customTooltip} />
+            <Line dataKey="fleet_ata" name="Fleet" stroke={CHART_COLORS.blue} strokeWidth={2} dot={false} unit=" min" />
+            <Line dataKey="towbook_ata" name="Towbook" stroke={CHART_COLORS.amber} strokeWidth={2} dot={false} unit=" min" />
+            <Line dataKey={() => 45} name="45-min target" stroke="#475569" strokeDasharray="5 5" strokeWidth={1} dot={false} />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Row 3: Reassignments | Satisfaction */}
+      <div className="grid grid-cols-2 gap-4">
+        <TrendChart title="Reassignments / Day"
+          tip="Number of driver/garage reassignment changes per day.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+            <RechartsTooltip content={customTooltip} />
+            <Bar dataKey="reassignments" name="Reassignments" fill={CHART_COLORS.red} fillOpacity={0.6} radius={[2, 2, 0, 0]} />
+          </ComposedChart>
+        </TrendChart>
+
+        <TrendChart title="Member Satisfaction"
+          tip="% of survey respondents who selected 'Totally Satisfied'.">
+          <ComposedChart data={days}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={2} />
+            <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+            <RechartsTooltip content={customTooltip} />
+            <Area dataKey="satisfaction_pct" name="Totally Satisfied %" stroke={CHART_COLORS.purple} fill={CHART_COLORS.purple} fillOpacity={0.1} strokeWidth={2} dot={false} unit="%" connectNulls />
+          </ComposedChart>
+        </TrendChart>
+      </div>
+
+      {/* Top & Bottom Garages */}
+      {(data.top_garages?.length > 0 || data.bottom_garages?.length > 0) && (
+        <div className="grid grid-cols-2 gap-4">
+          {data.top_garages?.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Top Garages ({monthLabel})</span>
+              </div>
+              <div className="space-y-1.5">
+                {data.top_garages.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] bg-emerald-950/20 rounded px-3 py-1.5">
+                    <span className="text-emerald-400 font-bold w-4">#{i + 1}</span>
+                    <span className="text-slate-300 flex-1 truncate" title={g.name}>{g.name}</span>
+                    <span className="text-emerald-400 font-semibold">{g.ata}m</span>
+                    <span className="text-slate-500">{g.completion_pct}%</span>
+                    <span className="text-slate-600">{g.volume} calls</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {data.bottom_garages?.length > 0 && (
+            <div className="glass rounded-xl border border-slate-700/30 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">Needs Improvement ({monthLabel})</span>
+              </div>
+              <div className="space-y-1.5">
+                {data.bottom_garages.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] bg-red-950/20 rounded px-3 py-1.5">
+                    <span className="text-red-400 font-bold w-4">#{i + 1}</span>
+                    <span className="text-slate-300 flex-1 truncate" title={g.name}>{g.name}</span>
+                    <span className="text-red-400 font-semibold">{g.ata}m</span>
+                    <span className="text-slate-500">{g.completion_pct}%</span>
+                    <span className="text-slate-600">{g.volume} calls</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function InsightStat({ label, auto, manual }) {
   return (
     <div className="text-center">
@@ -2438,7 +2826,21 @@ function SuggestionCard({ s }) {
             <span className={clsx('text-[9px] font-bold uppercase tracking-wider', c.iconColor)}>{c.badge}</span>
             {s.priority === 'critical' && <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/30 text-red-300 font-bold animate-pulse">URGENT</span>}
           </div>
-          <div className="text-slate-300 leading-relaxed">{s.reason}</div>
+          <div className="text-slate-300 leading-relaxed">
+            {s.type === 'escalate' && s.call_number
+              ? (() => {
+                  // reason = "SA SA-718887 at 287 min -- PAST SLA"
+                  // Split on the call_number so we can wrap it in SALink
+                  const parts = s.reason.split(s.call_number)
+                  return <>
+                    {parts[0]}
+                    <SALink number={s.call_number} style={{ fontSize: 'inherit', color: '#f87171', fontWeight: 700 }} />
+                    {parts[1]}
+                  </>
+                })()
+              : s.reason
+            }
+          </div>
           {s.type === 'reposition' && s.driver && (
             <div className="flex items-center gap-1 mt-1 text-blue-300">
               <ArrowRight className="w-3 h-3" />

@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { SAReportProvider } from './contexts/SAReportContext.jsx'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import GarageDetail from './pages/GarageDetail'
@@ -14,6 +15,7 @@ import OnRoute from './pages/OnRoute'
 
 export default function App() {
   return (
+    <SAReportProvider>
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<CommandCenter />} />
@@ -31,5 +33,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </SAReportProvider>
   )
 }

@@ -13,6 +13,7 @@ from utils import (
     haversine,
 )
 from sf_client import sf_query_all, sf_parallel, get_stats as sf_stats, sanitize_soql
+from dispatch_utils import fetch_gps_history, gps_at_time, parse_assign_events, classify_dispatch
 import cache
 
 router = APIRouter()
@@ -113,12 +114,207 @@ def gps_health():
 def lookup_sa(sa_number: str):
     """Lookup an SA by AppointmentNumber and return driver positions."""
     sa_number = sanitize_soql(sa_number)
+    # Accept both "717120" and "SA-717120"
+    if not sa_number.upper().startswith('SA-'):
+        sa_number = f'SA-{sa_number}'
     def _fetch():
         return _lookup_sa_impl(sa_number)
     result = cache.cached_query(f'sa_lookup_{sa_number}', _fetch, ttl=30)
     if result is None:
         raise HTTPException(status_code=404, detail=f"SA {sa_number} not found")
     return result
+
+
+_SKILL_MAP = {
+    'tow':         ['tow', 'flat bed', 'flatbed'],
+    'battery':     ['battery'],
+    'tire':        ['tire'],
+    'lockout':     ['lockout'],
+    'fuel':        ['fuel', 'light'],
+    'winch':       ['winch', 'light'],
+    'extrication': ['extrication'],
+}
+
+
+def _fetch_sa_core(sa: dict) -> dict | None:
+    """Fetch territory, member, skill, and GPS data for an SA.
+
+    Shared by _lookup_sa_impl (map popup) and the SA Report endpoint.
+    Returns a data bag with raw SF rows and derived helpers, or None if the
+    territory has no fleet members (e.g. Towbook-only territory).
+
+    Args:
+        sa: Raw ServiceAppointment row with at minimum:
+            Id, ServiceTerritoryId, WorkType.Name, CreatedDate,
+            Latitude, Longitude, ERS_Dispatched_Geolocation__*_s
+    """
+    from sf_client import sf_parallel as _sf_par, sf_query_all as _sqa_local
+    from collections import defaultdict as _dd
+
+    tid = sa.get('ServiceTerritoryId')
+    if not tid:
+        return None
+
+    sa_id = sa['Id']
+    wt_name = (sa.get('WorkType') or {}).get('Name', '').lower()
+    sa_lat = float(sa['Latitude']) if sa.get('Latitude') else None
+    sa_lon = float(sa['Longitude']) if sa.get('Longitude') else None
+    disp_lat = sa.get('ERS_Dispatched_Geolocation__Latitude__s')
+    disp_lon = sa.get('ERS_Dispatched_Geolocation__Longitude__s')
+
+    # ── Parallel fetch: AR, SAHistory, territory members ────────────────────
+    def _get_ar():
+        return _sqa_local(f"""
+            SELECT ServiceResourceId, ServiceResource.Name, CreatedDate
+            FROM AssignedResource
+            WHERE ServiceAppointmentId = '{sa_id}'
+            ORDER BY CreatedDate DESC LIMIT 1
+        """)
+
+    def _get_sa_hist():
+        return _sqa_local(f"""
+            SELECT ServiceAppointmentId, NewValue, CreatedDate,
+                   CreatedBy.Name, CreatedBy.Profile.Name
+            FROM ServiceAppointmentHistory
+            WHERE ServiceAppointmentId = '{sa_id}'
+              AND Field = 'ERS_Assigned_Resource__c'
+            ORDER BY CreatedDate ASC
+        """)
+
+    def _get_members():
+        return _sqa_local(f"""
+            SELECT ServiceResourceId, ServiceResource.Name,
+                   ServiceResource.IsActive, TerritoryType
+            FROM ServiceTerritoryMember
+            WHERE ServiceTerritoryId = '{tid}'
+              AND TerritoryType IN ('P', 'S')
+              AND ServiceResource.IsActive = true
+              AND ServiceResource.ResourceType = 'T'
+        """)
+
+    first = _sf_par(ar=_get_ar, sa_hist=_get_sa_hist, members=_get_members)
+
+    ar_row = first['ar'][0] if first['ar'] else None
+    assigned_sr_id = ar_row.get('ServiceResourceId') if ar_row else None
+
+    # True dispatch time = first SAHistory row (not AR.CreatedDate, which reflects
+    # the FINAL assignment after any reassignments)
+    assign_events_map = parse_assign_events(first['sa_hist'])
+    sa_events = assign_events_map.get(sa_id, [])
+    dispatch_dt = (sa_events[0]['ts'] if sa_events else None) or _parse_dt(sa.get('CreatedDate'))
+
+    # Filter out Towbook placeholder members
+    members = [m for m in first['members']
+               if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
+
+    # Cascade fallback: if the SA's current territory has no fleet members (e.g. it was
+    # cascaded from a Fleet territory to a Towbook garage, so ServiceTerritoryId now points
+    # to the Towbook territory), look back in SAHistory for the original fleet territory.
+    if not members:
+        tid_hist = _sqa_local(f"""
+            SELECT OldValue, CreatedDate
+            FROM ServiceAppointmentHistory
+            WHERE ServiceAppointmentId = '{sa_id}'
+              AND Field = 'ServiceTerritoryId'
+            ORDER BY CreatedDate ASC
+            LIMIT 1
+        """)
+        original_tid = tid_hist[0].get('OldValue') if tid_hist else None
+        if original_tid and original_tid != tid:
+            orig_members_raw = _sqa_local(f"""
+                SELECT ServiceResourceId, ServiceResource.Name,
+                       ServiceResource.IsActive, TerritoryType
+                FROM ServiceTerritoryMember
+                WHERE ServiceTerritoryId = '{original_tid}'
+                  AND TerritoryType IN ('P', 'S')
+                  AND ServiceResource.IsActive = true
+                  AND ServiceResource.ResourceType = 'T'
+            """)
+            members = [m for m in orig_members_raw
+                       if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
+
+    if not members:
+        return None
+
+    all_sr_ids = list({m.get('ServiceResourceId') for m in members if m.get('ServiceResourceId')})
+    if assigned_sr_id and assigned_sr_id not in all_sr_ids:
+        all_sr_ids.append(assigned_sr_id)
+
+    # ── Skill filtering ──────────────────────────────────────────────────────
+    required_skills = []
+    for kw, skills in _SKILL_MAP.items():
+        if kw in wt_name:
+            required_skills.extend(skills)
+
+    ids_quoted = ', '.join(f"'{i}'" for i in all_sr_ids)
+
+    def _get_skills():
+        if not required_skills:
+            return []
+        cond = ' OR '.join(f"Skill.MasterLabel LIKE '%{s.title()}%'" for s in required_skills)
+        return _sqa_local(f"""
+            SELECT ServiceResourceId, Skill.MasterLabel
+            FROM ServiceResourceSkill
+            WHERE ServiceResourceId IN ({ids_quoted})
+              AND ({cond})
+              AND (EffectiveStartDate = null OR EffectiveStartDate <= TODAY)
+              AND (EffectiveEndDate = null OR EffectiveEndDate >= TODAY)
+        """)
+
+    skill_rows = _get_skills()
+
+    # Build both a filtered set (for map display) and a full dict (for build_assign_steps)
+    driver_skills = _dd(set)
+    for r in skill_rows:
+        sr_id = r.get('ServiceResourceId')
+        lbl = (r.get('Skill') or {}).get('MasterLabel', '')
+        if sr_id and lbl:
+            driver_skills[sr_id].add(lbl)
+
+    if required_skills:
+        skilled_ids = {sr_id for sr_id in driver_skills}
+        if assigned_sr_id:
+            skilled_ids.add(assigned_sr_id)
+    else:
+        skilled_ids = set(all_sr_ids)
+
+    # ── GPS history around dispatch time ────────────────────────────────────
+    # 15-min lookback: only show drivers actively on Track at the moment of dispatch.
+    # A driver with GPS older than 15 min has likely logged off their vehicle.
+    # The 5-min forward buffer handles slight clock skew between Track and SF.
+    if dispatch_dt:
+        hist_start = (dispatch_dt - timedelta(minutes=15)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        hist_end   = (dispatch_dt + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        lat_hist, lon_hist = fetch_gps_history(list(skilled_ids), hist_start, hist_end)
+    else:
+        lat_hist, lon_hist = _dd(list), _dd(list)
+
+    # Name map (members + assigned driver if external)
+    name_map = {m.get('ServiceResourceId'): (m.get('ServiceResource') or {}).get('Name', '?')
+                for m in members}
+    if ar_row and assigned_sr_id:
+        name_map[assigned_sr_id] = (ar_row.get('ServiceResource') or {}).get('Name',
+                                    name_map.get(assigned_sr_id, '?'))
+
+    return {
+        'sa':             sa,
+        'ar_row':         ar_row,
+        'assigned_sr_id': assigned_sr_id,
+        'sa_events':      sa_events,
+        'dispatch_dt':    dispatch_dt,
+        'members':        members,
+        'all_sr_ids':     all_sr_ids,
+        'skilled_ids':    skilled_ids,
+        'driver_skills':  dict(driver_skills),
+        'name_map':       name_map,
+        'lat_hist':       lat_hist,
+        'lon_hist':       lon_hist,
+        'required_skills': required_skills,
+        'disp_lat':       disp_lat,
+        'disp_lon':       disp_lon,
+        'sa_lat':         sa_lat,
+        'sa_lon':         sa_lon,
+    }
 
 
 def _lookup_sa_impl(sa_number: str):
@@ -177,81 +373,46 @@ def _lookup_sa_impl(sa_number: str):
         'drivers': [],
     }
 
-    # Live driver GPS — only drivers logged into a vehicle
-    if tid:
-        from sf_client import sf_parallel as _sf_par, sf_query_all as _sqa_local
+    core = _fetch_sa_core(sa)
+    if not core:
+        return result
 
-        def _get_members():
-            return _sqa_local(f"""
-                SELECT ServiceResourceId, ServiceResource.Name,
-                       ServiceResource.LastKnownLatitude,
-                       ServiceResource.LastKnownLongitude,
-                       ServiceResource.LastKnownLocationDate,
-                       TerritoryType
-                FROM ServiceTerritoryMember
-                WHERE ServiceTerritoryId = '{tid}'
-            """)
+    assigned_sr_id = core['assigned_sr_id']
+    disp_lat, disp_lon = core['disp_lat'], core['disp_lon']
+    sa_lat, sa_lon = core['sa_lat'], core['sa_lon']
+    dispatch_dt = core['dispatch_dt']
 
-        def _get_vehicles():
-            return _sqa_local("""
-                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-            """)
+    for sr_id in core['skilled_ids']:
+        is_assigned = (sr_id == assigned_sr_id)
 
-        fetched = _sf_par(members=_get_members, vehicles=_get_vehicles)
-        members = fetched['members']
-        members = [m for m in members
-                    if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
-
-        # Build vehicle login set
-        vehicle_login_ids = set()
-        vehicle_info = {}
-        for asset in fetched['vehicles']:
-            dr_id = asset.get('ERS_Driver__c')
-            if dr_id:
-                vehicle_login_ids.add(dr_id)
-                vehicle_info[dr_id] = {
-                    'truck': asset.get('Name', ''),
-                    'capabilities': asset.get('ERS_Truck_Capabilities__c', ''),
-                }
-
-        sa_lat = sa.get('Latitude')
-        sa_lon = sa.get('Longitude')
-        if sa_lat: sa_lat = float(sa_lat)
-        if sa_lon: sa_lon = float(sa_lon)
-
-        for m in members:
-            sr = m.get('ServiceResource') or {}
-            sr_id = m.get('ServiceResourceId')
-            # Only include drivers logged into a vehicle
-            if sr_id not in vehicle_login_ids:
+        if is_assigned and disp_lat and disp_lon:
+            d_lat, d_lon = float(disp_lat), float(disp_lon)
+            gps_label = 'at dispatch'
+        else:
+            d_lat, d_lon = gps_at_time(sr_id, dispatch_dt, core['lat_hist'], core['lon_hist'])
+            if d_lat is None or d_lon is None:
                 continue
-            d_lat = sr.get('LastKnownLatitude')
-            d_lon = sr.get('LastKnownLongitude')
-            if d_lat: d_lat = float(d_lat)
-            if d_lon: d_lon = float(d_lon)
-            dist = haversine(d_lat, d_lon, sa_lat, sa_lon) if d_lat and d_lon and sa_lat and sa_lon else None
+            gps_label = dispatch_dt.strftime('%I:%M %p') if dispatch_dt else '?'
 
-            gps_date = _to_eastern(sr.get('LastKnownLocationDate'))
-            truck = vehicle_info.get(sr_id, {})
-            result['drivers'].append({
-                'id': sr_id,
-                'name': sr.get('Name', '?'),
-                'phone': '',
-                'lat': d_lat,
-                'lon': d_lon,
-                'gps_time': gps_date.strftime('%I:%M %p') if gps_date else '?',
-                'distance': dist,
-                'territory_type': m.get('TerritoryType', '?'),
-                'truck': truck.get('truck', ''),
-                'truck_capabilities': truck.get('capabilities', ''),
-                'next_job': None,
-            })
+        dist = haversine(d_lat, d_lon, sa_lat, sa_lon) if d_lat and d_lon and sa_lat and sa_lon else None
 
-        result['drivers'].sort(key=lambda d: d.get('distance') or 9999)
+        result['drivers'].append({
+            'id': sr_id,
+            'name': core['name_map'].get(sr_id, '?'),
+            'phone': '',
+            'lat': d_lat,
+            'lon': d_lon,
+            'gps_time': gps_label,
+            'distance': round(dist, 1) if dist else None,
+            'territory_type': next((m.get('TerritoryType', '') for m in core['members']
+                                    if m.get('ServiceResourceId') == sr_id), ''),
+            'truck': '',
+            'truck_capabilities': '',
+            'next_job': None,
+            'is_assigned': is_assigned,
+        })
 
+    result['drivers'].sort(key=lambda d: (0 if d['is_assigned'] else 1, d.get('distance') or 9999))
     return result
 
 
@@ -268,12 +429,7 @@ def _is_system_dispatcher(name: str) -> bool:
     return n in _SYSTEM_DISPATCHERS or 'integration' in n or 'system' in n or 'automated' in n
 
 
-def _haversine_mi(lat1, lon1, lat2, lon2):
-    R = 3958.8  # Earth radius in miles
-    dlat = _math.radians(lat2 - lat1)
-    dlon = _math.radians(lon2 - lon1)
-    a = _math.sin(dlat/2)**2 + _math.cos(_math.radians(lat1)) * _math.cos(_math.radians(lat2)) * _math.sin(dlon/2)**2
-    return round(R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1-a)), 1)
+_haversine_mi = haversine  # alias — removed duplicate, use haversine from utils
 
 
 @router.get("/api/scheduler-insights")
@@ -298,12 +454,11 @@ def scheduler_insights():
                        ERS_Dispatched_Geolocation__Latitude__s,
                        ERS_Dispatched_Geolocation__Longitude__s,
                        ServiceTerritoryId, ServiceTerritory.Name,
-                       WorkType.Name
+                       WorkType.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointment
                 WHERE CreatedDate >= {cutoff_utc}
                   AND ServiceTerritoryId != null
                   AND ERS_Dispatch_Method__c IN ('Field Services', 'Towbook')
-                  AND Status IN ('Dispatched','Completed','Assigned')
                 ORDER BY CreatedDate ASC
             """)
 
@@ -418,38 +573,34 @@ def scheduler_insights():
             if tid and dr_id and dr_id in fleet_driver_gps:
                 territory_drivers[tid].add(dr_id)
 
-        # 2) Batch query ServiceAppointmentHistory for status changes
-        #    Human intervention = a Membership User (dispatcher) made ANY status
-        #    change on the SA. Dispatchers use the full workflow (Assigned → Spotted
-        #    → Dispatched) so checking only 'Dispatched' undercounts.
-        #    Verified: ~40% of all SAs have human touches (Jan-Mar 2026).
-        dispatched_by = {}          # sa_id -> {'name': str, 'profile': str} (who set 'Dispatched')
-        human_touched = set()       # sa_ids where a Membership User made ANY status change
+        # 2) Batch query ServiceAppointmentHistory for assignment changes.
+        #    Uses shared parse_assign_events + classify_dispatch (same logic as
+        #    simulator.py, dispatch_routes.py, and misc.py _lookup_sa_impl).
+        dispatched_by = {}
         batch_size = 150
+        all_hist_rows = []
         for i in range(0, len(sa_ids), batch_size):
             batch = sa_ids[i:i + batch_size]
             id_str = "','".join(batch)
-            rows = sf_query_all(f"""
-                SELECT ServiceAppointmentId, CreatedBy.Name,
-                       CreatedBy.Profile.Name, NewValue
+            all_hist_rows += sf_query_all(f"""
+                SELECT ServiceAppointmentId, NewValue,
+                       CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointmentId IN ('{id_str}')
-                  AND Field = 'Status'
+                  AND Field = 'ERS_Assigned_Resource__c'
+                ORDER BY CreatedDate ASC
             """)
-            for r in rows:
-                sa_id = r.get('ServiceAppointmentId')
-                cb = r.get('CreatedBy') or {}
-                name = cb.get('Name', '?')
-                profile = (cb.get('Profile') or {}).get('Name', '')
-                nv = r.get('NewValue', '')
-                if nv == 'Dispatched':
-                    dispatched_by[sa_id] = {'name': name, 'profile': profile}
-                # Any status change by a dispatcher = human intervention
-                if profile == 'Membership User':
-                    human_touched.add(sa_id)
+        _assign_events = parse_assign_events(all_hist_rows, set(sa_ids))
+        _dispatch_class = classify_dispatch(_assign_events)
+        # Cross-check: unique SAs that have assignment history records
+        history_sa_ids = {r.get('ServiceAppointmentId') for r in all_hist_rows if r.get('ServiceAppointmentId')}
+        human_touched = {sa_id for sa_id, cls in _dispatch_class.items() if cls['is_manual']}
+        for sa_id in human_touched:
+            dispatched_by[sa_id] = {'name': _dispatch_class[sa_id]['dispatcher_name']}
 
         # 3) Classify each SA — human intervention applies to ALL channels
-        #    (fleet, Towbook, contractor). If a dispatcher touched it, it's manual.
+        #    (fleet, Towbook, contractor). Manual = a dispatcher reassigned or
+        #    changed status AFTER creation.  Who created the SA doesn't matter.
         auto_sas, manual_sas, towbook_sas, towbook_human_sas = [], [], [], []
         for s in sas:
             dispatch_method = s.get('ERS_Dispatch_Method__c') or ''
@@ -574,7 +725,7 @@ def scheduler_insights():
         dispatcher_counts = Counter()
         for s in sas:
             info = dispatched_by.get(s['Id'])
-            if info and info['profile'] == 'Membership User':
+            if info:  # dispatched_by only contains Membership User entries
                 dispatcher_counts[info['name']] += 1
         top_dispatchers = [{'name': n, 'count': c} for n, c in dispatcher_counts.most_common(5)]
 
@@ -611,9 +762,12 @@ def scheduler_insights():
             'total_extra_miles': total_extra_miles_today,
             'dispatchers': top_dispatchers,
             'is_fallback': is_fallback,
+            'sas_with_history': len(history_sa_ids),
+            'sas_queried': len(sas),
+            'sas_excluded_creator': 0,  # all SAs now included
         }
 
-    return cache.cached_query('scheduler_insights_today', _fetch, ttl=3600)
+    return cache.cached_query('scheduler_insights_today', _fetch, ttl=60)
 
 
 # ── Feature Flags ────────────────────────────────────────────────────────────

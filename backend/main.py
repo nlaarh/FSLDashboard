@@ -58,7 +58,7 @@ async def auth_middleware(request: Request, call_next):
 from routers import (
     auth, admin, garages, command_center, ops, map as map_router,
     dispatch_routes, issues, pta, chatbot, data_quality, matrix,
-    tracking, misc, insights,
+    tracking, misc, insights, sa_report,
 )
 
 app.include_router(auth.router)
@@ -75,6 +75,7 @@ app.include_router(data_quality.router)
 app.include_router(matrix.router)
 app.include_router(tracking.router)
 app.include_router(misc.router)
+app.include_router(sa_report.router)
 app.include_router(insights.router)
 
 
@@ -149,10 +150,46 @@ def _nightly_trends_refresh():
             time.sleep(300)  # Retry in 5 min on failure
 
 
+def _nightly_month_trends_refresh():
+    """Pre-generate current month trends at 3:00 AM ET daily.
+
+    Only refreshes the current month (data is still accumulating).
+    Past months are cached for 7 days and don't change, so they're
+    generated on first request and then served from disk cache.
+    """
+    import logging
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    log = logging.getLogger('nightly_month')
+    ET = ZoneInfo('America/New_York')
+    while True:
+        try:
+            now_et = datetime.now(ET)
+            target = now_et.replace(hour=3, minute=0, second=0, microsecond=0)
+            if target <= now_et:
+                target += timedelta(days=1)
+            sleep_sec = (target - now_et).total_seconds()
+            log.info(f"Monthly trends refresh scheduled in {sleep_sec/3600:.1f}h ({target.date()} 3:00 AM ET)")
+            time.sleep(sleep_sec)
+
+            # Refresh current month only
+            current_month = datetime.now(ET).strftime('%Y-%m')
+            cache_key = f'insights_trends_month_{current_month}'
+            log.info(f"Monthly trends refresh starting for {current_month}...")
+            cache.disk_invalidate(cache_key)
+            cache.invalidate(cache_key)
+            dispatch_routes._generate_month_trends(current_month)
+            log.info(f"Monthly trends refresh complete for {current_month}.")
+        except Exception as e:
+            log.warning(f"Monthly trends refresh failed: {e}")
+            time.sleep(300)
+
+
 @app.on_event("startup")
 async def startup_warmup():
-    # Start nightly trends refresh thread
+    # Start nightly trends refresh threads
     threading.Thread(target=_nightly_trends_refresh, daemon=True).start()
+    threading.Thread(target=_nightly_month_trends_refresh, daemon=True).start()
 
     # If disk cache is stale/missing on startup, trigger immediate background refresh
     # (covers deploys that happen after 12:05 AM — nightly thread won't fire until tomorrow)

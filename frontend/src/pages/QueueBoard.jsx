@@ -5,6 +5,7 @@ import {
   MapPin, Zap, Users, ArrowRight, Truck, Battery, Wrench, XCircle, Info,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import SALink from '../components/SALink'
 
 const URGENCY_COLORS = {
   green:  'bg-emerald-500/20 text-emerald-400 border-emerald-700/30',
@@ -212,7 +213,7 @@ function CascadeSection({ territories }) {
                 <div key={opp.sa_id} className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-white">
-                      {opp.work_type} · {opp.sa_number}
+                      {opp.work_type} · <SALink number={opp.sa_number} style={{ fontSize: 14 }} />
                     </span>
                     <span className="text-xs text-orange-400 font-medium">{opp.wait_min}m waiting</span>
                   </div>
@@ -408,7 +409,7 @@ export default function QueueBoard() {
                     <div className="flex items-center gap-2">
                       <TierIcon className={clsx('w-4 h-4', TIER_COLORS[item.call_tier])} />
                       <span className="font-semibold text-white text-sm">{item.work_type}</span>
-                      <span className="text-[10px] text-slate-500">#{item.number}</span>
+                      <SALink number={item.number} className="text-[10px] text-slate-500" />
                       {item.pta_breached && (
                         <span className="text-[10px] px-1.5 py-0.5 bg-red-900/40 text-red-400 rounded font-medium">
                           PTA BREACHED

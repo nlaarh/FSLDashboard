@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AAA Driver Tracking</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e;background:#fff}
+
+#map-wrap{position:absolute;top:0;left:0;right:0;bottom:0;z-index:1}
+#map{width:100%;height:100%}
+
+.leaflet-shadow-pane{display:none}
+
+@keyframes pulse-ring{
+  0%{transform:translate(-50%,-50%) scale(.6);opacity:.7}
+  100%{transform:translate(-50%,-50%) scale(2.2);opacity:0}
+}
+.pulse-ring{
+  position:absolute;top:50%;left:50%;
+  width:14px;height:14px;border-radius:50%;
+  background:rgba(59,130,246,.3);
+  animation:pulse-ring 2s ease-out infinite;
+  pointer-events:none;
+}
+
+/* Bottom Panel — single row: left=driver, divider, right=customer */
+#panel{
+  position:fixed;bottom:0;left:0;right:0;z-index:1000;
+  background:#fff;border-radius:14px 14px 0 0;
+  box-shadow:0 -2px 16px rgba(0,0,0,.12);
+  padding:10px 12px 12px;
+  transform:translateY(0);transition:transform .3s ease;
+}
+#panel.hidden{transform:translateY(110%)}
+
+.p-row{display:flex;align-items:stretch;gap:0}
+
+/* LEFT — ETA + driver */
+.p-left{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding-right:12px}
+.p-eta{font-size:24px;font-weight:800;color:#1a1a2e;line-height:1;flex-shrink:0;min-width:44px;text-align:center}
+.p-eta span{font-size:10px;font-weight:500;color:#6b7280;display:block}
+.p-driver{min-width:0}
+.p-driver-name{font-size:12px;font-weight:700;color:#1a1a2e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
+.p-driver-phone{font-size:11px;color:#3b82f6;font-weight:600;margin-top:1px;white-space:nowrap}
+.p-driver-meta{font-size:9px;color:#9ca3af;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
+.call-btn{
+  width:32px;height:32px;border-radius:50%;background:#22c55e;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  text-decoration:none;
+}
+.call-btn svg{width:15px;height:15px}
+.call-btn.disabled{background:#e5e7eb;pointer-events:none}
+
+/* Vertical divider */
+.p-vdiv{width:1px;background:#e5e7eb;flex-shrink:0;margin:0 12px}
+
+/* RIGHT — customer */
+.p-right{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.p-cust{flex:1;min-width:0}
+.p-cust-name{font-size:12px;font-weight:700;color:#1a1a2e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-cust-addr{font-size:11px;color:#16a34a;font-weight:600;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-cust-phone{font-size:11px;color:#3b82f6;font-weight:600;margin-top:1px;white-space:nowrap}
+.p-cust-vehicle{font-size:9px;color:#9ca3af;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cust-call-btn{
+  width:32px;height:32px;border-radius:50%;background:#3b82f6;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  text-decoration:none;
+}
+.cust-call-btn svg{width:15px;height:15px}
+.cust-call-btn.disabled{background:#e5e7eb;pointer-events:none}
+
+.gps-dot{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle;margin-left:4px}
+.gps-dot.fresh{background:#22c55e}
+.gps-dot.stale{background:#eab308}
+.gps-dot.old{background:#ef4444}
+
+/* Overlays */
+.overlay{
+  position:fixed;inset:0;z-index:2000;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:#fff;transition:opacity .3s;
+}
+.overlay.hidden{opacity:0;pointer-events:none}
+.overlay-icon{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+.overlay-title{font-size:22px;font-weight:700;color:#1a1a2e;margin-bottom:6px}
+.overlay-sub{font-size:14px;color:#6b7280;text-align:center;max-width:260px}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:40px;height:40px;border:4px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:20px}
+
+@supports(padding-bottom:env(safe-area-inset-bottom)){
+  #panel{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+}
+</style>
+</head>
+<body>
+
+<div id="map-wrap"><div id="map"></div></div>
+
+<!-- Bottom Panel -->
+<div id="panel" class="hidden">
+  <div class="p-row">
+    <!-- LEFT: ETA + driver -->
+    <div class="p-left">
+      <div class="p-eta" id="etaNum">--<span>min</span></div>
+      <div class="p-driver">
+        <div class="p-driver-name"><span id="driverName">--</span> <span class="gps-dot fresh" id="gpsDot"></span></div>
+        <div class="p-driver-phone" id="driverPhone"></div>
+        <div class="p-driver-meta" id="driverMeta"></div>
+      </div>
+      <a class="call-btn disabled" id="callBtn" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.13.81.36 1.6.68 2.34a2 2 0 01-.45 2.11L8.09 9.41a16 16 0 006.5 6.5l1.24-1.24a2 2 0 012.11-.45c.74.32 1.53.55 2.34.68a2 2 0 011.72 2z"/>
+        </svg>
+      </a>
+    </div>
+    <!-- Vertical divider -->
+    <div class="p-vdiv"></div>
+    <!-- RIGHT: customer -->
+    <div class="p-right">
+      <div class="p-cust">
+        <div class="p-cust-name" id="custName">--</div>
+        <div class="p-cust-addr" id="custAddress">--</div>
+        <div class="p-cust-phone" id="custPhone"></div>
+        <div class="p-cust-vehicle" id="custVehicle"></div>
+      </div>
+      <a class="cust-call-btn disabled" id="custCallBtn" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.13.81.36 1.6.68 2.34a2 2 0 01-.45 2.11L8.09 9.41a16 16 0 006.5 6.5l1.24-1.24a2 2 0 012.11-.45c.74.32 1.53.55 2.34.68a2 2 0 011.72 2z"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="overlay" id="overlayLoading">
+  <div class="spinner"></div>
+  <div class="overlay-title">Finding your driver...</div>
+  <div class="overlay-sub">We're locating the driver assigned to your service request.</div>
+</div>
+
+<!-- Arrived overlay -->
+<div class="overlay hidden" id="overlayArrived">
+  <div class="overlay-icon" style="background:#dcfce7">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+  </div>
+  <div class="overlay-title">Your driver has arrived!</div>
+  <div class="overlay-sub">Your AAA technician is at your location and ready to help.</div>
+</div>
+
+<!-- Completed overlay -->
+<div class="overlay hidden" id="overlayCompleted">
+  <div class="overlay-icon" style="background:#dbeafe">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+  </div>
+  <div class="overlay-title">Service Complete</div>
+  <div class="overlay-sub">Your service has been completed. Thank you for choosing AAA.</div>
+</div>
+
+<!-- Expired overlay -->
+<div class="overlay hidden" id="overlayExpired">
+  <div class="overlay-icon" style="background:#fee2e2">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </div>
+  <div class="overlay-title">Tracking Unavailable</div>
+  <div class="overlay-sub">This tracking link has expired or is no longer available.</div>
+</div>
+
+<script>
+(function(){
+  var pathParts = window.location.pathname.split('/');
+  var token = pathParts[pathParts.length - 1];
+  if (!token) { showOverlay('expired'); return; }
+
+  var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([43.0, -78.9], 12);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd'
+  }).addTo(map);
+
+  // ── SVG Icons ──
+
+  // Uber-style top-down navigation arrow
+  var navArrowSvg = function(color) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 40 40" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))">' +
+      '<defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="'+color+'"/>' +
+      '<stop offset="100%" stop-color="#1a1a2e"/>' +
+      '</linearGradient></defs>' +
+      '<path d="M20 2 L32 34 L20 26 L8 34 Z" fill="url(#ag)" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '</svg>';
+  };
+
+  var carSvg = function(color) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="10" viewBox="0 0 38 18" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))">' +
+      '<rect x="3" y="8" width="32" height="6" rx="2" fill="'+color+'"/>' +
+      '<path d="M10 8 Q12 2 17 2 L24 2 Q28 2 29 8" fill="'+color+'"/>' +
+      '<path d="M10.5 8 Q12.5 3 16.5 3 L17 3 L17 8" fill="#fff" opacity=".4"/>' +
+      '<path d="M24 3 Q27.5 3 28.5 8 L24 8 L24 3" fill="#fff" opacity=".35"/>' +
+      '<path d="M3 11 Q3 8 6 8 L10 8 L10 11" fill="'+color+'"/>' +
+      '<path d="M29 8 L33 8 Q35 8 35 11 L29 11" fill="'+color+'"/>' +
+      '<rect x="2" y="9" width="2" height="2" rx="1" fill="#fff" opacity=".6"/>' +
+      '<rect x="34" y="9" width="2" height="2" rx="1" fill="#ff4444" opacity=".6"/>' +
+      '<circle cx="11" cy="14.5" r="2.8" fill="#333"/><circle cx="11" cy="14.5" r="1.2" fill="#888"/>' +
+      '<circle cx="28" cy="14.5" r="2.8" fill="#333"/><circle cx="28" cy="14.5" r="1.2" fill="#888"/>' +
+      '</svg>';
+  };
+
+  // ── Marker builders ──
+
+  function makeDriverIcon(name, eta, phone, brg) {
+    var etaText = (eta != null && eta > 0) ? eta + ' min' : 'Arriving';
+    var phoneLine = phone ? '<div style="font-size:8px;color:rgba(255,255,255,.65)">'+phone+'</div>' : '';
+    var rot = (brg != null) ? brg : 0;
+    return L.divIcon({
+      className: '',
+      iconSize: [120, 58],
+      iconAnchor: [60, 45],
+      html: '<div style="display:flex;flex-direction:column;align-items:center">' +
+        '<div style="padding:2px 7px;background:#1a1a2e;color:#fff;border-radius:7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);text-align:center;margin-bottom:1px">' +
+        '<div style="font-size:11px;font-weight:800;line-height:1.2">'+etaText+'</div>' +
+        '<div style="font-size:8px;color:rgba(255,255,255,.85)">'+(name || 'Driver')+'</div>' +
+        phoneLine + '</div>' +
+        '<div style="position:relative;display:flex;align-items:center;justify-content:center;transform:rotate('+rot+'deg)">' +
+        '<div class="pulse-ring"></div>' +
+        navArrowSvg('#3b82f6') +
+        '</div></div>'
+    });
+  }
+
+  function makeCustIcon(street, city) {
+    var line1 = street || city || 'Customer';
+    var line2 = (street && city) ? city : '';
+    return L.divIcon({
+      className: '',
+      iconSize: [120, 48],
+      iconAnchor: [60, 36],
+      html: '<div style="display:flex;flex-direction:column;align-items:center">' +
+        '<div style="padding:2px 7px;background:#16a34a;color:#fff;border-radius:7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);text-align:center;margin-bottom:1px">' +
+        '<div style="font-size:8px;line-height:1.2">'+line1+'</div>' +
+        (line2 ? '<div style="font-size:7px;opacity:.75">'+line2+'</div>' : '') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;justify-content:center">' +
+        carSvg('#16a34a') +
+        '</div></div>'
+    });
+  }
+
+  // ── State ──
+
+  var driverMarker = null, custMarker = null, routeLine = null, firstLoad = true;
+  var lastGpsLat = null, lastGpsLon = null;  // raw GPS from server
+  var curLat = null, curLon = null;            // animated display position
+  var custLat = null, custLon = null;
+  var curBrg = 0;
+  var lastIconEta = null, lastIconName = null, lastDriverPhone = null;
+
+  // Animation engine state
+  var animFrameId = null;
+  var lastFrameTime = null;
+  var animSpeedMiPerSec = 0;  // miles per second — derived from ETA
+  var serverEtaMin = null;     // last ETA from server
+  var serverEtaTime = null;    // when we received that ETA (performance.now())
+  var displayedEta = null;
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    var R = 3958.8, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function bearing(lat1,lon1,lat2,lon2){
+    var r=Math.PI/180,dL=(lon2-lon1)*r;
+    var y=Math.sin(dL)*Math.cos(lat2*r);
+    var x=Math.cos(lat1*r)*Math.sin(lat2*r)-Math.sin(lat1*r)*Math.cos(lat2*r)*Math.cos(dL);
+    return((Math.atan2(y,x)*180/Math.PI)+360)%360;
+  }
+
+  // ── Continuous animation engine ──
+  // Moves the truck toward the customer at a speed matching the ETA.
+  // If ETA = 10 min and distance = 4 miles → speed = 0.4 mi/min = 0.0067 mi/sec
+  // This makes the truck visually arrive at the customer right as ETA hits 0.
+  // GPS corrections: when new GPS arrives, we smoothly blend to corrected position.
+
+  var correctionLat = 0, correctionLon = 0; // offset to blend toward real GPS
+  var CORRECTION_BLEND = 0.03; // blend 3% per frame toward real position
+
+  function animationLoop(timestamp) {
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    var dt = (timestamp - lastFrameTime) / 1000; // seconds since last frame
+    lastFrameTime = timestamp;
+
+    // Cap dt to avoid jumps after tab switch
+    if (dt > 1) dt = 0.016;
+
+    if (curLat != null && custLat != null && animSpeedMiPerSec > 0) {
+      var distToCust = haversine(curLat, curLon, custLat, custLon);
+
+      if (distToCust > 0.02) { // don't overshoot (stop at ~0.02 mi = 100ft)
+        // Move toward customer at ETA-derived speed
+        var moveMiles = animSpeedMiPerSec * dt;
+        var fraction = Math.min(moveMiles / distToCust, 0.02); // max 2% per frame to stay smooth
+
+        curLat += (custLat - curLat) * fraction;
+        curLon += (custLon - curLon) * fraction;
+
+        // Blend toward real GPS position (course correction)
+        // This handles when the driver takes a different route
+        if (correctionLat !== 0 || correctionLon !== 0) {
+          curLat += correctionLat * CORRECTION_BLEND;
+          curLon += correctionLon * CORRECTION_BLEND;
+          correctionLat *= (1 - CORRECTION_BLEND);
+          correctionLon *= (1 - CORRECTION_BLEND);
+          // Clear tiny residuals
+          if (Math.abs(correctionLat) < 0.00001) correctionLat = 0;
+          if (Math.abs(correctionLon) < 0.00001) correctionLon = 0;
+        }
+
+        // Update marker position (smooth — no icon rebuild needed)
+        if (driverMarker) driverMarker.setLatLng([curLat, curLon]);
+        if (routeLine) routeLine.setLatLngs([[curLat, curLon],[custLat, custLon]]);
+      }
+
+      // Update displayed ETA based on elapsed time since server ETA
+      if (serverEtaMin != null && serverEtaTime != null) {
+        var elapsedMin = (timestamp - serverEtaTime) / 60000;
+        var newEta = Math.max(1, Math.round(serverEtaMin - elapsedMin));
+        if (newEta !== displayedEta) {
+          displayedEta = newEta;
+          document.getElementById('etaNum').innerHTML = newEta + '<span>min</span>';
+          // Update icon ETA bubble every minute
+          if (driverMarker && lastIconName && Math.abs((lastIconEta||0) - newEta) >= 1) {
+            curBrg = bearing(curLat, curLon, custLat, custLon);
+            driverMarker.setIcon(makeDriverIcon(lastIconName, newEta, lastDriverPhone, curBrg));
+            lastIconEta = newEta;
+          }
+        }
+      }
+    }
+
+    animFrameId = requestAnimationFrame(animationLoop);
+  }
+
+  // Start the animation loop once — it runs forever
+  animFrameId = requestAnimationFrame(animationLoop);
+
+  // ── Overlays ──
+  function showOverlay(name) {
+    ['Loading','Arrived','Completed','Expired'].forEach(function(n) {
+      document.getElementById('overlay' + n).classList.add('hidden');
+    });
+    if (name === 'loading') document.getElementById('overlayLoading').classList.remove('hidden');
+    else if (name === 'arrived') document.getElementById('overlayArrived').classList.remove('hidden');
+    else if (name === 'completed') document.getElementById('overlayCompleted').classList.remove('hidden');
+    else if (name === 'expired') document.getElementById('overlayExpired').classList.remove('hidden');
+  }
+
+  // ── Update bottom panel ──
+  function updatePanel(data) {
+    document.getElementById('panel').classList.remove('hidden');
+
+    var d = data.driver, c = data.customer, v = data.vehicle || {};
+
+    // ETA from server
+    var eta = data.eta_minutes != null ? Math.round(data.eta_minutes) : null;
+    serverEtaMin = eta;
+    serverEtaTime = performance.now();
+    displayedEta = eta;
+    document.getElementById('etaNum').innerHTML = (eta != null ? eta : '--') + '<span>min</span>';
+
+    // Calculate animation speed from distance + ETA
+    if (data.distance_miles && eta && eta > 0) {
+      animSpeedMiPerSec = data.distance_miles / (eta * 60);
+    } else if (data.distance_miles && data.distance_miles > 0.1) {
+      // Fallback: assume 25 mph if no ETA
+      animSpeedMiPerSec = 25 / 3600;
+    }
+
+    // Driver
+    document.getElementById('driverName').textContent = d.name || 'Driver';
+    lastDriverPhone = d.phone || null;
+    var dPhoneEl = document.getElementById('driverPhone');
+    dPhoneEl.innerHTML = d.phone ? '<a href="tel:'+d.phone+'" style="color:#3b82f6;text-decoration:none">'+d.phone+'</a>' : '';
+
+    var dot = document.getElementById('gpsDot');
+    var age = d.gps_age_seconds;
+    dot.className = (age == null || age >= 600) ? 'gps-dot old' : age < 120 ? 'gps-dot fresh' : 'gps-dot stale';
+
+    var metaParts = [data.work_type, data.distance_miles != null ? data.distance_miles.toFixed(1)+' mi' : '',
+                     d.truck_color ? d.truck_color+' truck' : d.truck_unit].filter(Boolean);
+    document.getElementById('driverMeta').textContent = metaParts.join(' · ');
+
+    var callBtn = document.getElementById('callBtn');
+    if (d.phone) { callBtn.href = 'tel:'+d.phone; callBtn.classList.remove('disabled'); }
+    else { callBtn.classList.add('disabled'); callBtn.removeAttribute('href'); }
+
+    // Customer
+    document.getElementById('custName').textContent = c.name || 'Customer';
+    document.getElementById('custAddress').textContent = [c.street, c.city].filter(Boolean).join(', ') || '--';
+    var cPhoneEl = document.getElementById('custPhone');
+    cPhoneEl.innerHTML = c.phone ? '<a href="tel:'+c.phone+'" style="color:#3b82f6;text-decoration:none">'+c.phone+'</a>' : '';
+
+    var vParts = [v.make, v.model].filter(Boolean).join(' ');
+    if (v.plate) vParts += (vParts ? ' · ' : '') + v.plate;
+    document.getElementById('custVehicle').textContent = vParts;
+
+    var custCallBtn = document.getElementById('custCallBtn');
+    if (c.phone) { custCallBtn.href = 'tel:'+c.phone; custCallBtn.classList.remove('disabled'); }
+    else { custCallBtn.classList.add('disabled'); custCallBtn.removeAttribute('href'); }
+  }
+
+  // ── Update map with new GPS data ──
+  function updateMap(data) {
+    var d = data.driver, c = data.customer;
+    if (!d.lat || !d.lon || !c.lat || !c.lon) return;
+
+    custLat = c.lat; custLon = c.lon;
+    var newGpsLat = d.lat, newGpsLon = d.lon;
+
+    // Did GPS actually change? (moved more than ~160 ft)
+    var gpsChanged = lastGpsLat == null || haversine(lastGpsLat, lastGpsLon, newGpsLat, newGpsLon) > 0.03;
+
+    if (curLat == null) {
+      // First GPS fix — place marker directly
+      curLat = newGpsLat;
+      curLon = newGpsLon;
+    } else if (gpsChanged) {
+      // GPS updated — set correction vector so animation smoothly blends toward real position
+      // Don't snap! Let the animation blend over the next ~1-2 seconds
+      correctionLat = newGpsLat - curLat;
+      correctionLon = newGpsLon - curLon;
+    }
+
+    lastGpsLat = newGpsLat;
+    lastGpsLon = newGpsLon;
+
+    curBrg = bearing(curLat, curLon, custLat, custLon);
+
+    var dName = d.name || 'Driver';
+    var dPhone = d.phone || null;
+    var dEta = data.eta_minutes != null ? Math.round(data.eta_minutes) : null;
+
+    if (!driverMarker) {
+      driverMarker = L.marker([curLat, curLon], {icon: makeDriverIcon(dName, dEta, dPhone, curBrg), zIndexOffset: 1000}).addTo(map);
+    } else {
+      driverMarker.setIcon(makeDriverIcon(dName, dEta, dPhone, curBrg));
+    }
+    lastIconEta = dEta; lastIconName = dName; lastDriverPhone = dPhone;
+
+    if (!custMarker) {
+      custMarker = L.marker([c.lat, c.lon], {icon: makeCustIcon(c.street, c.city), zIndexOffset: 500}).addTo(map);
+    }
+
+    if (!routeLine) {
+      routeLine = L.polyline([[curLat, curLon],[c.lat, c.lon]], {
+        color: '#94a3b8', weight: 1.5, opacity: 0.5, dashArray: '6 4'
+      }).addTo(map);
+    } else {
+      routeLine.setLatLngs([[curLat, curLon],[c.lat, c.lon]]);
+    }
+
+    if (firstLoad) {
+      firstLoad = false;
+      map.fitBounds([[curLat, curLon],[c.lat, c.lon]], {padding: [60, 60], maxZoom: 15});
+    }
+  }
+
+  // ── Polling ──
+  var polling = false, stopPolling = false;
+
+  function poll() {
+    if (polling || stopPolling) return;
+    polling = true;
+    fetch('/api/track/' + token + '/position')
+      .then(function(resp) {
+        if (resp.status === 410) { showOverlay('expired'); stopPolling = true; cleanup(); polling = false; return null; }
+        if (resp.status === 429) { polling = false; return null; }
+        if (!resp.ok) { polling = false; return null; }
+        return resp.json();
+      })
+      .then(function(data) {
+        if (!data) { polling = false; return; }
+
+        if (data.status === 'arrived') {
+          showOverlay('arrived');
+          document.getElementById('panel').classList.add('hidden');
+          stopPolling = true; cleanup(); polling = false; return;
+        }
+        if (data.status === 'completed') {
+          showOverlay('completed');
+          document.getElementById('panel').classList.add('hidden');
+          stopPolling = true; cleanup(); polling = false; return;
+        }
+        if (data.status === 'expired') {
+          showOverlay('expired');
+          stopPolling = true; cleanup(); polling = false; return;
+        }
+
+        // en_route — check GPS
+        if (!data.driver.lat || !data.driver.lon) {
+          if (data.no_gps_reason === 'contractor') {
+            // Towbook — will never have GPS. Show info panel with ETA estimate instead of spinning.
+            document.getElementById('overlayLoading').querySelector('.overlay-title').textContent = 'Driver dispatched!';
+            document.getElementById('overlayLoading').querySelector('.overlay-sub').textContent =
+              'Your driver from ' + (data.driver.name || 'a nearby garage') + ' is on the way. ' +
+              'Live GPS tracking is not available for this driver, but they are headed to your location now.';
+          } else {
+            document.getElementById('overlayLoading').querySelector('.overlay-title').textContent = 'Waiting for driver location...';
+            document.getElementById('overlayLoading').querySelector('.overlay-sub').textContent = 'Your driver is on the way. GPS location will appear shortly.';
+          }
+          updatePanel(data);
+          polling = false;
+          return;
+        }
+        showOverlay(null);
+        updatePanel(data);
+        updateMap(data);
+        polling = false;
+      })
+      .catch(function(e) {
+        console.error('Poll error:', e);
+        polling = false;
+      });
+  }
+
+  function cleanup() {
+    if (animFrameId) cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+  }
+
+  poll();
+  setInterval(poll, 15000);
+})();
+</script>
+</body>
+</html>

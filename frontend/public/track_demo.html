@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Track Demo — Animation Test</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e;background:#fff}
+#map-wrap{position:absolute;top:0;left:0;right:0;bottom:0;z-index:1}
+#map{width:100%;height:100%}
+.leaflet-shadow-pane{display:none}
+
+@keyframes pulse-ring{
+  0%{transform:translate(-50%,-50%) scale(.6);opacity:.7}
+  100%{transform:translate(-50%,-50%) scale(2.2);opacity:0}
+}
+.pulse-ring{
+  position:absolute;top:50%;left:50%;
+  width:14px;height:14px;border-radius:50%;
+  background:rgba(59,130,246,.3);
+  animation:pulse-ring 2s ease-out infinite;
+  pointer-events:none;
+}
+
+#panel{
+  position:fixed;bottom:0;left:0;right:0;z-index:1000;
+  background:#fff;border-radius:14px 14px 0 0;
+  box-shadow:0 -2px 16px rgba(0,0,0,.12);
+  padding:10px 12px 12px;
+}
+.p-row{display:flex;align-items:stretch;gap:0}
+.p-left{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding-right:12px}
+.p-eta{font-size:24px;font-weight:800;color:#1a1a2e;line-height:1;flex-shrink:0;min-width:44px;text-align:center}
+.p-eta span{font-size:10px;font-weight:500;color:#6b7280;display:block}
+.p-driver{min-width:0}
+.p-driver-name{font-size:12px;font-weight:700;color:#1a1a2e;white-space:nowrap}
+.p-driver-phone{font-size:11px;color:#3b82f6;font-weight:600;margin-top:1px}
+.p-driver-meta{font-size:9px;color:#9ca3af;margin-top:1px}
+.gps-dot{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle;margin-left:4px;background:#22c55e}
+.p-vdiv{width:1px;background:#e5e7eb;flex-shrink:0;margin:0 12px}
+.p-right{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.p-cust{flex:1;min-width:0}
+.p-cust-name{font-size:12px;font-weight:700;color:#1a1a2e}
+.p-cust-addr{font-size:11px;color:#16a34a;font-weight:600;margin-top:1px}
+.p-cust-phone{font-size:11px;color:#3b82f6;font-weight:600;margin-top:1px}
+.p-cust-vehicle{font-size:9px;color:#9ca3af;margin-top:1px}
+
+.demo-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2000;
+  background:#f59e0b;color:#000;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;
+  box-shadow:0 2px 8px rgba(0,0,0,.2)}
+</style>
+</head>
+<body>
+
+<div class="demo-badge">DEMO MODE — Simulated Driver</div>
+<div id="map-wrap"><div id="map"></div></div>
+
+<div id="panel">
+  <div class="p-row">
+    <div class="p-left">
+      <div class="p-eta" id="etaNum">--<span>min</span></div>
+      <div class="p-driver">
+        <div class="p-driver-name">Chris Demo <span class="gps-dot"></span></div>
+        <div class="p-driver-phone">(716) 555-0199</div>
+        <div class="p-driver-meta">Battery · White truck · T-42</div>
+      </div>
+    </div>
+    <div class="p-vdiv"></div>
+    <div class="p-right">
+      <div class="p-cust">
+        <div class="p-cust-name">Jane Smith</div>
+        <div class="p-cust-addr">726 Exchange St, Buffalo</div>
+        <div class="p-cust-phone">(716) 555-0123</div>
+        <div class="p-cust-vehicle">Honda Civic · ABC-1234</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([42.93, -78.80], 12);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd'
+  }).addTo(map);
+
+  // Uber-style top-down navigation arrow (same as track.html)
+  var navArrowSvg = function(color) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 40 40" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))">' +
+      '<defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="'+color+'"/>' +
+      '<stop offset="100%" stop-color="#1a1a2e"/>' +
+      '</linearGradient></defs>' +
+      '<path d="M20 2 L32 34 L20 26 L8 34 Z" fill="url(#ag)" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '</svg>';
+  };
+
+  var carSvg = function(color) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="10" viewBox="0 0 38 18" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))">' +
+      '<rect x="3" y="8" width="32" height="6" rx="2" fill="'+color+'"/>' +
+      '<path d="M10 8 Q12 2 17 2 L24 2 Q28 2 29 8" fill="'+color+'"/>' +
+      '<circle cx="11" cy="14.5" r="2.8" fill="#333"/><circle cx="11" cy="14.5" r="1.2" fill="#888"/>' +
+      '<circle cx="28" cy="14.5" r="2.8" fill="#333"/><circle cx="28" cy="14.5" r="1.2" fill="#888"/>' +
+      '</svg>';
+  };
+
+  // Simulated route: Amherst → Downtown Buffalo
+  var startLat = 42.977, startLon = -78.730;
+  var endLat = 42.886, endLon = -78.878;
+  var startTime = performance.now();
+  var TRIP_DURATION = 120000; // 2 minutes of real time for the full trip
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    var R = 3958.8, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function bearing(lat1,lon1,lat2,lon2){
+    var r=Math.PI/180,dL=(lon2-lon1)*r;
+    var y=Math.sin(dL)*Math.cos(lat2*r);
+    var x=Math.cos(lat1*r)*Math.sin(lat2*r)-Math.sin(lat1*r)*Math.cos(lat2*r)*Math.cos(dL);
+    return((Math.atan2(y,x)*180/Math.PI)+360)%360;
+  }
+
+  function makeDriverIcon(eta, brg) {
+    return L.divIcon({
+      className: '',
+      iconSize: [120, 58],
+      iconAnchor: [60, 45],
+      html: '<div style="display:flex;flex-direction:column;align-items:center">' +
+        '<div style="padding:2px 7px;background:#1a1a2e;color:#fff;border-radius:7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);text-align:center;margin-bottom:1px">' +
+        '<div style="font-size:11px;font-weight:800;line-height:1.2">'+(eta > 0 ? eta+' min' : 'Arriving')+'</div>' +
+        '<div style="font-size:8px;color:rgba(255,255,255,.85)">Chris Demo</div></div>' +
+        '<div style="position:relative;display:flex;align-items:center;justify-content:center;transform:rotate('+brg+'deg)">' +
+        '<div class="pulse-ring"></div>' +
+        navArrowSvg('#3b82f6') +
+        '</div></div>'
+    });
+  }
+
+  var custIcon = L.divIcon({
+    className: '',
+    iconSize: [120, 48],
+    iconAnchor: [60, 36],
+    html: '<div style="display:flex;flex-direction:column;align-items:center">' +
+      '<div style="padding:2px 7px;background:#16a34a;color:#fff;border-radius:7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);text-align:center;margin-bottom:1px">' +
+      '<div style="font-size:8px;line-height:1.2">726 Exchange St</div>' +
+      '<div style="font-size:7px;opacity:.75">Buffalo</div></div>' +
+      '<div style="display:flex;align-items:center;justify-content:center">' +
+      carSvg('#16a34a') + '</div></div>'
+  });
+
+  var custMarker = L.marker([endLat, endLon], {icon: custIcon, zIndexOffset: 500}).addTo(map);
+  var driverMarker = L.marker([startLat, startLon], {icon: makeDriverIcon(12, 0), zIndexOffset: 1000}).addTo(map);
+  var routeLine = L.polyline([[startLat, startLon],[endLat, endLon]], {
+    color: '#94a3b8', weight: 1.5, opacity: 0.5, dashArray: '6 4'
+  }).addTo(map);
+
+  map.fitBounds([[startLat, startLon],[endLat, endLon]], {padding: [60, 60], maxZoom: 15});
+
+  var lastEta = null;
+  function animate(ts) {
+    var elapsed = ts - startTime;
+    var progress = Math.min(elapsed / TRIP_DURATION, 0.98);
+
+    var lat = startLat + (endLat - startLat) * progress;
+    var lon = startLon + (endLon - startLon) * progress;
+    var brg = bearing(lat, lon, endLat, endLon);
+    var dist = haversine(lat, lon, endLat, endLon);
+    var eta = Math.max(1, Math.round(dist / 25 * 60));
+
+    driverMarker.setLatLng([lat, lon]);
+    routeLine.setLatLngs([[lat, lon],[endLat, endLon]]);
+
+    if (eta !== lastEta) {
+      lastEta = eta;
+      driverMarker.setIcon(makeDriverIcon(eta, brg));
+      document.getElementById('etaNum').innerHTML = eta + '<span>min</span>';
+    }
+
+    if (progress < 0.98) {
+      requestAnimationFrame(animate);
+    } else {
+      document.getElementById('etaNum').innerHTML = '0<span>min</span>';
+      driverMarker.setIcon(makeDriverIcon(0, brg));
+    }
+  }
+
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

@@ -98,12 +98,12 @@ function Th({ label, col, sort, onSort, activeDef, setActiveDef, right = false }
 // ── Quick-action row ──────────────────────────────────────────────────────────
 function QuickActions({ id, name, onNav }) {
   const btns = [
-    { icon: Calendar,   label: 'Schedule',    tab: 'schedule'    },
-    { icon: BarChart3,  label: 'Dashboard',   tab: 'dashboard'   },
-    { icon: Map,        label: 'Map',         tab: 'dispatch'    },
+    { icon: Calendar,  label: 'Schedule',  tab: 'schedule'  },
+    { icon: BarChart3, label: 'Dashboard', tab: 'dashboard' },
+    { icon: Map,       label: 'Map',       tab: 'dispatch'  },
   ]
   return (
-    <div className="flex gap-1 justify-end flex-wrap">
+    <div className="flex gap-1 justify-end">
       {btns.map(b => (
         <button key={b.tab}
           onClick={e => { e.stopPropagation(); onNav(id, b.tab, name) }}
@@ -464,7 +464,7 @@ export default function Dashboard() {
             <thead>
               <tr className="border-b border-slate-800">
                 <th className="w-2 px-0" />{/* status border */}
-                <th className="px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-8">#</th>
+                <th className="px-1 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-5">#</th>
                 <Th label="Garage"     col="name"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="City"       col="city"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="Open"       col="open"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
@@ -512,7 +512,7 @@ export default function Dashboard() {
 
                       {/* Status left border */}
                       <td className={clsx('w-1 p-0 border-l-2', sm.border)} />
-                      <td className="px-2 py-2 align-top text-[10px] text-slate-500 text-right">{idx + 1}</td>
+                      <td className="px-1 py-2 align-top text-[10px] text-slate-500 text-right">{idx + 1}</td>
 
                       {/* Name */}
                       <td className="px-3 py-3 align-top">

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 from sf_client import sf_query_all, sf_parallel, get_towbook_on_location
+from dispatch_utils import parse_assign_events
 from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
     is_fleet_territory,
@@ -537,27 +538,22 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
         bottom_3_fleet = driver_stats[-3:][::-1] if len(driver_stats) >= 3 else []
 
         # ── Reassignment Cost (driver-level bounces) ──
-        # Each row = ERS_Assigned_Resource__c change (driver assignment).
-        # SF writes 2 rows per change: one with driver name, one with SF ID.
-        # Keep only name rows (filter out 15/18-char SF IDs).
-        import re
-        _sf_id_pat = re.compile(r'^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$')
-
-        def _is_sf_id(val):
-            return bool(val and _sf_id_pat.match(str(val).strip()))
-
-        # Group driver assignment changes by SA, deduplicating SF ID rows
+        # Group driver assignment changes by SA using shared utility
+        # (filters SF ID rows, detects human dispatchers, marks reassignments)
+        _assign_events = parse_assign_events(reassign_history)
         sa_driver_changes = _dd(list)
-        for h in reassign_history:
-            sa_id = h.get('ServiceAppointmentId')
-            new_val = (h.get('NewValue') or '').strip()
-            if not sa_id or not new_val or _is_sf_id(new_val):
-                continue  # Skip SF ID duplicate rows and empty values
-            sa_driver_changes[sa_id].append({
-                'time': _parse_dt(h.get('CreatedDate')),
-                'driver': new_val,
-                'sa': h.get('ServiceAppointment') or {},
-            })
+        for sa_id, evs in _assign_events.items():
+            h_sa = next(
+                (h.get('ServiceAppointment') or {} for h in reassign_history
+                 if h.get('ServiceAppointmentId') == sa_id),
+                {}
+            )
+            for ev in evs:
+                sa_driver_changes[sa_id].append({
+                    'time': ev['ts'],
+                    'driver': ev['driver'],
+                    'sa': h_sa,
+                })
 
         total_bounces = 0
         total_minutes_lost = 0
