@@ -2638,7 +2638,7 @@ function SatisfactionView() {
         if (res?.loading) {
           setData(null)
           setLoading(false)
-          retryRef.current = setTimeout(load, 8000)
+          retryRef.current = setTimeout(load, 30000)
         } else {
           setData(res)
           setLoading(false)
@@ -2693,7 +2693,7 @@ function SatisfactionView() {
     <div className="max-w-5xl mx-auto text-center py-10">
       <Loader2 className="w-5 h-5 animate-spin text-blue-500 mx-auto mb-2" />
       <div className="text-sm text-slate-500">Generating satisfaction data for {monthLabel}...</div>
-      <div className="text-xs text-slate-600 mt-1">Auto-checking every 8 seconds</div>
+      <div className="text-xs text-slate-600 mt-1">Auto-checking every 30 seconds</div>
     </div>
   )
 

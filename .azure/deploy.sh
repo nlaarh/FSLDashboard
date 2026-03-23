@@ -58,19 +58,21 @@ echo "  Web App: $APP_NAME"
 
 # Step 4: Configure app settings (Salesforce credentials)
 echo "[4/6] Configuring app settings..."
-# Load from .env file
+# IMPORTANT: Use grep -m1 to match ONLY the first (active) line, not commented-out UAT lines.
+# The .env file has both PROD and UAT credentials — without -m1, grep returns both
+# and creates multi-line values that break SF auth. (Lesson learned: March 23, 2026 outage)
 ENV_FILE="$PROJECT_DIR/../.env"
 if [ -f "$ENV_FILE" ]; then
   az webapp config appsettings set \
     --name "$APP_NAME" \
     --resource-group "$RG" \
     --settings \
-      SF_TOKEN_URL="$(grep SF_TOKEN_URL "$ENV_FILE" | cut -d= -f2-)" \
-      SF_CONSUMER_KEY="$(grep SF_CONSUMER_KEY "$ENV_FILE" | cut -d= -f2-)" \
-      SF_CONSUMER_SECRET="$(grep SF_CONSUMER_SECRET "$ENV_FILE" | cut -d= -f2-)" \
-      SF_USERNAME="$(grep SF_USERNAME "$ENV_FILE" | cut -d= -f2-)" \
-      SF_PASSWORD="$(grep SF_PASSWORD "$ENV_FILE" | cut -d= -f2-)" \
-      SF_SECURITY_TOKEN="$(grep SF_SECURITY_TOKEN "$ENV_FILE" | cut -d= -f2-)" \
+      SF_TOKEN_URL="$(grep -m1 '^SF_TOKEN_URL=' "$ENV_FILE" | cut -d= -f2-)" \
+      SF_CONSUMER_KEY="$(grep -m1 '^SF_CONSUMER_KEY=' "$ENV_FILE" | cut -d= -f2-)" \
+      SF_CONSUMER_SECRET="$(grep -m1 '^SF_CONSUMER_SECRET=' "$ENV_FILE" | cut -d= -f2-)" \
+      SF_USERNAME="$(grep -m1 '^SF_USERNAME=' "$ENV_FILE" | cut -d= -f2-)" \
+      SF_PASSWORD="$(grep -m1 '^SF_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)" \
+      SF_SECURITY_TOKEN="$(grep -m1 '^SF_SECURITY_TOKEN=' "$ENV_FILE" | cut -d= -f2-)" \
       SCM_DO_BUILD_DURING_DEPLOYMENT=true \
     --output none
   echo "  Salesforce credentials configured from .env"

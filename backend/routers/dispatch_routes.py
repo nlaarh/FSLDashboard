@@ -2146,85 +2146,81 @@ def _generate_satisfaction_overview(month: str):
     # A survey submitted March 7 about a Feb 28 call is attributed to Feb 28.
     # This aligns satisfaction with same-day ATA/PTA for accurate correlation.
 
-    # Query 1: Daily overall satisfaction (by call date)
-    daily_sat = sf_query_all(f"""
-        SELECT DAY_ONLY(ERS_Work_Order__r.CreatedDate) d,
-               ERS_Overall_Satisfaction__c sat,
-               COUNT(Id) cnt
-        FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Overall_Satisfaction__c != null
-        GROUP BY DAY_ONLY(ERS_Work_Order__r.CreatedDate), ERS_Overall_Satisfaction__c
+    # ── Batch 1: All 4 survey queries in parallel (same object, different GROUP BYs) ──
+    batch1 = sf_parallel(
+        daily_sat=lambda: sf_query_all(f"""
+            SELECT DAY_ONLY(ERS_Work_Order__r.CreatedDate) d,
+                   ERS_Overall_Satisfaction__c sat,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+            GROUP BY DAY_ONLY(ERS_Work_Order__r.CreatedDate), ERS_Overall_Satisfaction__c
+        """),
+        garage_overall=lambda: sf_query_all(f"""
+            SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
+                   ERS_Overall_Satisfaction__c sat,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+              AND ERS_Work_Order__r.ServiceTerritoryId != null
+            GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Overall_Satisfaction__c
+            ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
+        """),
+        garage_rt=lambda: sf_query_all(f"""
+            SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
+                   ERS_Response_Time_Satisfaction__c sat,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Response_Time_Satisfaction__c != null
+              AND ERS_Work_Order__r.ServiceTerritoryId != null
+            GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Response_Time_Satisfaction__c
+            ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
+        """),
+        garage_tech=lambda: sf_query_all(f"""
+            SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
+                   ERS_Technician_Satisfaction__c sat,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Technician_Satisfaction__c != null
+              AND ERS_Work_Order__r.ServiceTerritoryId != null
+            GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Technician_Satisfaction__c
+            ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
+        """),
+    )
+    daily_sat = batch1['daily_sat']
+    garage_overall = batch1['garage_overall']
+    garage_rt = batch1['garage_rt']
+    garage_tech = batch1['garage_tech']
     """)
-    _time.sleep(0.5)
 
-    # Query 2: Per-garage overall satisfaction (by call date)
-    garage_overall = sf_query_all(f"""
-        SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
-               ERS_Overall_Satisfaction__c sat,
-               COUNT(Id) cnt
-        FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Overall_Satisfaction__c != null
-          AND ERS_Work_Order__r.ServiceTerritoryId != null
-        GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Overall_Satisfaction__c
-        ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
-    """)
-    _time.sleep(0.5)
-
-    # Query 3: Per-garage response time satisfaction (by call date)
-    garage_rt = sf_query_all(f"""
-        SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
-               ERS_Response_Time_Satisfaction__c sat,
-               COUNT(Id) cnt
-        FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Response_Time_Satisfaction__c != null
-          AND ERS_Work_Order__r.ServiceTerritoryId != null
-        GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Response_Time_Satisfaction__c
-        ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
-    """)
-    _time.sleep(0.5)
-
-    # Query 4: Per-garage technician satisfaction (by call date)
-    garage_tech = sf_query_all(f"""
-        SELECT ERS_Work_Order__r.ServiceTerritory.Name tname,
-               ERS_Technician_Satisfaction__c sat,
-               COUNT(Id) cnt
-        FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Technician_Satisfaction__c != null
-          AND ERS_Work_Order__r.ServiceTerritoryId != null
-        GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Technician_Satisfaction__c
-        ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
-    """)
-    _time.sleep(0.5)
-
-    # Query 5: Daily SA volume (for tooltip context)
-    daily_sa_volume = sf_query_all(f"""
-        SELECT DAY_ONLY(CreatedDate) d, COUNT(Id) cnt
-        FROM ServiceAppointment
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ServiceTerritoryId != null
-          AND RecordType.Name = 'ERS Service Appointment'
-        GROUP BY DAY_ONLY(CreatedDate)
-    """)
+    # ── Batch 2: SA volume + completed SAs in parallel ──
+    batch2 = sf_parallel(
+        sa_volume=lambda: sf_query_all(f"""
+            SELECT DAY_ONLY(CreatedDate) d, COUNT(Id) cnt
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritoryId != null
+              AND RecordType.Name = 'ERS Service Appointment'
+            GROUP BY DAY_ONLY(CreatedDate)
+        """),
+        completed=lambda: sf_query_all(f"""
+            SELECT Id, CreatedDate, Status, ActualStartTime,
+                   ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritoryId != null
+              AND RecordType.Name = 'ERS Service Appointment'
+              AND Status = 'Completed'
+        """),
+    )
     sa_vol_by_day = {}
-    for r in daily_sa_volume:
+    for r in batch2['sa_volume']:
         sa_vol_by_day[r.get('d', '')] = r.get('cnt', 0) or 0
-    _time.sleep(0.5)
-
-    # Query 6: Completed SAs for daily ATA + PTA miss calculation
-    completed_sas = sf_query_all(f"""
-        SELECT Id, CreatedDate, Status, ActualStartTime,
-               ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
-        FROM ServiceAppointment
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ServiceTerritoryId != null
-          AND RecordType.Name = 'ERS Service Appointment'
-          AND Status = 'Completed'
-    """)
-    _time.sleep(0.5)
+    completed_sas = batch2['completed']
 
     # Query 7: Towbook on-location times for accurate ATA
     towbook_ids = [sa.get('Id') for sa in completed_sas
