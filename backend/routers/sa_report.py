@@ -366,17 +366,19 @@ def sa_report(sa_number: str):
                     'narrative': _build_narrative(sa_summary, [], []),
                     'phases': [], 'is_towbook': is_towbook}
 
-        # Members query needs tid from SA lookup — runs as a separate call
-        members_raw = sf_query_all(f"""
-            SELECT ServiceResourceId, ServiceResource.Name,
-                   ServiceResource.LastKnownLatitude, ServiceResource.LastKnownLongitude,
-                   ServiceResource.IsActive, TerritoryType
-            FROM ServiceTerritoryMember
-            WHERE ServiceTerritoryId = '{tid}'
-              AND TerritoryType IN ('P', 'S')
-              AND ServiceResource.IsActive = true
-              AND ServiceResource.ResourceType = 'T'
-        """)
+        # Members query needs tid from SA lookup — cached per territory (members rarely change)
+        def _fetch_members():
+            return sf_query_all(f"""
+                SELECT ServiceResourceId, ServiceResource.Name,
+                       ServiceResource.LastKnownLatitude, ServiceResource.LastKnownLongitude,
+                       ServiceResource.IsActive, TerritoryType
+                FROM ServiceTerritoryMember
+                WHERE ServiceTerritoryId = '{tid}'
+                  AND TerritoryType IN ('P', 'S')
+                  AND ServiceResource.IsActive = true
+                  AND ServiceResource.ResourceType = 'T'
+            """)
+        members_raw = cache.cached_query(f'territory_members_{tid}', _fetch_members, ttl=600)
 
         # Build timeline from hist rows (already fetched in p0)
         timeline = _build_timeline(p0['hist'], sa_id)
@@ -452,6 +454,9 @@ def sa_report(sa_number: str):
 
         # GPS window: 15 min before first assignment → 5 min after last assignment.
         # Covers all reassignment steps, not just the first dispatch.
+        # GPS window: 15 min before to 5 min after. FSL app updates every ~5 min,
+        # so this captures 2-3 GPS records per active driver. Wider window would
+        # show stale positions where drivers no longer are.
         all_step_times = [ev['ts'] for ev in sa_events if ev.get('ts')]
         if all_step_times:
             gps_start = (min(all_step_times) - timedelta(minutes=15)).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -594,7 +599,7 @@ def sa_report(sa_number: str):
             'is_towbook':   is_towbook,
         }
 
-    result = cache.cached_query(f'sa_report_{sa_number}', _fetch, ttl=120)
+    result = cache.cached_query(f'sa_report_{sa_number}', _fetch, ttl=3600)  # 1h — historical reports don't change
     if result is None:
         raise HTTPException(status_code=404, detail=f'SA {sa_number} not found')
     # Completed/Canceled SAs won't change — extend cache to 1 hour

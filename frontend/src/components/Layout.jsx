@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures } from '../api'
 
@@ -122,6 +122,12 @@ export default function Layout() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <Link to="/issues" title="Report / Track Bugs"
+              className={`p-1.5 rounded-lg transition-all ${
+                pathname === '/issues' ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'
+              }`}>
+              <Bug className="w-4 h-4" />
+            </Link>
             <Link to="/help" title="Help Center"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/help' ? 'text-brand-400' : 'text-slate-500 hover:text-slate-300'

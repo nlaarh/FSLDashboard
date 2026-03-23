@@ -6,10 +6,13 @@ import os
 port = os.environ.get('PORT', '8000')
 bind = f"0.0.0.0:{port}"
 
-# Worker configuration — 3 workers for 25+ concurrent users
+# Worker configuration — auto-scale based on CPU cores
 # Each UvicornWorker runs an async event loop + threadpool (40 threads default)
-# = 120 concurrent request slots total
-workers = 3
+# B1 (1 core): 3 workers = 120 concurrent slots
+# P2v2 (2 cores): 5 workers = 200 concurrent slots
+# P3v2 (4 cores): 9 workers = 360 concurrent slots
+import multiprocessing
+workers = min(2 * multiprocessing.cpu_count() + 1, 9)
 worker_class = "uvicorn.workers.UvicornWorker"
 timeout = 120
 

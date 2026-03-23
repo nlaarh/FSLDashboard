@@ -29,7 +29,7 @@ const SEVERITIES = [
   { key: 'high', label: 'High', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
 ]
 
-export default function ReportIssue() {
+export default function ReportIssue({ position = 'floating' }) {
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
@@ -90,15 +90,15 @@ export default function ReportIssue() {
 
   return (
     <>
-      {/* Floating button */}
+      {/* Trigger button — nav icon or floating */}
       <button
         onClick={() => { setOpen(true); setSubmitted(false); setError(null) }}
-        className="fixed bottom-6 left-6 z-40 w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600
-                   shadow-lg flex items-center justify-center transition-all
-                   hover:scale-105 active:scale-95"
-        title="Report an issue"
+        className={position === 'nav'
+          ? 'p-1.5 rounded-lg transition-all text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'
+          : 'fixed bottom-6 left-6 z-40 w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95'}
+        title="Report a bug"
       >
-        <Bug className="w-5 h-5 text-white" />
+        <Bug className={position === 'nav' ? 'w-4 h-4' : 'w-5 h-5 text-white'} />
       </button>
 
       {/* Modal */}

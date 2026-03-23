@@ -83,8 +83,8 @@ def _rate_limit_check():
 
 # ── Circuit Breaker ─────────────────────────────────────────────────────────
 # If SF fails repeatedly, stop calling it to let it recover
-_BREAKER_THRESHOLD = 15      # consecutive failures before opening circuit
-_BREAKER_COOLDOWN = 30       # seconds to wait before retrying
+_BREAKER_THRESHOLD = 5       # consecutive failures before opening circuit (detect outages fast)
+_BREAKER_COOLDOWN = 60       # seconds to wait before retrying (give SF time to recover)
 _breaker_lock = threading.Lock()
 _breaker_failures = 0
 _breaker_open_until = 0.0

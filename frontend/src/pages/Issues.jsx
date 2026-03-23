@@ -279,29 +279,23 @@ export default function Issues() {
             <p className="text-sm text-slate-300 whitespace-pre-wrap">{desc}</p>
           </div>
 
-          {/* Workflow status changer (admin) */}
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Workflow Status</div>
-              <Lock className="w-3 h-3 text-slate-600" title="Admin PIN required" />
+          {/* Status dropdown */}
+          <div className="flex items-center gap-3">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider">Status</div>
+            <div className="relative">
+              <select
+                value={detail.status || 'backlog'}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                disabled={submitting}
+                className="appearance-none bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 pr-8 text-[11px] font-semibold text-slate-200 cursor-pointer hover:border-slate-500 transition-all focus:outline-none focus:ring-1 focus:ring-blue-500/50 disabled:opacity-40"
+              >
+                {STATUSES.map(s => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {STATUSES.map(s => (
-                <button
-                  key={s.key}
-                  onClick={() => handleStatusChange(s.key)}
-                  disabled={submitting || detail.status === s.key}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all
-                    ${detail.status === s.key
-                      ? s.color + ' ring-1 ring-white/20'
-                      : 'bg-slate-800/50 text-slate-500 border-slate-700/50 hover:text-slate-300 hover:border-slate-600'
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            <StatusBadge status={detail.status} />
           </div>
         </div>
 

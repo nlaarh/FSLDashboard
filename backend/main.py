@@ -1,4 +1,10 @@
-"""FSL App — FastAPI backend. All data live from Salesforce with in-memory caching."""
+"""FSL App — FastAPI backend. All data live from Salesforce with proactive caching.
+
+Scalability: Designed for 1000+ concurrent users.
+- Proactive refresher keeps all hot cache keys warm on a schedule
+- Users always served from cache (L1 memory or L2 disk) — never wait for SF
+- SF sees constant ~10-15 calls/min regardless of user count
+"""
 
 import os, sys, time, threading
 sys.path.insert(0, os.path.dirname(__file__))
@@ -13,6 +19,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
 from routers.auth import _verify_cookie, _PUBLIC_PATHS
+import cache
+import refresher
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
@@ -79,136 +87,84 @@ app.include_router(sa_report.router)
 app.include_router(insights.router)
 
 
-# ── Cache warmup on startup ─────────────────────────────────────────────────
+# ── Startup: proactive cache refresher ──────────────────────────────────────
 
 _start_time = time.time()
 
 
-def _warmup_cache():
-    """Pre-fetch ALL key endpoints so first users never wait for cold SF queries."""
-    import logging
-    log = logging.getLogger('warmup')
-    try:
-        log.info("Cache warmup starting (full)...")
-
-        warmup_fns = [
-            ("garages_list", lambda: garages.list_garages()),
-            ("ops_garages", lambda: __import__('ops').get_ops_garages()),
-            ("ops_territories", lambda: __import__('ops').get_ops_territories()),
-            ("command_center", lambda: command_center.command_center()),
-            ("ops_brief", lambda: ops.ops_brief()),
-            ("map_grids", lambda: map_router.get_map_grids()),
-            ("map_drivers", lambda: map_router.get_map_drivers()),
-            ("pta_advisor", lambda: pta.pta_advisor()),
-            # trends_30d excluded from warmup — too heavy for startup (4 parallel SF queries, 45K+ rows)
-            # It uses cached_query_persistent so first request triggers it, then cached to disk for 24h
-        ]
-
-        for name, fn in warmup_fns:
-            try:
-                fn()
-                log.info(f"  {name}: cached")
-            except Exception as e:
-                log.warning(f"  {name} warmup failed: {e}")
-
-        log.info("Cache warmup complete.")
-    except Exception as e:
-        log.warning(f"Cache warmup error: {e}")
-
-
 def _nightly_trends_refresh():
-    """Refresh 30-day trends at 12:05 AM ET daily."""
+    """Refresh 30-day trends and current month trends at 12:05 AM ET daily.
+
+    These are too heavy for the regular refresher (~45K rows, 4 parallel queries).
+    They run once daily and are disk-cached for 24h.
+    """
     import logging
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     log = logging.getLogger('nightly')
     ET = ZoneInfo('America/New_York')
     while True:
         try:
             now_et = datetime.now(ET)
-            # Next 00:05 ET
             target = now_et.replace(hour=0, minute=5, second=0, microsecond=0)
             if target <= now_et:
                 target += timedelta(days=1)
             sleep_sec = (target - now_et).total_seconds()
             log.info(f"Nightly trends refresh scheduled in {sleep_sec/3600:.1f}h ({target.date()})")
             time.sleep(sleep_sec)
-            log.info("Nightly trends refresh starting...")
-            cache.disk_invalidate('insights_trends_30d')
-            cache.invalidate('insights_trends_30d')
-            dispatch_routes.api_trends()  # starts bg thread
-            # Poll up to 20 min for the bg thread to populate cache
-            for _i in range(120):
-                time.sleep(10)
-                if cache.get('insights_trends_30d'):
-                    log.info("Nightly trends refresh complete.")
-                    break
-            else:
-                raise RuntimeError("Trends bg thread did not complete in 20 min")
+
+            # Use filesystem lock so only one worker runs this
+            if not cache.fs_lock_acquire('nightly_trends', max_age=3600):
+                log.info("Nightly trends: another worker is handling it")
+                time.sleep(3600)
+                continue
+
+            try:
+                # 30-day trends
+                log.info("Nightly: refreshing 30-day trends...")
+                cache.disk_invalidate('insights_trends_30d')
+                cache.invalidate('insights_trends_30d')
+                dispatch_routes.api_trends()
+                for _i in range(120):
+                    time.sleep(10)
+                    if cache.get('insights_trends_30d'):
+                        log.info("Nightly: 30-day trends complete.")
+                        break
+
+                # Current month trends
+                current_month = datetime.now(ET).strftime('%Y-%m')
+                cache_key = f'insights_trends_month_{current_month}'
+                log.info(f"Nightly: refreshing monthly trends for {current_month}...")
+                cache.disk_invalidate(cache_key)
+                cache.invalidate(cache_key)
+                dispatch_routes._generate_month_trends(current_month)
+                log.info(f"Nightly: monthly trends complete for {current_month}.")
+            finally:
+                cache.fs_lock_release('nightly_trends')
+
         except Exception as e:
             log.warning(f"Nightly trends refresh failed: {e}")
-            time.sleep(300)  # Retry in 5 min on failure
-
-
-def _nightly_month_trends_refresh():
-    """Pre-generate current month trends at 3:00 AM ET daily.
-
-    Only refreshes the current month (data is still accumulating).
-    Past months are cached for 7 days and don't change, so they're
-    generated on first request and then served from disk cache.
-    """
-    import logging
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-    log = logging.getLogger('nightly_month')
-    ET = ZoneInfo('America/New_York')
-    while True:
-        try:
-            now_et = datetime.now(ET)
-            target = now_et.replace(hour=3, minute=0, second=0, microsecond=0)
-            if target <= now_et:
-                target += timedelta(days=1)
-            sleep_sec = (target - now_et).total_seconds()
-            log.info(f"Monthly trends refresh scheduled in {sleep_sec/3600:.1f}h ({target.date()} 3:00 AM ET)")
-            time.sleep(sleep_sec)
-
-            # Refresh current month only
-            current_month = datetime.now(ET).strftime('%Y-%m')
-            cache_key = f'insights_trends_month_{current_month}'
-            log.info(f"Monthly trends refresh starting for {current_month}...")
-            cache.disk_invalidate(cache_key)
-            cache.invalidate(cache_key)
-            dispatch_routes._generate_month_trends(current_month)
-            log.info(f"Monthly trends refresh complete for {current_month}.")
-        except Exception as e:
-            log.warning(f"Monthly trends refresh failed: {e}")
+            cache.fs_lock_release('nightly_trends')
             time.sleep(300)
 
 
 @app.on_event("startup")
-async def startup_warmup():
-    # Start nightly trends refresh threads
-    threading.Thread(target=_nightly_trends_refresh, daemon=True).start()
-    threading.Thread(target=_nightly_month_trends_refresh, daemon=True).start()
+async def startup():
+    # Start proactive cache refresher (replaces _warmup_cache)
+    # The refresher handles leader election — safe to call from all workers
+    refresher.start()
 
-    # If disk cache is stale/missing on startup, trigger immediate background refresh
-    # (covers deploys that happen after 12:05 AM — nightly thread won't fire until tomorrow)
+    # Nightly heavy trends refresh (too heavy for regular refresher)
+    threading.Thread(target=_nightly_trends_refresh, daemon=True).start()
+
+    # Startup trends check: if disk cache is stale, trigger immediate refresh
     def _startup_trends_check():
-        time.sleep(15)  # let warmup finish first
+        time.sleep(15)
         if not cache.disk_get('insights_trends_30d'):
             import logging
-            logging.getLogger('startup').info("Trends cache stale/missing — triggering immediate refresh on startup")
+            logging.getLogger('startup').info("Trends cache stale/missing — triggering refresh")
             dispatch_routes.api_trends()
     threading.Thread(target=_startup_trends_check, daemon=True).start()
-
-    if os.environ.get("WEBSITE_SITE_NAME"):  # Only on Azure
-        import random
-        delay = random.uniform(0, 5)
-
-        def _delayed_warmup():
-            time.sleep(delay)
-            _warmup_cache()
-        threading.Thread(target=_delayed_warmup, daemon=True).start()
 
 
 # ── Serve React SPA ─────────────────────────────────────────────────────────

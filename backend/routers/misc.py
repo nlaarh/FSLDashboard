@@ -27,6 +27,25 @@ def health():
             "cache": cache.stats(), "salesforce": sf_stats()}
 
 
+@router.post("/api/warmup")
+def warmup():
+    """Force-warm all cache keys synchronously. Called by deploy script after deployment.
+
+    Ensures the first real user never waits for cold SF queries.
+    Returns once all hot keys are populated.
+    """
+    import refresher
+    schedule = refresher._get_schedule()
+    warmed = 0
+    for interval, key, fn, persist in schedule:
+        try:
+            fn()  # calls the endpoint → cached_query → cold-starts if needed
+            warmed += 1
+        except Exception:
+            pass
+    return {"status": "warmed", "keys": warmed, "total": len(schedule)}
+
+
 # ── Compat endpoints (frontend expects these) ───────────────────────────────
 
 @router.get("/api/db/status")
@@ -458,7 +477,7 @@ def scheduler_insights():
                 FROM ServiceAppointment
                 WHERE CreatedDate >= {cutoff_utc}
                   AND ServiceTerritoryId != null
-                  AND ERS_Dispatch_Method__c IN ('Field Services', 'Towbook')
+                  AND RecordType.Name = 'ERS Service Appointment'
                 ORDER BY CreatedDate ASC
             """)
 
@@ -471,7 +490,7 @@ def scheduler_insights():
                        ServiceResource.ERS_Driver_Type__c
                 FROM AssignedResource
                 WHERE ServiceAppointment.CreatedDate >= {cutoff_utc}
-                  AND ServiceAppointment.ERS_Dispatch_Method__c IN ('Field Services', 'Towbook')
+                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
             """)
 
         def _get_drivers():

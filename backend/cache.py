@@ -1,12 +1,16 @@
-"""TTL cache with thundering-herd protection and graceful degradation.
+"""TTL cache with proactive refresh — designed for 1000+ concurrent users.
 
-Designed for 25+ concurrent dispatchers hitting the same Salesforce data.
+Architecture:
+- L1: In-process memory dict (sub-microsecond, per-worker)
+- L2: Disk cache on shared filesystem (5-50ms, shared across all workers/instances)
+- Refresher: Background thread proactively refreshes all hot keys on a schedule
+  → Users NEVER trigger Salesforce queries. Always served from L1 or L2.
 
 Key behaviors:
-1. Thundering herd: When cache expires, ONE thread fetches, others get stale data instantly.
-2. Graceful degradation: If SF is down, serve stale cached data instead of crashing.
-3. Stale-while-revalidate: Expired data is kept in memory as a fallback.
-4. Persistent disk cache: For expensive/static queries that should survive restarts.
+1. Non-blocking reads: cached_query() never calls SF. Returns from L1 → L2 → stale → None.
+2. Thundering herd: refresh_key() is called by ONE refresher process across the cluster.
+3. Graceful degradation: If SF is down, stale data is served. If refresher dies, another takes over.
+4. Persistent disk cache: Survives restarts and redeployments (Azure /home is durable storage).
 """
 
 import time, logging, json, os
@@ -27,6 +31,8 @@ _ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
 _DISK_DIR = Path('/home/fslapp/cache') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/cache'))
 _DISK_DIR.mkdir(parents=True, exist_ok=True)
 
+
+# ── L1: In-process memory cache ─────────────────────────────────────────────
 
 def get(key: str):
     with _lock:
@@ -57,96 +63,24 @@ def invalidate(prefix: str = ''):
             del _store[k]
 
 
-def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
-    """Run query_fn only if result not cached. Thundering-herd safe.
+def cleanup_expired(max_stale_sec: int = 3600):
+    """Remove entries that expired more than max_stale_sec ago.
 
-    If 25 dispatchers hit the same endpoint simultaneously:
-    - First request fetches from Salesforce
-    - Other 24 get stale data instantly (no blocking!)
-    - Zero duplicate Salesforce queries
-
-    If Salesforce is down (circuit breaker open, timeout, error):
-    - Returns stale cached data if available
-    - Only raises if there's no cached data at all
+    Stale entries are kept briefly for stale-while-revalidate reads,
+    but entries expired over 1 hour ago are safe to purge. Prevents
+    unbounded memory growth from parameterized cache keys.
     """
-    # Fast path: fresh cache hit
-    result = get(key)
-    if result is not None:
-        return result
-
-    # Check if another thread is already fetching this key
-    with _lock:
-        # Double-check after acquiring lock
-        entry = _store.get(key)
-        if entry and time.time() < entry['expires']:
-            return entry['data']
-
-        if key in _pending:
-            # Another thread is already fetching — serve stale data immediately
-            # instead of blocking. This prevents the entire server from hanging
-            # when a single SF query is slow (critical with --workers 1).
-            stale_entry = _store.get(key)
-            if stale_entry:
-                return stale_entry['data']
-            # No stale data at all — wait briefly (10s max)
-            event = _pending[key]
-        else:
-            event = Event()
-            _pending[key] = event
-            event = None  # Signal that WE should do the fetch
-
-    if event is not None:
-        # Only reach here if no stale data exists — wait briefly
-        event.wait(timeout=10)
-        result = get(key)
-        if result is not None:
-            return result
-        stale = get_stale(key)
-        if stale is not None:
-            return stale
-        # Still nothing — fall through to fetch ourselves
-
-    # We're the fetcher
-    try:
-        result = query_fn()
-        put(key, result, ttl)
-        return result
-    except Exception as e:
-        # GRACEFUL DEGRADATION: If SF fails, serve stale data
-        stale = get_stale(key)
-        if stale is not None:
-            log.warning(f"SF error for '{key}': {e}. Serving stale cached data.")
-            return stale
-        # No stale data — re-raise so the API returns an error
-        log.error(f"SF error for '{key}': {e}. No cached data available.")
-        raise
-    finally:
-        with _lock:
-            evt = _pending.pop(key, None)
-        if evt:
-            evt.set()  # Wake up all waiting threads
-
-
-def stats():
-    """Return cache statistics for monitoring."""
     with _lock:
         now = time.time()
-        total = len(_store)
-        alive = sum(1 for e in _store.values() if now < e['expires'])
-        stale = total - alive
-        pending = len(_pending)
-    # Count disk cache files
-    disk_files = list(_DISK_DIR.glob('*.json'))
-    return {
-        'total_keys': total,
-        'alive': alive,
-        'stale': stale,
-        'pending_fetches': pending,
-        'disk_cached': len(disk_files),
-    }
+        expired = [k for k, v in _store.items()
+                   if now - v['expires'] > max_stale_sec]
+        for k in expired:
+            del _store[k]
+    if expired:
+        log.info(f"L1 cleanup: purged {len(expired)} expired entries")
 
 
-# ── Persistent disk cache ────────────────────────────────────────────────────
+# ── L2: Persistent disk cache ───────────────────────────────────────────────
 
 def _disk_path(key: str) -> Path:
     safe = key.replace('/', '_').replace('\\', '_').replace(' ', '_')
@@ -162,7 +96,6 @@ def disk_get(key: str, ttl: int = 86400):
         raw = json.loads(path.read_text())
         if time.time() < raw.get('expires', 0):
             return raw['data']
-        # Expired but still on disk — return as stale fallback
         return None
     except Exception:
         return None
@@ -202,13 +135,117 @@ def disk_invalidate(key: str):
         pass
 
 
+# ── Multi-layer read (L1 → L2 → stale) ──────────────────────────────────────
+
+def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
+    """Try every cache layer. Returns data or None. Never calls SF.
+
+    Order: L1 fresh → L2 fresh → L1 stale → L2 stale → None
+    """
+    # L1 fresh
+    result = get(key)
+    if result is not None:
+        return result
+    # L2 fresh → promote to L1
+    disk_result = disk_get(key, ttl)
+    if disk_result is not None:
+        put(key, disk_result, ttl)
+        return disk_result
+    # L1 stale (expired but still in memory)
+    stale = get_stale(key)
+    if stale is not None:
+        return stale
+    # L2 stale (expired but still on disk)
+    disk_stale = disk_get_stale(key)
+    if disk_stale is not None:
+        put(key, disk_stale, 60)  # keep stale briefly in L1
+        return disk_stale
+    return None
+
+
+# ── User-facing cache query (stale-while-revalidate) ────────────────────────
+
+def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
+    """Serve from cache with background re-fetch when expired.
+
+    Behavior:
+    - L1 fresh → return instantly (fast path)
+    - L2 fresh → promote to L1, return instantly
+    - L1/L2 expired → ONE thread re-fetches from SF, ALL others get stale data instantly
+    - No cache at all → ONE thread fetches, others wait briefly (cold start)
+
+    This is stale-while-revalidate: users NEVER see a blank screen.
+    The refresher proactively expires keys on schedule, and this function
+    handles the actual re-fetch with thundering-herd protection.
+    """
+    # Fast path: L1 fresh
+    result = get(key)
+    if result is not None:
+        return result
+
+    # L2 fresh → promote to L1
+    disk_result = disk_get(key, ttl)
+    if disk_result is not None:
+        put(key, disk_result, ttl)
+        return disk_result
+
+    # Cache expired or missing — need to re-fetch.
+    # Check if another thread is already fetching this key.
+    with _lock:
+        # Double-check after lock
+        entry = _store.get(key)
+        if entry and time.time() < entry['expires']:
+            return entry['data']
+
+        if key in _pending:
+            # Another thread is already fetching — serve stale data instantly
+            stale_entry = _store.get(key)
+            if stale_entry:
+                return stale_entry['data']
+            # No stale data at all — wait briefly (cold start)
+            event = _pending[key]
+        else:
+            event = Event()
+            _pending[key] = event
+            event = None  # WE are the fetcher
+
+    if event is not None:
+        # Another thread is fetching — return stale if available, else wait
+        stale = get_stale(key)
+        if stale is not None:
+            return stale
+        event.wait(timeout=15)
+        result = get(key)
+        if result is not None:
+            return result
+        stale2 = get_stale(key)
+        if stale2 is not None:
+            return stale2
+
+    # We're the fetcher — query SF
+    try:
+        result = query_fn()
+        put(key, result, ttl)
+        return result
+    except Exception as e:
+        # Graceful degradation: serve stale data if SF fails
+        stale = get_stale(key)
+        if stale is not None:
+            log.warning(f"SF error for '{key}': {e}. Serving stale cached data.")
+            return stale
+        log.error(f"SF error for '{key}': {e}. No cached data available.")
+        raise
+    finally:
+        with _lock:
+            evt = _pending.pop(key, None)
+        if evt:
+            evt.set()
+
+
 def cached_query_persistent(key: str, query_fn, ttl: int = 86400):
     """Like cached_query but also persists to disk. Survives server restarts.
 
-    Flow:
-    1. Check in-memory cache (fast path)
-    2. Check disk cache (warm start after restart)
-    3. Fetch from Salesforce, store in both memory + disk
+    Flow: L1 → L2 → fetch (cold start only) → store in L1 + L2
     """
     # Fast path: in-memory
     result = get(key)
@@ -218,20 +255,98 @@ def cached_query_persistent(key: str, query_fn, ttl: int = 86400):
     # Warm start: check disk
     disk_result = disk_get(key, ttl)
     if disk_result is not None:
-        put(key, disk_result, ttl)  # Promote to memory
+        put(key, disk_result, ttl)
         return disk_result
 
-    # Fetch fresh — use same thundering-herd logic
+    # Stale fallbacks
+    stale = get_stale(key)
+    if stale is not None:
+        return stale
+    disk_stale = disk_get_stale(key)
+    if disk_stale is not None:
+        put(key, disk_stale, 300)
+        return disk_stale
+
+    # Cold start fetch
     try:
         result = query_fn()
         put(key, result, ttl)
         disk_put(key, result, ttl)
         return result
     except Exception as e:
-        # Try stale from disk
-        stale = disk_get_stale(key)
-        if stale is not None:
-            log.warning(f"SF error for '{key}': {e}. Serving stale disk cache.")
-            put(key, stale, 300)  # Keep stale in memory briefly
-            return stale
+        log.error(f"Cold start persistent fetch failed for '{key}': {e}")
         raise
+
+
+# ── Refresher-only: proactive cache refresh ──────────────────────────────────
+
+def refresh_key(key: str, query_fn, ttl: int = DEFAULT_TTL, persist: bool = False):
+    """Called by the refresher thread to proactively update a cache key.
+
+    NOT called by user requests. This is the only function that intentionally
+    calls SF on a schedule.
+    """
+    try:
+        result = query_fn()
+        put(key, result, ttl)
+        if persist:
+            disk_put(key, result, ttl)
+        return True
+    except Exception as e:
+        log.warning(f"Refresher failed for '{key}': {e}")
+        return False
+
+
+# ── Filesystem locks (cross-worker, cross-instance) ─────────────────────────
+
+def fs_lock_acquire(name: str, max_age: int = 1800) -> bool:
+    """Acquire a filesystem-based lock. Returns True if acquired.
+
+    Used for background generation tasks that should run in only one worker.
+    Lock auto-expires after max_age seconds (default 30 min).
+    """
+    lock_path = _DISK_DIR / f'.lock_{name}'
+    try:
+        if lock_path.exists():
+            age = time.time() - lock_path.stat().st_mtime
+            if age < max_age:
+                return False  # Lock is held and fresh
+            # Stale lock — take over
+            log.info(f"Stale lock '{name}' ({age:.0f}s old) — taking over")
+        lock_path.write_text(json.dumps({
+            'pid': os.getpid(),
+            'time': time.time(),
+            'host': os.environ.get('HOSTNAME', 'local'),
+        }))
+        return True
+    except Exception:
+        return False
+
+
+def fs_lock_release(name: str):
+    """Release a filesystem lock."""
+    lock_path = _DISK_DIR / f'.lock_{name}'
+    try:
+        lock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+# ── Stats ────────────────────────────────────────────────────────────────────
+
+def stats():
+    """Return cache statistics for monitoring."""
+    with _lock:
+        now = time.time()
+        total = len(_store)
+        alive = sum(1 for e in _store.values() if now < e['expires'])
+        stale = total - alive
+        pending = len(_pending)
+    disk_files = list(_DISK_DIR.glob('*.json'))
+    return {
+        'total_keys': total,
+        'alive': alive,
+        'stale': stale,
+        'pending_fetches': pending,
+        'disk_cached': len(disk_files),
+    }

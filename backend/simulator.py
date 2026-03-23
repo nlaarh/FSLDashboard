@@ -104,6 +104,7 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
             WHERE ServiceTerritoryId = '{territory_id}'
               AND CreatedDate >= {date_str}T00:00:00Z
               AND CreatedDate < {next_day}T00:00:00Z
+              AND RecordType.Name = 'ERS Service Appointment'
               AND Status IN ('Dispatched','Completed','Canceled',
                              'Cancel Call - Service Not En Route',
                              'Cancel Call - Service En Route',
@@ -131,6 +132,7 @@ def simulate_day(territory_id: str, date_str: str) -> list[dict]:
               AND CreatedDate >= {date_str}T00:00:00Z
               AND CreatedDate < {next_day}T00:00:00Z
               AND Field IN ('ERS_Assigned_Resource__c', 'Status')
+              AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
             ORDER BY CreatedDate ASC
         """),
     )

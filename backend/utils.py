@@ -6,6 +6,13 @@ from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo('America/New_York')
 
+# ── ERS filter — single source of truth ──────────────────────────────────────
+# Use in every SOQL query that fetches ServiceAppointments to exclude
+# non-ERS records (travel, insurance, lobby appointments).
+# RecordType is the definitive flag — always populated, can be used in GROUP BY.
+ERS_RECORD_TYPE = "ERS Service Appointment"
+ERS_SA_FILTER = f"RecordType.Name = '{ERS_RECORD_TYPE}'"
+
 # ── Dispatch constants ───────────────────────────────────────────────────────
 TRAVEL_SPEED_MPH = 25
 CYCLE_TIMES = {'tow': 115, 'battery': 38, 'light': 33}

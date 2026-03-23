@@ -74,6 +74,12 @@ export const forceTrendsRefresh = () => api.get('/insights/trends/refresh').then
 export const fetchMonthTrends = (month) => api.get(`/insights/trends/month?month=${month}`).then(r => r.data)
 export const refreshMonthTrends = (month) => api.get(`/insights/trends/month/refresh?month=${month}`).then(r => r.data)
 
+// Satisfaction Score Analysis
+export const fetchSatisfactionOverview = (month) => api.get(`/insights/satisfaction/overview?month=${month}`).then(r => r.data)
+export const fetchSatisfactionGarage = (name, month) => api.get(`/insights/satisfaction/garage/${encodeURIComponent(name)}?month=${month}`).then(r => r.data)
+export const fetchSatisfactionDetail = (name, date) => api.get(`/insights/satisfaction/detail/${encodeURIComponent(name)}/${date}`).then(r => r.data)
+export const fetchSatisfactionDay = (date) => api.get(`/insights/satisfaction/day/${date}`).then(r => r.data)
+
 // Daily Operations (correct PTA/ATA)
 export const fetchOpsTerritories = () => api.get('/ops/territories').then(r => r.data)
 export const fetchOpsTerritory = (id) => api.get(`/ops/territory/${id}`).then(r => r.data)

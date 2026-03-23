@@ -41,6 +41,7 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 FROM ServiceAppointment
                 WHERE CreatedDate >= {cutoff_utc}
                   AND ServiceTerritoryId != null
+                  AND RecordType.Name = 'ERS Service Appointment'
                   AND Status IN ('Dispatched','Completed','Canceled',
                                  'Cancel Call - Service Not En Route',
                                  'Cancel Call - Service En Route',
@@ -100,6 +101,7 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 FROM ServiceAppointment
                 WHERE CreatedDate >= {today_start}
                   AND ServiceTerritoryId != null
+                  AND RecordType.Name = 'ERS Service Appointment'
             """)
 
         # Fleet completed SAs today with driver info for leaderboard
@@ -141,6 +143,7 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointment.CreatedDate >= {today_start}
                   AND Field = 'ERS_Assigned_Resource__c'
+                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
                   AND ServiceAppointment.WorkType.Name != 'Tow Drop-Off'
                 ORDER BY ServiceAppointmentId, CreatedDate ASC
             """)
@@ -153,6 +156,7 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 WHERE ServiceAppointment.Status IN ('Dispatched','Assigned','In Progress',
                                                      'En Route','On Location')
                   AND ServiceAppointment.ServiceTerritoryId != null
+                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
             """)
 
         cc_data = sf_parallel(sas=_get_cc_sas, trucks=_get_cc_trucks,

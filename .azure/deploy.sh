@@ -96,9 +96,26 @@ az webapp up \
   --runtime "$RUNTIME" \
   --sku "$SKU"
 
+# Step 7: Warm cache so first user never waits
+echo "[7/7] Warming cache..."
+APP_URL="https://$APP_NAME.azurewebsites.net"
+# Wait for app to be ready
+for i in $(seq 1 30); do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/api/health" 2>/dev/null)
+  if [ "$STATUS" = "200" ]; then
+    break
+  fi
+  echo "  Waiting for app to start ($i/30)..."
+  sleep 5
+done
+# Trigger synchronous warmup of all cache keys
+WARMUP=$(curl -s -X POST "$APP_URL/api/warmup" 2>/dev/null)
+echo "  Cache warmup: $WARMUP"
+
 echo ""
 echo "=== Deployment Complete ==="
-echo "  URL: https://$APP_NAME.azurewebsites.net"
+echo "  URL: $APP_URL"
+echo "  Cache is warm — first user gets instant data."
 echo ""
 echo "  Next: Enable SSO authentication"
 echo "  Run:  .azure/enable-sso.sh $APP_NAME"

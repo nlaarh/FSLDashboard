@@ -120,6 +120,7 @@ def ops_brief():
                 FROM ServiceAppointment
                 WHERE CreatedDate >= {cutoff}
                   AND ServiceTerritoryId != null
+                  AND RecordType.Name = 'ERS Service Appointment'
                   AND Status IN ('Dispatched','Completed','Canceled',
                                  'Cancel Call - Service Not En Route',
                                  'Cancel Call - Service En Route',
@@ -158,6 +159,7 @@ def ops_brief():
                 WHERE CreatedDate >= {eight_weeks_ago}
                   AND DAY_IN_WEEK(CreatedDate) = {sf_dow}
                   AND ServiceTerritoryId != null
+                  AND RecordType.Name = 'ERS Service Appointment'
                   AND Status != 'Canceled'
                 GROUP BY HOUR_IN_DAY(CreatedDate)
                 ORDER BY HOUR_IN_DAY(CreatedDate)
