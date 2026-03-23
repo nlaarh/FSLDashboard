@@ -2195,7 +2195,6 @@ def _generate_satisfaction_overview(month: str):
     garage_overall = batch1['garage_overall']
     garage_rt = batch1['garage_rt']
     garage_tech = batch1['garage_tech']
-    """)
 
     # ── Batch 2: SA volume + completed SAs in parallel ──
     batch2 = sf_parallel(
