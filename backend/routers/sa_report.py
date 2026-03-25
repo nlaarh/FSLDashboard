@@ -204,30 +204,46 @@ def _build_narrative(sa_summary: dict, timeline: list, assign_steps: list) -> li
         drivers  = step.get('step_drivers', [])
         assigned = next((d for d in drivers if d['is_assigned']), None)
         closest  = next((d for d in drivers if d['is_closest']), None)
-        prefix   = 'At dispatch' if i == 0 else 'At reassignment'
-        if assigned and not assigned.get('no_gps'):
-            dist_str = f"{assigned['distance']} mi" if assigned.get('distance') is not None else 'unknown distance'
-            if assigned.get('is_closest'):
-                lines.append(f"{prefix}, {assigned['name']} ({garage_label}) was {dist_str} away — closest driver with matching skills. ✓ Optimal.")
-            elif closest:
-                lines.append(f"{prefix}, {assigned['name']} ({garage_label}) was {dist_str} away — not closest. {closest['name']} was only {closest['distance']} mi away.")
-            else:
-                lines.append(f"{prefix}, {assigned['name']} ({garage_label}) was {dist_str} away.")
-        elif assigned and assigned.get('no_gps'):
-            lines.append(f"{prefix}, {assigned['name']} ({garage_label}) was assigned — no GPS location at dispatch time.")
-        if step.get('is_human'):
-            action = 'reassigned' if step.get('is_reassignment') else 'assigned'
-            lines.append(f"Dispatcher {step['by_name']} manually {action} this call.")
-        eligible = sum(1 for d in drivers if d.get('has_skills'))
-        if eligible > 1:
-            lines.append(f"{eligible} drivers logged into trucks with matching skills were on Track at this moment.")
+        driver_name = assigned['name'] if assigned else step.get('driver', '?')
+        reason = step.get('reason')
 
-    for r in (e for e in timeline if e['event'] == 'Reassigned' and 'driver' in e):
-        reason_str = f" Reason: {r['reason']}." if r.get('reason') else ''
-        lines.append(
-            f"Reassigned to {r['driver']} ({garage_label}) "
-            f"at {r['time']} {_who_phrase(r.get('by_name', ''))}.{reason_str}"
-        )
+        if i == 0:
+            # First assignment — already shown by "First assigned to X" above
+            if assigned and not assigned.get('no_gps'):
+                dist_str = f"{assigned['distance']} mi" if assigned.get('distance') is not None else '?'
+                if assigned.get('is_closest'):
+                    lines.append(f"{driver_name} was {dist_str} away — closest eligible driver. ✓")
+                elif closest:
+                    lines.append(f"{driver_name} was {dist_str} away. Closer option: {closest['name']} at {closest['distance']} mi.")
+                else:
+                    lines.append(f"{driver_name} was {dist_str} away.")
+            elif assigned and assigned.get('no_gps'):
+                lines.append(f"{driver_name} had no GPS at dispatch time.")
+        else:
+            # Reassignment — one clear line per step
+            dist_part = ''
+            if assigned and not assigned.get('no_gps') and assigned.get('distance') is not None:
+                dist_part = f" ({assigned['distance']} mi away)"
+            # Who reassigned: human dispatcher or system?
+            by_name = step.get('by_name', '')
+            if step.get('is_human'):
+                by_part = f" by dispatcher {by_name}"
+            elif by_name:
+                by_part = f" by {by_name}"
+            else:
+                by_part = ''
+            # Why: use reason if meaningful, otherwise explain from by_name
+            if reason and reason.lower() not in ('reassigned', 'none'):
+                reason_part = f" — {reason}"
+            elif step.get('is_human'):
+                reason_part = f" — manual dispatch override"
+            elif 'Platform Integration' in by_name or 'FSL' in by_name:
+                reason_part = " — auto-scheduler reassignment"
+            elif 'Mulesoft' in by_name:
+                reason_part = " — Mulesoft cascade"
+            else:
+                reason_part = ''
+            lines.append(f"Reassigned to {driver_name}{dist_part} at {step['time']}{by_part}.{reason_part}")
 
     on_loc = next((e for e in timeline if e['event'] == 'On Location'), None)
     if on_loc:

@@ -124,7 +124,7 @@ def gps_health():
             'by_type': buckets,
         }
 
-    return cache.cached_query('gps_health', _fetch, ttl=3600)
+    return cache.cached_query('gps_health', _fetch, ttl=300)  # 5 min — drivers log in/out frequently
 
 
 # ── SA Lookup — Zoom-to with Driver Positions ────────────────────────────────

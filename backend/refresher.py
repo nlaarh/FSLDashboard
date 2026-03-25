@@ -71,7 +71,7 @@ def _get_schedule():
 
         # ── Heavy / static (3600s) ──
         (3600, 'map_grids',              get_map_grids,                    True),
-        (3600, 'gps_health',             gps_health,                       True),
+        (300,  'gps_health',             gps_health,                       False),  # 5 min — drivers log in/out
     ]
 
 
