@@ -1252,11 +1252,15 @@ function SADetailRow({ item }) {
         item.status === 'On Location' ? 'bg-cyan-950/50 text-cyan-400' :
         'bg-slate-800 text-slate-400'
       )}>{item.status || '—'}</span>
-      {item.dispatch_method && (
-        <span className={clsx('text-[8px] px-1 py-0.5 rounded',
-          item.dispatch_method === 'Field Services' ? 'bg-blue-950/40 text-blue-400' : 'bg-fuchsia-950/40 text-fuchsia-400'
-        )}>{item.dispatch_method === 'Field Services' ? 'Fleet' : 'TB'}</span>
-      )}
+      {(() => {
+        const dm = item.dispatch_method
+        const terr = item.territory || ''
+        const isFleet = dm === 'Field Services' && (terr.startsWith('100') || terr.startsWith('800'))
+        const isContractor = dm === 'Field Services' && !isFleet
+        const label = isFleet ? 'Fleet' : isContractor ? 'On-Platform' : dm === 'Towbook' ? 'Towbook' : dm || ''
+        const cls = isFleet ? 'bg-blue-950/40 text-blue-400' : isContractor ? 'bg-indigo-950/40 text-indigo-400' : 'bg-fuchsia-950/40 text-fuchsia-400'
+        return label ? <span className={clsx('text-[8px] px-1 py-0.5 rounded', cls)}>{label}</span> : null
+      })()}
       {item.from_territory && item.to_territory && (
         <span className="w-full text-[9px] text-red-400/70 pl-16 truncate" title={`${item.from_territory} → ${item.to_territory}`}>
           {item.from_territory} → {item.to_territory}
@@ -2063,12 +2067,32 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
               fetchFn={() => fetchReassignmentDetail().then(d => d.bounces)}
               renderRow={(item) => <BounceDetailRow item={item} />}
               emptyMsg="No bounce details available">
-              <div className="flex items-center justify-between cursor-pointer hover:bg-slate-800/30 rounded-lg px-2 py-1 -mx-2">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-red-400">{ra.hours_lost}h</span>
-                  <span className="text-xs text-slate-500">lost to reassignments</span>
+              <div className="cursor-pointer hover:bg-slate-800/30 rounded-lg px-2 py-1 -mx-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-red-400">{ra.hours_lost}h</span>
+                    <span className="text-xs text-slate-500">lost to reassignments</span>
+                  </div>
+                  <div className="text-xs text-slate-500">{ra.affected_calls} calls · {ra.total_bounces} bounces</div>
                 </div>
-                <div className="text-xs text-slate-500">{ra.affected_calls} calls · {ra.total_bounces} bounces</div>
+                {ra.by_channel && (
+                  <div className="flex gap-4 mt-2">
+                    {[
+                      { key: 'fleet', label: 'Fleet', color: 'text-blue-400' },
+                      { key: 'contractor', label: 'On-Platform', color: 'text-indigo-400' },
+                      { key: 'towbook', label: 'Towbook', color: 'text-fuchsia-400' },
+                    ].map(ch => {
+                      const s = ra.by_channel[ch.key]
+                      if (!s || s.bounces === 0) return null
+                      return (
+                        <div key={ch.key} className="text-[10px]">
+                          <span className={clsx('font-semibold', ch.color)}>{ch.label}</span>
+                          <span className="text-slate-500 ml-1">{s.hours_lost}h · {s.calls} calls</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             </DrillDown>
           )}

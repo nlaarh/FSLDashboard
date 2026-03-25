@@ -233,6 +233,7 @@ def api_reassignment_detail():
                 del c['_ts_end']
 
             sa = sa_info.get(sa_id, {})
+            sa['Id'] = sa_id  # sub-object doesn't include Id — set it explicitly
             row = _sa_row(sa, minutes_lost=total_min)
             row['bounce_chain'] = chain
             row['bounce_count'] = len(chain) - 1   # attempts before final

@@ -559,13 +559,36 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                     'sa': h_sa,
                 })
 
+        # Build SA ID → dispatch method lookup from today's SAs
+        sa_dispatch = {}
+        for s in today_sas_all:
+            sa_dispatch[s.get('Id', '')] = s.get('ERS_Dispatch_Method__c') or ''
+
         total_bounces = 0
         total_minutes_lost = 0
         affected_sas = set()
+        # Breakdown by channel
+        channel_stats = {
+            'fleet': {'bounces': 0, 'minutes': 0, 'calls': set()},
+            'contractor': {'bounces': 0, 'minutes': 0, 'calls': set()},
+            'towbook': {'bounces': 0, 'minutes': 0, 'calls': set()},
+        }
 
         for sa_id, assignments in sa_driver_changes.items():
             if len(assignments) < 2:
-                continue  # No bounce — single assignment
+                continue
+            dm = sa_dispatch.get(sa_id, '')
+            if dm == 'Field Services':
+                # Check territory name to distinguish Fleet vs On-Platform Contractor
+                terr_name = ''
+                if assignments and assignments[0].get('sa'):
+                    terr_name = (assignments[0]['sa'].get('ServiceTerritory') or {}).get('Name', '')
+                channel = 'fleet' if is_fleet_territory(terr_name) else 'contractor'
+            elif dm == 'Towbook':
+                channel = 'towbook'
+            else:
+                channel = 'towbook'  # default
+
             assignments.sort(key=lambda e: e['time'] if e['time'] else now)
             for i in range(1, len(assignments)):
                 prev_time = assignments[i-1]['time']
@@ -574,10 +597,13 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                     continue
                 gap_min = (curr_time - prev_time).total_seconds() / 60
                 if gap_min < 10 or gap_min >= 480:
-                    continue  # <10m = quick system retry, >=480m = stale/overnight
+                    continue
                 total_bounces += 1
                 total_minutes_lost += gap_min
                 affected_sas.add(sa_id)
+                channel_stats[channel]['bounces'] += 1
+                channel_stats[channel]['minutes'] += gap_min
+                channel_stats[channel]['calls'].add(sa_id)
 
         hours_lost = round(total_minutes_lost / 60, 1)
 
@@ -622,6 +648,13 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 'total_bounces': total_bounces,
                 'affected_calls': len(affected_sas),
                 'hours_lost': hours_lost,
+                'by_channel': {
+                    ch: {
+                        'bounces': s['bounces'],
+                        'hours_lost': round(s['minutes'] / 60, 1),
+                        'calls': len(s['calls']),
+                    } for ch, s in channel_stats.items()
+                },
             },
             'cancel_breakdown': {
                 'total': total_cancels,
