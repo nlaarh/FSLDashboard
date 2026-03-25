@@ -129,9 +129,9 @@ def _build_timeline(hist_rows: list, sa_id: str) -> list:
         elif field == 'ERS_Assigned_Resource__c':
             if _SF_ID_RE.match(new_val):
                 continue
-            prior = [e for e in tl if e['event'] in ('Assigned', 'Reassigned')]
+            prior_drivers = [e for e in tl if 'driver' in e]
             tl.append({
-                'event':  'Reassigned' if prior else 'Assigned',
+                'event':  'Reassigned' if prior_drivers else 'Assigned',
                 'driver': new_val,
                 'ts': ts, 'time': time_str,
                 'by_name': by_name, 'is_human': is_human,
@@ -155,11 +155,11 @@ def _build_timeline(hist_rows: list, sa_id: str) -> list:
 
     filtered = [e for e in sorted_tl if not _is_dupe_status(e)]
 
-    # Remove back-to-back identical status events (e.g. two "En Route" within 2 min)
+    # Remove back-to-back identical status events (e.g. two "En Route" within 5 min)
     deduped = []
     for e in filtered:
         if deduped and e['event'] == deduped[-1]['event'] and 'driver' not in e and 'driver' not in deduped[-1]:
-            if e.get('ts') and deduped[-1].get('ts') and abs((e['ts'] - deduped[-1]['ts']).total_seconds()) < 120:
+            if e.get('ts') and deduped[-1].get('ts') and abs((e['ts'] - deduped[-1]['ts']).total_seconds()) < 300:
                 continue  # skip duplicate
         deduped.append(e)
     return deduped
