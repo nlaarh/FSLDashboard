@@ -282,7 +282,7 @@ def api_human_intervention():
             SELECT Id, AppointmentNumber, Account.Name, WorkType.Name,
                    ServiceTerritory.Name, Status, CreatedDate, ActualStartTime,
                    ERS_Cancellation_Reason__c, ERS_Facility_Decline_Reason__c,
-                   ERS_Dispatch_Method__c
+                   ERS_Dispatch_Method__c, ERS_PTA__c
             FROM ServiceAppointment
             WHERE CreatedDate >= {today_start}
               AND WorkType.Name IN ('Tow Pick-Up','Battery','Tire','Lockout','Winch Out','Fuel','Locksmith','EV')
@@ -333,7 +333,13 @@ def api_human_intervention():
                 t1, t2 = _parse_dt(created), _parse_dt(actual)
                 if t1 and t2:
                     ata = round((t2 - t1).total_seconds() / 60)
+            pta_raw = sa.get('ERS_PTA__c')
+            pta = round(float(pta_raw)) if pta_raw and 0 < float(pta_raw) < 999 else None
+            pta_delta = round(ata - pta) if ata and pta else None
+
             row = _sa_row(sa, ata=ata)
+            row['pta_min'] = pta
+            row['pta_delta'] = pta_delta  # positive = late, negative = early
             if sa_id in human_sas:
                 row['dispatcher'] = human_sas[sa_id]
                 human_list.append(row)
@@ -2122,6 +2128,45 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
         _log.info(f"Satisfaction overview background generation started for {month}")
 
     return {'month': month, 'summary': {}, 'daily_trend': [], 'all_garages': [], 'loading': True}
+
+
+@router.get("/api/insights/satisfaction/refresh")
+def api_satisfaction_refresh(month: str = Query(..., description="YYYY-MM format")):
+    """Force-refresh satisfaction overview for a month. Clears cache and regenerates."""
+    import re, threading, logging
+    from datetime import date as _date
+
+    if not re.match(r'^\d{4}-\d{2}$', month):
+        raise HTTPException(400, "month must be YYYY-MM format")
+
+    _log = logging.getLogger('satisfaction')
+    cache_key = f'satisfaction_overview_{month}'
+
+    # Clear both L1 and L2 cache
+    cache.invalidate(cache_key)
+    cache.disk_invalidate(cache_key)
+
+    # Trigger background regeneration
+    gen_lock = f'gen_sat_overview_{month}'
+    if cache.fs_lock_acquire(gen_lock, max_age=1800):
+        year, mon = int(month[:4]), int(month[5:7])
+        today = _date.today()
+        is_current = (year == today.year and mon == today.month)
+        ttl = 43200 if is_current else 31536000
+
+        def _bg():
+            try:
+                result = _generate_satisfaction_overview(month)
+                cache.put(cache_key, result, ttl)
+                cache.disk_put(cache_key, result, ttl)
+                _log.info(f"Satisfaction refresh complete for {month}")
+            except Exception as e:
+                _log.warning(f"Satisfaction refresh failed for {month}: {e}")
+            finally:
+                cache.fs_lock_release(gen_lock)
+        threading.Thread(target=_bg, daemon=True).start()
+
+    return {'status': 'refreshing', 'month': month}
 
 
 def _generate_satisfaction_overview(month: str):

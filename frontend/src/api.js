@@ -76,6 +76,7 @@ export const refreshMonthTrends = (month) => api.get(`/insights/trends/month/ref
 
 // Satisfaction Score Analysis
 export const fetchSatisfactionOverview = (month) => api.get(`/insights/satisfaction/overview?month=${month}`).then(r => r.data)
+export const refreshSatisfactionOverview = (month) => api.get(`/insights/satisfaction/refresh?month=${month}`).then(r => r.data)
 export const fetchSatisfactionGarage = (name, month) => api.get(`/insights/satisfaction/garage/${encodeURIComponent(name)}?month=${month}`).then(r => r.data)
 export const fetchSatisfactionDetail = (name, date) => api.get(`/insights/satisfaction/detail/${encodeURIComponent(name)}/${date}`).then(r => r.data)
 export const fetchSatisfactionDay = (date) => api.get(`/insights/satisfaction/day/${date}`).then(r => r.data)

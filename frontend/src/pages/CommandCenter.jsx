@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
-import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends, forceTrendsRefresh, fetchMonthTrends, refreshMonthTrends, fetchSatisfactionOverview, fetchSatisfactionGarage, fetchSatisfactionDetail, fetchSatisfactionDay } from '../api'
+import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth, fetchReassignmentDetail, fetchDispatcherDetail, fetchDriverDetail, fetchCancelDetail, fetchDeclineDetail, fetchStatusDetail, fetchCapacityDetail, fetchGpsDetail, fetchHumanIntervention, fetchClosestDriverDetail, fetchTrends, forceTrendsRefresh, fetchMonthTrends, refreshMonthTrends, fetchSatisfactionOverview, refreshSatisfactionOverview, fetchSatisfactionGarage, fetchSatisfactionDetail, fetchSatisfactionDay } from '../api'
 import SALink from '../components/SALink'
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Area, Legend, Cell, ScatterChart, Scatter, ZAxis, ReferenceArea, ReferenceLine, LabelList } from 'recharts'
 import { getMapConfig } from '../mapStyles'
@@ -1517,7 +1517,7 @@ function DispatchSplitCard({ data }) {
     : `Auto Dispatch (${drillData?.auto_count ?? no_human_count})`
 
   return (
-    <div className="glass rounded-xl border border-slate-700/30 p-4">
+    <div className={clsx('glass rounded-xl border border-slate-700/30 p-4 overflow-visible', drillTab && 'relative z-20')}>
       <div className="flex items-center gap-2 mb-3">
         <Zap className="w-4 h-4 text-emerald-400" />
         <span className="text-xs font-bold text-white uppercase tracking-wide">System vs Manual Dispatch</span>
@@ -1580,7 +1580,7 @@ function DispatchSplitCard({ data }) {
 
       {/* Drill-down panel */}
       {drillTab && (
-        <div className="mt-3 pt-3 border-t border-slate-700/30 animate-in fade-in duration-200">
+        <div className="mt-3 pt-3 border-t border-slate-700/30 animate-in fade-in duration-200 -mx-4 px-4" style={{ minWidth: 600 }}>
           <div className="flex items-center gap-2 mb-2">
             <span className={clsx('text-[10px] font-semibold',
               drillTab?.includes('manual') ? 'text-amber-400' :
@@ -1591,7 +1591,7 @@ function DispatchSplitCard({ data }) {
               <X className="w-3 h-3" />
             </button>
           </div>
-          <div className="max-h-[400px] overflow-y-auto space-y-0.5 rounded-lg border border-slate-800/40 bg-slate-950/30 p-2">
+          <div className="max-h-[450px] overflow-y-auto space-y-0.5 rounded-lg border border-slate-800/40 bg-slate-950/30 p-3">
             {drillLoading && <div className="flex items-center gap-2 text-xs text-slate-500 py-4 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>}
             {drillError && <div className="text-xs text-red-400 py-2 text-center">{drillError}</div>}
             {!drillLoading && drillList.length === 0 && <div className="text-xs text-slate-600 py-3 text-center">No calls</div>}
@@ -1611,6 +1611,13 @@ function DispatchSplitCard({ data }) {
                       {item.created_time && <span className="text-slate-600 w-14">{item.created_time}</span>}
                       <span className="text-slate-400 truncate">{item.work_type || '—'}</span>
                       <span className="text-slate-500 flex-1 truncate">{item.territory || '—'}</span>
+                      {item.pta_delta != null && (
+                        <span className={clsx('px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap',
+                          item.pta_delta > 0 ? 'bg-red-950/50 text-red-400' : 'bg-emerald-950/50 text-emerald-400'
+                        )} title={`Promised: ${item.pta_min}m, Arrived: ${(item.pta_min || 0) + item.pta_delta}m`}>
+                          {item.pta_delta > 0 ? `${item.pta_delta}m late` : item.pta_delta < 0 ? `${Math.abs(item.pta_delta)}m early` : 'on time'}
+                        </span>
+                      )}
                       <span className={clsx('px-1.5 py-0.5 rounded text-[8px] font-bold uppercase',
                         item.status === 'Completed' ? 'bg-emerald-950/50 text-emerald-400' :
                         item.status?.includes('Cancel') ? 'bg-red-950/50 text-red-400' :
@@ -2628,6 +2635,7 @@ function SatisfactionView() {
   const [error, setError] = useState(null)
   const [selectedGarage, setSelectedGarage] = useState(null)
   const [selectedDay, setSelectedDay] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
   const retryRef = useRef(null)
 
   const load = useCallback(() => {
@@ -2718,7 +2726,7 @@ function SatisfactionView() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
-      {/* Month selector */}
+      {/* Month selector + refresh button */}
       <div className="flex items-center gap-1">
         <span className="text-[10px] text-slate-600 mr-1">{now.getFullYear()}</span>
         {monthPills.map(p => (
@@ -2729,6 +2737,36 @@ function SatisfactionView() {
                 : 'text-slate-600 hover:text-slate-300 hover:bg-slate-800/40'
             )}>{p.label}</button>
         ))}
+        <button
+          onClick={() => {
+            setRefreshing(true)
+            refreshSatisfactionOverview(month)
+              .then(() => {
+                setData(null)
+                setLoading(true)
+                // Poll until regeneration completes
+                const poll = setInterval(() => {
+                  fetchSatisfactionOverview(month).then(d => {
+                    if (d.daily_trend?.length > 0) {
+                      clearInterval(poll)
+                      setData(d)
+                      setLoading(false)
+                      setRefreshing(false)
+                    }
+                  }).catch(() => {})
+                }, 10000)
+                // Stop polling after 3 minutes
+                setTimeout(() => { clearInterval(poll); setRefreshing(false); setLoading(false) }, 180000)
+              })
+              .catch(() => setRefreshing(false))
+          }}
+          disabled={refreshing}
+          title="Refresh satisfaction data for this month"
+          className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition disabled:opacity-40 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-700/50"
+        >
+          <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
       {/* Summary cards */}

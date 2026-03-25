@@ -86,6 +86,7 @@ def _build_sa_summary(sa: dict) -> dict:
         'truck_id':       sa.get('Off_Platform_Truck_Id__c') or '',
         'pta':            sa.get('ERS_PTA__c'),
         'created':        et.strftime('%b %d, %I:%M %p') if et else '?',
+        '_created_iso':   sa.get('CreatedDate'),  # raw ISO for calculations
         'started':        start_et.strftime('%b %d, %I:%M %p') if start_et else None,
         'completed':      end_et.strftime('%b %d, %I:%M %p') if end_et else None,
         'response_min':   response_min,
@@ -108,7 +109,7 @@ def _build_timeline(hist_rows: list, sa_id: str) -> list:
         if r.get('ServiceAppointmentId') != sa_id:
             continue
         field   = r.get('Field', '')
-        new_val = (r.get('NewValue') or '').strip()
+        new_val = str(r.get('NewValue') or '').strip()
         if not new_val:
             continue
         ts     = _parse_dt(r.get('CreatedDate'))
@@ -251,6 +252,121 @@ def _build_narrative(sa_summary: dict, timeline: list, assign_steps: list) -> li
     return lines
 
 
+def _build_reassignment_impact(sa_summary: dict, timeline: list, assign_steps: list, hist_rows: list) -> dict | None:
+    """Calculate the impact of reassignment on member wait time.
+
+    Returns None if no reassignment happened. Otherwise returns:
+    {
+        first_driver, first_driver_time, first_driver_sched_start,
+        final_driver, on_location_time,
+        pta_minutes, actual_ata_minutes,
+        reassignment_count, time_lost_minutes,
+        verdict — plain English assessment
+    }
+    """
+    if len(assign_steps) < 2:
+        return None  # No reassignment
+
+    created_dt = _parse_dt(sa_summary.get('_created_iso'))
+    if not created_dt:
+        return None
+
+    # PTA = the promise made to the member at creation.
+    # Mulesoft sets a default (90), then Apex recalculates to the garage-specific
+    # value (e.g., 60). Both happen at the same timestamp, and SOQL ordering is
+    # unreliable within the same second. The SMALLEST PTA within the creation
+    # window is the garage-specific Apex calculation — that's the real promise.
+    # If PTA was later changed by Towbook (e.g., 60→120), we ignore that —
+    # the member was told the original number.
+    pta_at_creation = []
+    pta_cutoff_ts = created_dt.timestamp() + 5 if created_dt else 0
+    for h in hist_rows:
+        if h.get('Field') != 'ERS_PTA__c' or h.get('NewValue') is None:
+            continue
+        h_ts = _parse_dt(h.get('CreatedDate'))
+        if h_ts and h_ts.timestamp() <= pta_cutoff_ts:
+            try:
+                v = float(h['NewValue'])
+                if 0 < v < 999:
+                    pta_at_creation.append(v)
+            except (TypeError, ValueError):
+                pass
+    # Smallest = garage-specific Apex calculation (most specific promise)
+    pta = min(pta_at_creation) if pta_at_creation else None
+    # Fallback to current SA value
+    if pta is None:
+        pta = sa_summary.get('pta')
+        if pta and (pta <= 0 or pta >= 999):
+            pta = None
+
+    # First assignment
+    first_step = assign_steps[0]
+    first_driver = first_step.get('driver', '?')
+    first_time = first_step.get('time', '?')
+
+    # Estimate first driver's ETA from distance (if available in assign_steps)
+    first_driver_distance = None
+    first_step_drivers = first_step.get('step_drivers', [])
+    assigned_in_first = next((d for d in first_step_drivers if d.get('is_assigned')), None)
+    if assigned_in_first and assigned_in_first.get('distance') is not None:
+        first_driver_distance = assigned_in_first['distance']
+
+    # ETA = distance / 25 mph * 60 (convert to minutes) + dispatch overhead (~5 min)
+    first_sched_start = None  # not used directly
+
+    # On Location time ONLY — not Completed (which includes service time)
+    on_loc_event = next((e for e in timeline if e['event'] == 'On Location'), None)
+    on_loc_dt = on_loc_event.get('ts') if on_loc_event else None
+
+    # Final driver
+    last_step = assign_steps[-1]
+    final_driver = last_step.get('driver', '?')
+
+    # Calculate time lost: gap between driver REMOVAL (back to Spotted) and next ASSIGNMENT
+    # Skip the initial Spotted event — only count Spotted events that happen AFTER a driver was assigned
+    time_lost = 0.0
+    saw_assignment = False
+    removal_ts = None
+    for ev in timeline:
+        if ev['event'] in ('Reassigned',) and not saw_assignment:
+            saw_assignment = True  # first assignment
+            continue
+        if saw_assignment and ev['event'] == 'Spotted' and ev.get('ts'):
+            removal_ts = ev['ts']  # driver was removed
+        if removal_ts and ev['event'] == 'Reassigned' and ev.get('ts'):
+            gap = (ev['ts'] - removal_ts).total_seconds() / 60
+            if gap > 1:
+                time_lost += gap
+            removal_ts = None
+
+    # Actual ATA
+    actual_ata = None
+    if on_loc_dt and created_dt:
+        actual_ata = round((on_loc_dt - created_dt).total_seconds() / 60)
+
+    # First driver's estimated ATA: use distance if available, else PTA as proxy
+    first_driver_eta = None
+    if first_driver_distance is not None:
+        first_driver_eta = round((first_driver_distance / 25) * 60 + 5)
+    elif pta:
+        first_driver_eta = round(pta)  # PTA was the promised time for the first driver
+
+    # PTA vs Arrival — the only thing that matters
+    pta_delta = round(actual_ata - pta) if actual_ata and pta else None
+
+    return {
+        'first_driver': first_driver,
+        'first_driver_time': first_time,
+        'final_driver': final_driver,
+        'on_location_time': on_loc_event.get('time') if on_loc_event else None,
+        'pta_minutes': round(pta) if pta else None,
+        'actual_ata_minutes': actual_ata,
+        'pta_delta_minutes': pta_delta,  # positive = late, negative = early
+        'reassignment_count': len(assign_steps) - 1,
+        'time_lost_minutes': round(time_lost) if time_lost > 0 else 0,
+    }
+
+
 def _build_phases(timeline: list, sa_summary: dict) -> list:
     """Build phase durations from the timeline for a visual bar.
 
@@ -338,7 +454,7 @@ def sa_report(sa_number: str):
                        CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointment.AppointmentNumber = '{sa_number}'
-                  AND Field IN ('Status', 'ERS_Assigned_Resource__c')
+                  AND Field IN ('Status', 'ERS_Assigned_Resource__c', 'ERS_PTA__c')
                 ORDER BY CreatedDate ASC
             """),
             ar=lambda: sf_query_all(f"""
@@ -589,6 +705,8 @@ def sa_report(sa_number: str):
 
         narrative = _build_narrative(sa_summary, timeline, assign_steps)
         phases = _build_phases(timeline, sa_summary)
+        reassignment_impact = _build_reassignment_impact(
+            sa_summary, timeline, assign_steps, p0['hist'])
 
         return {
             'sa_summary':   sa_summary,
@@ -596,6 +714,7 @@ def sa_report(sa_number: str):
             'assign_steps': assign_steps,
             'narrative':    narrative,
             'phases':       phases,
+            'reassignment_impact': reassignment_impact,
             'is_towbook':   is_towbook,
         }
 

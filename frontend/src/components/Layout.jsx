@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useContext } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures } from '../api'
+import { SAReportContext } from '../contexts/SAReportContext'
 
 /* ── FleetPulse Logo (AI Brain + Fleet Routes) ────────────────────────── */
 function Logo({ className = '' }) {
@@ -39,6 +40,35 @@ function Logo({ className = '' }) {
         <animate attributeName="opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite" />
       </circle>
     </svg>
+  )
+}
+
+function SASearch() {
+  const [query, setQuery] = useState('')
+  const ctx = useContext(SAReportContext)
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    const q = query.trim()
+    if (!q) return
+    const num = q.toUpperCase().startsWith('SA-') ? q.trim() : `SA-${q.trim()}`
+    ctx?.open(num)
+    setQuery('')
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex items-center">
+      <div className="relative">
+        <Search className="w-3.5 h-3.5 text-slate-600 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="SA#"
+          className="w-20 focus:w-36 transition-all bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-2 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:bg-slate-800"
+        />
+      </div>
+    </form>
   )
 }
 
@@ -122,6 +152,8 @@ export default function Layout() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <SASearch />
+            <div className="w-px h-5 bg-slate-700/50 mx-1" />
             <Link to="/issues" title="Report / Track Bugs"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/issues' ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'

@@ -139,6 +139,16 @@ def _nightly_trends_refresh():
                 cache.invalidate(cache_key)
                 dispatch_routes._generate_month_trends(current_month)
                 log.info(f"Nightly: monthly trends complete for {current_month}.")
+
+                # Current month satisfaction overview (picks up new surveys)
+                sat_key = f'satisfaction_overview_{current_month}'
+                log.info(f"Nightly: refreshing satisfaction overview for {current_month}...")
+                cache.disk_invalidate(sat_key)
+                cache.invalidate(sat_key)
+                result = dispatch_routes._generate_satisfaction_overview(current_month)
+                cache.put(sat_key, result, 43200)
+                cache.disk_put(sat_key, result, 43200)
+                log.info(f"Nightly: satisfaction overview complete for {current_month}.")
             finally:
                 cache.fs_lock_release('nightly_trends')
 

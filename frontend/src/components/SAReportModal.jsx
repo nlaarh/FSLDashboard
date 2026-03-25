@@ -475,6 +475,51 @@ export default function SAReportModal({ saNumber, onClose }) {
                 )
               })()}
 
+              {/* ── Reassignment Impact ──────────────────────────────────── */}
+              {report.reassignment_impact && (() => {
+                const ri = report.reassignment_impact
+                const delta = ri.pta_delta_minutes
+                const borderColor = delta > 0 ? '#ef4444' : delta < 0 ? '#22c55e' : delta === 0 ? '#22c55e' : '#64748b'
+                return (
+                  <section style={{ marginBottom: 24 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
+                                  textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                      Reassignment Impact — {ri.reassignment_count} reassignment{ri.reassignment_count > 1 ? 's' : ''}
+                    </div>
+                    <div style={{
+                      background: '#0f172a', border: `1px solid ${borderColor}40`, borderRadius: 8,
+                      padding: '14px 16px', borderLeft: `3px solid ${borderColor}`,
+                    }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Promised</div>
+                          <div style={{ fontSize: 18, color: '#e2e8f0', fontWeight: 800 }}>
+                            {ri.pta_minutes ? `${ri.pta_minutes}m` : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Arrived</div>
+                          <div style={{ fontSize: 18, color: '#e2e8f0', fontWeight: 800 }}>
+                            {ri.actual_ata_minutes ? `${ri.actual_ata_minutes}m` : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Difference</div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: borderColor }}>
+                            {delta != null ? (delta > 0 ? `+${delta}m late` : delta < 0 ? `${Math.abs(delta)}m early` : 'On time') : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 10, display: 'flex', gap: 16 }}>
+                        <span>First: {ri.first_driver}</span>
+                        <span>Final: {ri.final_driver}</span>
+                        {ri.on_location_time && <span>On Location: {ri.on_location_time}</span>}
+                      </div>
+                    </div>
+                  </section>
+                )
+              })()}
+
               {/* ── Timeline ──────────────────────────────────────────────── */}
               {tl.length > 0 && (
                 <section style={{ marginBottom: 24 }}>

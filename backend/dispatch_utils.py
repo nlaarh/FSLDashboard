@@ -502,6 +502,7 @@ def build_assign_steps(events: list, members: list, driver_skills: dict,
 
         steps.append({
             'time': ev['time'],
+            'ts': ev.get('ts'),  # raw datetime for calculations
             'driver': ev['driver'],
             'is_reassignment': ev['is_reassignment'],
             'by_name': ev.get('by_name', ''),
