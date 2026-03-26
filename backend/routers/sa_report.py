@@ -155,12 +155,18 @@ def _build_timeline(hist_rows: list, sa_id: str) -> list:
 
     filtered = [e for e in sorted_tl if not _is_dupe_status(e)]
 
-    # Remove back-to-back identical status events (e.g. two "En Route" within 5 min)
+    # Remove duplicate status events within 5 min window (same event + same actor),
+    # even if interleaved with other events (e.g. Dispatched/EnRoute/Dispatched/EnRoute)
+    seen = {}  # (event, driver_or_dispatcher) -> last ts
     deduped = []
     for e in filtered:
-        if deduped and e['event'] == deduped[-1]['event'] and 'driver' not in e and 'driver' not in deduped[-1]:
-            if e.get('ts') and deduped[-1].get('ts') and abs((e['ts'] - deduped[-1]['ts']).total_seconds()) < 300:
+        actor = e.get('driver') or e.get('by_name') or ''
+        key = (e['event'], actor)
+        ts = e.get('ts')
+        if key in seen and ts and seen[key]:
+            if abs((ts - seen[key]).total_seconds()) < 300:
                 continue  # skip duplicate
+        seen[key] = ts
         deduped.append(e)
     return deduped
 
@@ -470,7 +476,7 @@ def sa_report(sa_number: str):
                        CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointment.AppointmentNumber = '{sa_number}'
-                  AND Field IN ('Status', 'ERS_Assigned_Resource__c', 'ERS_PTA__c')
+                  AND Field IN ('Status', 'ERS_Assigned_Resource__c', 'ERS_PTA__c', 'SchedStartTime')
                 ORDER BY CreatedDate ASC
             """),
             ar=lambda: sf_query_all(f"""
@@ -718,6 +724,39 @@ def sa_report(sa_number: str):
             lon_hist         = lon_hist,
             truck_login_hist = truck_login_hist,
         )
+
+        # Enrich assign_steps with SchedStartTime (initial + final per driver)
+        sched_rows = [(h, _parse_dt(h.get('CreatedDate')), h.get('NewValue'))
+                      for h in p0['hist']
+                      if h.get('Field') == 'SchedStartTime' and h.get('NewValue')]
+        for i, step in enumerate(assign_steps):
+            step_ts = step.get('ts')
+            # Next step ts (or far future)
+            next_ts = assign_steps[i + 1].get('ts') if i + 1 < len(assign_steps) else None
+            if not step_ts:
+                continue
+            # Find SchedStartTime changes during this driver's window
+            # Use > (strictly after) to avoid ambiguity at the assignment boundary
+            step_scheds = []
+            for h, h_ts, val in sched_rows:
+                if not h_ts:
+                    continue
+                after_assign = (h_ts - step_ts).total_seconds() >= -2  # within 2s of assignment
+                before_next = ((next_ts - h_ts).total_seconds() > 2) if next_ts else True
+                if after_assign and before_next:
+                    et = _to_eastern(val)
+                    if et:
+                        step_scheds.append(et.strftime('%-I:%M %p'))
+            step['sched_start_initial'] = step_scheds[0] if step_scheds else None
+            step['sched_start_final'] = step_scheds[-1] if len(step_scheds) > 1 else None
+
+        # Add ActualStart/End for the final driver
+        actual_start = _to_eastern(sa.get('ActualStartTime'))
+        actual_end = _to_eastern(sa.get('ActualEndTime'))
+        if assign_steps:
+            last_step = assign_steps[-1]
+            last_step['actual_start'] = actual_start.strftime('%-I:%M %p') if actual_start else None
+            last_step['actual_end'] = actual_end.strftime('%-I:%M %p') if actual_end else None
 
         narrative = _build_narrative(sa_summary, timeline, assign_steps)
         phases = _build_phases(timeline, sa_summary)

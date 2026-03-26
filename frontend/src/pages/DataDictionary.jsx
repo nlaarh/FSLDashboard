@@ -147,10 +147,10 @@ const DICTIONARY = [
       {
         field: 'ServiceAppointment.SchedStartTime',
         object: 'ServiceAppointment',
-        label: 'Scheduled Start (Dispatch Time)',
+        label: 'Scheduled Start (Predicted Arrival)',
         type: 'DateTime',
-        description: 'When a driver was assigned/scheduled to the call. Set by FSL optimization or manual dispatch. Used to decompose response time: Dispatch Queue = CreatedDate -> SchedStartTime, Travel = SchedStartTime -> ActualStartTime.',
-        usedIn: ['Dispatch Speed', 'Response Decomposition'],
+        description: 'The scheduler\'s prediction of when the driver will arrive on site and begin service. Set by FSL optimization engine during auto-dispatch, or manually by a dispatcher. Updated each time the scheduler re-optimizes. Correct decomposition: Dispatch Queue = CreatedDate → AssignedResource.CreatedDate (time waiting for assignment). Estimated Travel = AssignedResource.CreatedDate → SchedStartTime (scheduler\'s predicted travel time). Prediction Error = SchedStartTime → ActualStartTime (how far off the estimate was — positive = late, negative = early).',
+        usedIn: ['SA History Report (ETA per assignment)', 'Response Decomposition'],
       },
       {
         field: 'ServiceAppointment.ERS_Facility_Decline_Reason__c',

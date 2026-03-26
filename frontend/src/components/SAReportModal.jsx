@@ -490,31 +490,72 @@ export default function SAReportModal({ saNumber, onClose }) {
                       background: '#0f172a', border: `1px solid ${borderColor}40`, borderRadius: 8,
                       padding: '14px 16px', borderLeft: `3px solid ${borderColor}`,
                     }}>
+                      <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', marginBottom: 10 }}>
+                        Did the member get what they were promised?
+                      </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                         <div>
-                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Promised</div>
-                          <div style={{ fontSize: 18, color: '#e2e8f0', fontWeight: 800 }}>
+                          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>PTA (Promised)</div>
+                          <div style={{ fontSize: 22, color: '#e2e8f0', fontWeight: 800 }}>
                             {ri.pta_minutes ? `${ri.pta_minutes}m` : '—'}
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Arrived</div>
-                          <div style={{ fontSize: 18, color: '#e2e8f0', fontWeight: 800 }}>
+                          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>ATA (Actual)</div>
+                          <div style={{ fontSize: 22, color: '#e2e8f0', fontWeight: 800 }}>
                             {ri.actual_ata_minutes ? `${ri.actual_ata_minutes}m` : '—'}
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>Difference</div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: borderColor }}>
-                            {delta != null ? (delta > 0 ? `+${delta}m late` : delta < 0 ? `${Math.abs(delta)}m early` : 'On time') : '—'}
+                          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Result</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: borderColor }}>
+                            {delta != null ? (delta > 0 ? `${delta}m late` : delta < 0 ? `${Math.abs(delta)}m early` : 'On time') : '—'}
                           </div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 10, display: 'flex', gap: 16 }}>
+                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 12, display: 'flex', gap: 20 }}>
                         <span>First: {ri.first_driver}</span>
                         <span>Final: {ri.final_driver}</span>
                         {ri.on_location_time && <span>On Location: {ri.on_location_time}</span>}
                       </div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, borderTop: '1px solid #1e293b', paddingTop: 6 }}>
+                        PTA ({ri.pta_minutes}m) − ATA ({ri.actual_ata_minutes}m) = {ri.actual_ata_minutes && ri.pta_minutes ? `${Math.abs(delta)}m ${delta > 0 ? 'late' : delta < 0 ? 'early' : 'on time'}` : '—'}
+                      </div>
+                      {/* vs Original Plan — scheduler prediction accuracy */}
+                      {(() => {
+                        if (!steps.length || !steps[0].sched_start_initial) return null
+                        const firstEta = steps[0].sched_start_initial
+                        const completedEv = tl.find(e => e.event === 'Completed')
+                        if (!completedEv) return null
+                        const parseT = (t) => {
+                          const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i)
+                          if (!m) return null
+                          let h = parseInt(m[1]), mi = parseInt(m[2])
+                          if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12
+                          if (m[3].toUpperCase() === 'AM' && h === 12) h = 0
+                          return h * 60 + mi
+                        }
+                        const cMatch = completedEv.time && completedEv.time.match(/\d+:\d+\s*[AP]M/i)
+                        const cLabel = cMatch ? cMatch[0] : null
+                        const cTime = cMatch ? parseT(cMatch[0]) : null
+                        const eTime = parseT(firstEta)
+                        if (cTime == null || eTime == null) return null
+                        const planDelta = cTime - eTime
+                        return (
+                          <div style={{ marginTop: 12, borderTop: '1px solid #1e293b', paddingTop: 10 }}>
+                            <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', marginBottom: 6 }}>
+                              Did the job finish on the scheduler's original plan?
+                            </div>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: planDelta <= 0 ? '#22c55e' : '#f97316' }}>
+                              {planDelta <= 0 ? `${Math.abs(planDelta)}m early` : `${planDelta}m late`}
+                              <span style={{ fontSize: 12, fontWeight: 400, color: '#64748b' }}> vs original plan</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                              Completed ({cLabel}) − First ETA ({firstEta}) = {Math.abs(planDelta)}m
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </section>
                 )
@@ -530,6 +571,10 @@ export default function SAReportModal({ saNumber, onClose }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {tl.map((ev, i) => {
                       const s = EVENT_STYLE[ev.event] || { color: '#94a3b8' }
+                      // Match this timeline event to an assign_step for schedule info
+                      const matchedStep = (ev.event === 'Assigned' || ev.event === 'Reassigned') && ev.driver
+                        ? steps.find(st => st.driver === ev.driver && st.time === ev.time)
+                        : null
                       return (
                         <div key={i} style={{ display: 'flex', gap: 12, paddingLeft: 4 }}>
                           {/* Dot + connector */}
@@ -563,6 +608,19 @@ export default function SAReportModal({ saNumber, onClose }) {
                                 </span>
                               )}
                             </div>
+                            {/* ETA for this assignment (forward-looking only — Arrived/Completed shown in their own timeline events) */}
+                            {matchedStep && matchedStep.sched_start_initial && (
+                              <div style={{ marginTop: 3, fontSize: 10 }}>
+                                <span style={{ color: '#64748b' }}>
+                                  ETA: <span style={{ color: '#94a3b8', fontWeight: 600 }}>
+                                    {matchedStep.sched_start_final || matchedStep.sched_start_initial}
+                                  </span>
+                                  {matchedStep.sched_start_final && matchedStep.sched_start_final !== matchedStep.sched_start_initial && (
+                                    <span style={{ fontSize: 9, color: '#475569' }}> (initially {matchedStep.sched_start_initial})</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )

@@ -65,7 +65,7 @@ function SASearch() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="SA#"
-          className="w-20 focus:w-36 transition-all bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-2 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:bg-slate-800"
+          className="w-40 focus:w-52 transition-all bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-2 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:bg-slate-800"
         />
       </div>
     </form>
