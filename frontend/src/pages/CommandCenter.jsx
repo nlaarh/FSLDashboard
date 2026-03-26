@@ -1950,45 +1950,44 @@ function DispatchInsightsFullView({ data, gpsHealth, ccData, onViewOnMap }) {
           <div className="glass rounded-xl border border-slate-700/30 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Truck className="w-4 h-4 text-blue-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wide">On-Shift Drivers</span>
-              <InfoTip text={"HOW TO READ THIS CARD:\n\n• Drivers: Fleet + On-Platform Contractor drivers currently logged into a truck (on shift).\n• GPS Tracking: % of on-shift drivers the scheduler can currently locate (GPS updated within 4 hours).\n• On GPS: Drivers whose GPS is reporting right now (fresh + recent).\n\nBAR BREAKDOWN:\n• Green (fresh): GPS updated < 1 hour ago — trackable, likely active.\n• Dark green (recent): 1-4 hours — recently active, still trackable.\n• Amber (stale): GPS > 4 hours old — logged in but not reporting.\n• Red (no GPS): Logged into truck but no GPS ever reported.\n\nWHO IS INCLUDED:\nFleet drivers (AAA employees) and On-Platform Contractors (external drivers using the FSL app). Off-Platform/Towbook drivers are excluded — they don't use the FSL app.\n\nWHY IT MATTERS:\nThe scheduler needs live GPS to calculate travel times and pick the closest driver. Drivers without GPS get assigned based on territory only, which leads to longer ETAs and wasted miles.\n\nGOAL: During business hours, GPS Tracking should be 40%+. If most drivers show stale or no GPS, the scheduler is dispatching blind."} />
+              <span className="text-xs font-bold text-white uppercase tracking-wide">GPS Status</span>
+              <InfoTip text={"Fleet + On-Platform Contractor drivers only (Towbook excluded).\n\nVisible: GPS reported in the last hour — scheduler can locate them.\nRecently active: GPS reported 1-4 hours ago — still usable.\n\nDrivers with no GPS activity in 4+ hours are considered off-shift and not shown.\n\nThe scheduler needs live GPS to pick the closest driver. Without it, assignments are based on territory only → longer ETAs.\n\nUpdates every 5 minutes."} />
             </div>
-            {fg && fg.total > 0 ? (<>
-              <div className="flex items-center gap-4 mb-3">
-                <div className="text-center flex-1">
-                  <div className="text-2xl font-bold text-white">{fg.total}</div>
-                  <div className="text-[10px] text-slate-500">Drivers</div>
-                </div>
-                <div className="text-center flex-1">
-                  <div className={clsx('text-2xl font-bold', fg.pct >= 40 ? 'text-emerald-400' : fg.pct >= 20 ? 'text-amber-400' : 'text-red-400')}>
-                    {fg.pct}%
+            {fg ? (<>
+              {fg.on_shift > 0 ? (<>
+                <div className="space-y-2 mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                    <span className="text-sm text-white">
+                      <span className="font-bold text-emerald-400">{fg.visible}</span> driver{fg.visible !== 1 ? 's' : ''} visible to the scheduler right now
+                    </span>
                   </div>
-                  <div className="text-[10px] text-slate-500">GPS Tracking</div>
+                  {fg.recent > 0 && (
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                      <span className="text-sm text-white">
+                        <span className="font-bold text-amber-400">{fg.recent}</span> recently active (1-4h ago)
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <div className="text-center flex-1">
-                  <div className="text-2xl font-bold text-emerald-400">{fg.active}</div>
-                  <div className="text-[10px] text-slate-500">On GPS</div>
+                <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden flex mb-2">
+                  {fg.visible > 0 && <div className="bg-emerald-500" style={{ width: `${100*fg.visible/fg.on_shift}%` }} />}
+                  {fg.recent > 0 && <div className="bg-amber-500" style={{ width: `${100*fg.recent/fg.on_shift}%` }} />}
                 </div>
-              </div>
-              <div className="h-3 rounded-full bg-slate-800 overflow-hidden flex">
-                {fg.fresh > 0 && <div className="bg-emerald-500" style={{ width: `${100*fg.fresh/fg.total}%` }} title={`Fresh: ${fg.fresh}`} />}
-                {fg.recent > 0 && <div className="bg-emerald-700" style={{ width: `${100*fg.recent/fg.total}%` }} title={`Recent: ${fg.recent}`} />}
-                {fg.stale > 0 && <div className="bg-amber-600" style={{ width: `${100*fg.stale/fg.total}%` }} title={`Stale: ${fg.stale}`} />}
-                {fg.no_gps > 0 && <div className="bg-red-800" style={{ width: `${100*fg.no_gps/fg.total}%` }} title={`No GPS: ${fg.no_gps}`} />}
-              </div>
-              <DrillDown
-                fetchFn={() => fetchGpsDetail('all').then(d => d.drivers)}
-                renderRow={(item, j) => <GpsDriverRow key={j} item={item} />}
-                emptyMsg="No on-shift drivers found">
-                <div className="flex justify-between text-[9px] text-slate-500 mt-1">
-                  <span className="text-emerald-500">{fg.fresh} fresh</span>
-                  <span className="text-emerald-700">{fg.recent} recent</span>
-                  <span className="text-amber-600">{fg.stale} stale</span>
-                  {fg.no_gps > 0 && <span className="text-red-700">{fg.no_gps} no GPS</span>}
-                </div>
-              </DrillDown>
+                <DrillDown
+                  fetchFn={() => fetchGpsDetail('all').then(d => d.drivers)}
+                  renderRow={(item, j) => <GpsDriverRow key={j} item={item} />}
+                  emptyMsg="No drivers found">
+                  <div className="text-[10px] text-slate-500">
+                    {fg.on_shift} on-shift · {fg.total_roster} in roster · Updated every 5 min
+                  </div>
+                </DrillDown>
+              </>) : (
+                <div className="text-sm text-slate-500 py-4">No drivers with active GPS right now</div>
+              )}
             </>) : (
-              <div className="text-xs text-slate-600 text-center py-6">No on-shift driver data available</div>
+              <div className="text-xs text-slate-600 text-center py-6">Loading...</div>
             )}
           </div>
 

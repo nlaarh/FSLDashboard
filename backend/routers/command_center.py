@@ -386,30 +386,25 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 })
         open_customers.sort(key=lambda x: x['wait_min'], reverse=True)
 
-        # ── Fleet Driver Tile ──
-        # Total = all active fleet drivers in SF (cleaned of test/SPOT/office accounts)
-        fleet_total = len(all_fleet_drivers)
-
-        # GPS status for ALL fleet drivers
-        fleet_fresh = 0   # GPS < 1h -- on shift with GPS
-        fleet_recent = 0  # GPS 1-4h -- recently active
-        fleet_stale = 0   # GPS > 4h -- has GPS hardware but not reporting
-        fleet_no_gps = 0  # never reported GPS
+        # ── Fleet & On-Platform GPS Tile ──
+        # GPS activity = on shift. No reliance on Asset truck login (sticky, not cleared).
+        # Visible: GPS < 1h (actively reporting right now)
+        # Recently active: GPS 1-4h (was active recently, still usable)
+        # Everyone else is off shift — don't count them.
+        fleet_visible = 0
+        fleet_recent = 0
         for d in all_fleet_drivers:
             lat = d.get('LastKnownLatitude')
             lkd = d.get('LastKnownLocationDate')
             if not lat or not lkd:
-                fleet_no_gps += 1
                 continue
             age = now - _parse_dt(lkd)
             if age < timedelta(hours=1):
-                fleet_fresh += 1
+                fleet_visible += 1
             elif age < timedelta(hours=4):
                 fleet_recent += 1
-            else:
-                fleet_stale += 1
-        fleet_on_gps = fleet_fresh + fleet_recent  # drivers trackable right now
-        fleet_gps_pct = round(100 * fleet_on_gps / max(fleet_total, 1)) if fleet_total else 0
+        fleet_on_shift = fleet_visible + fleet_recent
+        fleet_total_roster = len(all_fleet_drivers)
 
         # ── Today's SA Status Breakdown (all statuses) ──
         status_counts = {'Dispatched': 0, 'Accepted': 0, 'Assigned': 0,
@@ -622,15 +617,17 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 'busy': sum(1 for t in territories if t.get('capacity') == 'busy'),
             },
             'fleet_gps': {
-                'total_roster': fleet_total,
-                'on_shift': len(logged_in_ids),
-                'total': fleet_total,
-                'active': fleet_on_gps,
-                'fresh': fleet_fresh,
+                'total_roster': fleet_total_roster,
+                'on_shift': fleet_on_shift,
+                'visible': fleet_visible,
                 'recent': fleet_recent,
-                'stale': fleet_stale,
-                'no_gps': fleet_no_gps,
-                'pct': fleet_gps_pct,
+                # Keep legacy keys for compatibility
+                'total': fleet_on_shift,
+                'active': fleet_visible,
+                'fresh': fleet_visible,
+                'stale': 0,
+                'no_gps': 0,
+                'pct': round(100 * fleet_visible / max(fleet_on_shift, 1)) if fleet_on_shift else 0,
             },
             'today_status': {**status_counts, 'total': sum(status_counts.values())},
             'today_split': {
