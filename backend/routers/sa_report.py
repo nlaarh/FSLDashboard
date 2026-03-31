@@ -12,6 +12,7 @@ Total: 3 round trips for a normal SA, 4-5 if a cascade fallback is needed.
 Result is cached for 2 minutes.
 """
 
+import logging
 from datetime import timedelta
 from collections import defaultdict as _dd
 from fastapi import APIRouter, HTTPException
@@ -106,11 +107,10 @@ def _sf_record_url(record_id: str) -> str | None:
     try:
         from sf_client import get_auth
         _, instance = get_auth()
-        # instance_url is like https://aaawcny.my.salesforce.com
-        # Lightning URL: instance/lightning/r/ServiceAppointment/{id}/view
         base = instance.rstrip('/')
         return f"{base}/lightning/r/ServiceAppointment/{record_id}/view"
-    except Exception:
+    except Exception as e:
+        logging.getLogger('sa_report').warning('_sf_record_url failed: %s', e)
         return None
 
 
