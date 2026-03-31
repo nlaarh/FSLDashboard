@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from 'react-leaflet'
 import { X, Printer, Loader2, AlertCircle, CheckCircle2, Clock,
-         MapPin, Truck, User, ChevronDown, ChevronUp } from 'lucide-react'
+         MapPin, Truck, User, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
 import { fetchSAReport } from '../api'
 import { truckIcon, CUSTOMER_ICON, TRUCK_COLORS } from '../mapIcons'
 import { getMapConfig } from '../mapStyles'
@@ -376,6 +376,14 @@ export default function SAReportModal({ saNumber, onClose }) {
               </div>
             )}
           </div>
+          {report?.sa_summary?.sf_url && (
+            <a href={report.sa_summary.sf_url} target="_blank" rel="noopener noreferrer"
+              style={{ background: 'none', border: '1px solid #334155', borderRadius: 6, padding: '4px 10px',
+                       cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+                       color: '#94a3b8', fontSize: 11, textDecoration: 'none' }}>
+              <ExternalLink size={13} /> Salesforce
+            </a>
+          )}
           <button onClick={handlePrint}
             style={{ background: 'none', border: '1px solid #334155', borderRadius: 6, padding: '4px 10px',
                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,

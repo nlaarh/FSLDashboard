@@ -544,15 +544,8 @@ def scheduler_insights():
         # Exclude Tow Drop-Off
         sas = [s for s in sas_raw if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
 
-        # Fallback: if today has no data at all, use last 24h
+        # No fallback — at midnight, show zero until new calls come in
         is_fallback = False
-        if not sas and cutoff_utc == today_cutoff:
-            cutoff_utc = fallback_cutoff
-            is_fallback = True
-            fb_data = sf_parallel(sas=_get_sas, assigned=_get_assigned)
-            sas_raw = fb_data['sas']
-            assigned_raw = fb_data['assigned']
-            sas = [s for s in sas_raw if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
 
         empty = {'total': 0, 'auto_count': 0, 'manual_count': 0, 'auto_pct': 0,
                  'auto_avg_response': None, 'manual_avg_response': None,

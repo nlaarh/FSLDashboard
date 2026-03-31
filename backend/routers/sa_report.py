@@ -97,7 +97,21 @@ def _build_sa_summary(sa: dict) -> dict:
                               (sa.get('ServiceTerritory') or {}).get('Name', ''),
                               sa.get('ERS_Dispatch_Method__c') or '',
                           ),
+        'sf_url':         _sf_record_url(sa['Id']),
     }
+
+
+def _sf_record_url(record_id: str) -> str | None:
+    """Build Lightning URL for a Salesforce record."""
+    try:
+        from sf_client import get_auth
+        _, instance = get_auth()
+        # instance_url is like https://aaawcny.my.salesforce.com
+        # Lightning URL: instance/lightning/r/ServiceAppointment/{id}/view
+        base = instance.rstrip('/')
+        return f"{base}/lightning/r/ServiceAppointment/{record_id}/view"
+    except Exception:
+        return None
 
 
 # ── Timeline builder (uses pre-fetched rows — avoids a dedicated SF call) ────

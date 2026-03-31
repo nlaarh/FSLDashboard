@@ -11,11 +11,15 @@ SF call budget: ~10-15 calls/min constant, regardless of user count.
 """
 
 import os, time, threading, logging
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import cache
 
 log = logging.getLogger('refresher')
+_ET = ZoneInfo('America/New_York')
+_nightly_last_run: str = ''  # 'YYYY-MM-DD' — prevent running twice on same day
 
 # Lock file for leader election — only one refresher runs across all workers/instances
 _ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
@@ -141,6 +145,36 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
         return False
 
 
+# ── Nightly jobs (3 AM ET) ────────────────────────────────────────────────────
+
+def _run_nightly_jobs():
+    """Run once per day at 3 AM ET. Pre-generates current month satisfaction."""
+    global _nightly_last_run
+    now_et = datetime.now(_ET)
+    today_str = now_et.strftime('%Y-%m-%d')
+
+    # Only run between 3:00–3:10 AM ET, and only once per day
+    if now_et.hour != 3 or now_et.minute > 10:
+        return
+    if _nightly_last_run == today_str:
+        return
+
+    _nightly_last_run = today_str
+    log.info('Nightly 3 AM job starting: satisfaction overview')
+
+    try:
+        from routers.dispatch_routes import _generate_satisfaction_overview
+        month = f'{now_et.year}-{now_et.month:02d}'
+        key = f'satisfaction_overview_{month}'
+        result = _generate_satisfaction_overview(month)
+        if result:
+            cache.put(key, result, ttl=43200)  # 12h
+            cache.disk_put(key, result, 43200)
+            log.info(f'Nightly satisfaction generated: {month}')
+    except Exception as e:
+        log.error(f'Nightly satisfaction failed: {e}')
+
+
 # ── Refresh loop ─────────────────────────────────────────────────────────────
 
 def _refresh_loop():
@@ -181,6 +215,9 @@ def _refresh_loop():
                     time.sleep(0.5)
 
             _renew_leadership()
+
+            # ── Nightly 3 AM ET: pre-generate current month satisfaction ──
+            _run_nightly_jobs()
 
             if cycle % 30 == 0:
                 log.info(f"Refresher cycle {cycle}: {len(refreshed)} keys refreshed")
