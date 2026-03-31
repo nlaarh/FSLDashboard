@@ -587,7 +587,7 @@ def scheduler_insights():
 
         # 2) Batch query ServiceAppointmentHistory for assignment changes.
         #    Uses shared parse_assign_events + classify_dispatch (same logic as
-        #    simulator.py, dispatch_routes.py, and misc.py _lookup_sa_impl).
+        #    simulator.py, dispatch_drill.py, and misc.py _lookup_sa_impl).
         dispatched_by = {}
         batch_size = 150
         all_hist_rows = []

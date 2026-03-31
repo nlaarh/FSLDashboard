@@ -65,7 +65,8 @@ async def auth_middleware(request: Request, call_next):
 
 from routers import (
     auth, admin, garages, command_center, ops, map as map_router,
-    dispatch_routes, issues, pta, chatbot, data_quality, matrix,
+    dispatch_drill, dispatch_trends, dispatch_satisfaction,
+    issues, pta, chatbot, data_quality, matrix,
     tracking, misc, insights, sa_report,
 )
 
@@ -75,7 +76,9 @@ app.include_router(garages.router)
 app.include_router(command_center.router)
 app.include_router(ops.router)
 app.include_router(map_router.router)
-app.include_router(dispatch_routes.router)
+app.include_router(dispatch_drill.router)
+app.include_router(dispatch_trends.router)
+app.include_router(dispatch_satisfaction.router)
 app.include_router(issues.router)
 app.include_router(pta.router)
 app.include_router(chatbot.router)
@@ -124,7 +127,7 @@ def _nightly_trends_refresh():
                 log.info("Nightly: refreshing 30-day trends...")
                 cache.disk_invalidate('insights_trends_30d')
                 cache.invalidate('insights_trends_30d')
-                dispatch_routes.api_trends()
+                dispatch_trends.api_trends()
                 for _i in range(120):
                     time.sleep(10)
                     if cache.get('insights_trends_30d'):
@@ -137,7 +140,7 @@ def _nightly_trends_refresh():
                 log.info(f"Nightly: refreshing monthly trends for {current_month}...")
                 cache.disk_invalidate(cache_key)
                 cache.invalidate(cache_key)
-                dispatch_routes._generate_month_trends(current_month)
+                dispatch_trends._generate_month_trends(current_month)
                 log.info(f"Nightly: monthly trends complete for {current_month}.")
 
                 # Current month satisfaction overview (picks up new surveys)
@@ -145,7 +148,7 @@ def _nightly_trends_refresh():
                 log.info(f"Nightly: refreshing satisfaction overview for {current_month}...")
                 cache.disk_invalidate(sat_key)
                 cache.invalidate(sat_key)
-                result = dispatch_routes._generate_satisfaction_overview(current_month)
+                result = dispatch_satisfaction._generate_satisfaction_overview(current_month)
                 cache.put(sat_key, result, 43200)
                 cache.disk_put(sat_key, result, 43200)
                 log.info(f"Nightly: satisfaction overview complete for {current_month}.")
@@ -173,7 +176,7 @@ async def startup():
         if not cache.disk_get('insights_trends_30d'):
             import logging
             logging.getLogger('startup').info("Trends cache stale/missing — triggering refresh")
-            dispatch_routes.api_trends()
+            dispatch_trends.api_trends()
     threading.Thread(target=_startup_trends_check, daemon=True).start()
 
 

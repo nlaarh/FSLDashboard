@@ -163,7 +163,7 @@ def _run_nightly_jobs():
     log.info('Nightly 3 AM job starting: satisfaction overview')
 
     try:
-        from routers.dispatch_routes import _generate_satisfaction_overview
+        from routers.dispatch_satisfaction import _generate_satisfaction_overview
         month = f'{now_et.year}-{now_et.month:02d}'
         key = f'satisfaction_overview_{month}'
         result = _generate_satisfaction_overview(month)
