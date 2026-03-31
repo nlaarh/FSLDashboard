@@ -2236,14 +2236,6 @@ def _generate_satisfaction_overview(month: str):
             GROUP BY ERS_Work_Order__r.ServiceTerritory.Name, ERS_Technician_Satisfaction__c
             ORDER BY ERS_Work_Order__r.ServiceTerritory.Name
         """),
-    )
-    daily_sat = batch1['daily_sat']
-    garage_overall = batch1['garage_overall']
-    garage_rt = batch1['garage_rt']
-    garage_tech = batch1['garage_tech']
-
-    # ── Batch 2: SA volume + completed SAs in parallel ──
-    batch2 = sf_parallel(
         sa_volume=lambda: sf_query_all(f"""
             SELECT DAY_ONLY(CreatedDate) d, COUNT(Id) cnt
             FROM ServiceAppointment
@@ -2260,35 +2252,61 @@ def _generate_satisfaction_overview(month: str):
               AND ServiceTerritoryId != null
               AND RecordType.Name = 'ERS Service Appointment'
               AND Status = 'Completed'
+              AND WorkType.Name != 'Tow Drop-Off'
         """),
     )
+    daily_sat = batch1['daily_sat']
+    garage_overall = batch1['garage_overall']
+    garage_rt = batch1['garage_rt']
+    garage_tech = batch1['garage_tech']
     sa_vol_by_day = {}
-    for r in batch2['sa_volume']:
+    for r in batch1['sa_volume']:
         sa_vol_by_day[r.get('d', '')] = r.get('cnt', 0) or 0
-    completed_sas = batch2['completed']
+    completed_sas = batch1['completed']
 
     # Query 7: Towbook on-location times for accurate ATA
-    towbook_ids = [sa.get('Id') for sa in completed_sas
-                   if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook']
+    # Instead of 141 sequential ID-chunk queries, use cross-object filter by week in parallel.
+    # Each weekly query returns all Towbook Status history — filter 'On Location' in Python.
     towbook_on_location = {}
-    for i in range(0, len(towbook_ids), 200):
-        chunk = towbook_ids[i:i+200]
-        id_list = "','".join(chunk)
-        hist_rows = sf_query_all(f"""
-            SELECT ServiceAppointmentId, CreatedDate, NewValue
-            FROM ServiceAppointmentHistory
-            WHERE ServiceAppointmentId IN ('{id_list}')
-              AND Field = 'Status'
-        """)
-        for r in hist_rows:
-            if r.get('NewValue') != 'On Location':
-                continue
-            sa_id = r.get('ServiceAppointmentId')
-            ts = _parse_dt(r.get('CreatedDate'))
-            if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
-                towbook_on_location[sa_id] = ts
-        if i + 200 < len(towbook_ids):
-            _time.sleep(0.3)
+    has_towbook = any((sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook' for sa in completed_sas)
+    if has_towbook:
+        # Build weekly date ranges for the month
+        from datetime import timedelta as _td2
+        week_ranges = []
+        ws = first_day
+        while ws < end_day:
+            we = min(ws + _td2(days=7), end_day)
+            week_ranges.append((
+                f"{ws.isoformat()}T00:00:00Z",
+                f"{we.isoformat()}T00:00:00Z",
+            ))
+            ws = we
+
+        def _make_week_fn(w_start, w_end):
+            return lambda: sf_query_all(f"""
+                SELECT ServiceAppointmentId, CreatedDate, NewValue
+                FROM ServiceAppointmentHistory
+                WHERE Field = 'Status'
+                  AND ServiceAppointment.CreatedDate >= {w_start}
+                  AND ServiceAppointment.CreatedDate < {w_end}
+                  AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
+                  AND ServiceAppointment.Status = 'Completed'
+                  AND ServiceAppointment.ServiceTerritoryId != null
+                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
+                  AND ServiceAppointment.WorkType.Name != 'Tow Drop-Off'
+            """)
+
+        # Run all weeks in parallel (typically 4-5 queries)
+        parallel_args = {f'w{i}': _make_week_fn(s, e) for i, (s, e) in enumerate(week_ranges)}
+        week_results = sf_parallel(**parallel_args)
+        for key, hist_rows in week_results.items():
+            for r in hist_rows:
+                if r.get('NewValue') != 'On Location':
+                    continue
+                sa_id = r.get('ServiceAppointmentId')
+                ts = _parse_dt(r.get('CreatedDate'))
+                if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
+                    towbook_on_location[sa_id] = ts
 
     # ── Build daily ATA/PTA buckets ──
     day_ata = defaultdict(lambda: {'ata_sum': 0.0, 'ata_count': 0, 'pta_miss': 0, 'pta_eligible': 0})
