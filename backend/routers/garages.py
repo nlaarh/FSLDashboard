@@ -580,14 +580,6 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
                              'Unable to Complete','No-Show')
             ORDER BY CreatedDate ASC
         """),
-        wo_ids=lambda: sf_query_all(f"""
-            SELECT WorkOrderNumber FROM WorkOrder
-            WHERE ServiceTerritoryId = '{territory_id}'
-              AND CreatedDate >= {since}
-              AND CreatedDate < {until}
-            ORDER BY CreatedDate DESC
-            LIMIT 1000
-        """),
         trend=lambda: sf_query_all(f"""
             SELECT DAY_IN_MONTH(CreatedDate) d,
                    HOUR_IN_DAY(CreatedDate) hr,
@@ -807,52 +799,6 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         for b in pts_ata['buckets']:
             b['pct'] = round(100 * b['count'] / n, 1)
 
-    # Satisfaction -- use WO IDs to find surveys
-    wo_nums = [r.get('WorkOrderNumber') for r in data.get('wo_ids', []) if r.get('WorkOrderNumber')]
-
-    satisfaction = None
-    if wo_nums:
-        wo_list = ",".join(f"'{w}'" for w in wo_nums[:500])
-        survey_rows = sf_query_all(f"""
-            SELECT ERS_Overall_Satisfaction__c
-            FROM Survey_Result__c
-            WHERE ERS_Work_Order_Number__c IN ({wo_list})
-              AND ERS_Overall_Satisfaction__c != null
-        """)
-
-        counts = defaultdict(int)
-        for sv in survey_rows:
-            sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower().strip()
-            counts['total'] += 1
-            if sat == 'totally satisfied':
-                counts['totally_satisfied'] += 1
-            elif sat == 'satisfied':
-                counts['satisfied'] += 1
-            elif sat == 'neither':
-                counts['neither'] += 1
-            elif sat == 'dissatisfied':
-                counts['dissatisfied'] += 1
-            elif sat == 'totally dissatisfied':
-                counts['totally_dissatisfied'] += 1
-
-        if counts['total'] > 0:
-            n = counts['total']
-            total_sat = counts['totally_satisfied'] + counts['satisfied']
-            total_dis = counts['dissatisfied'] + counts['totally_dissatisfied']
-            satisfaction = {
-                'total': n,
-                'totally_satisfied': counts['totally_satisfied'],
-                'satisfied': counts['satisfied'],
-                'neither': counts['neither'],
-                'dissatisfied': counts['dissatisfied'],
-                'totally_dissatisfied': counts['totally_dissatisfied'],
-                'total_satisfied_pct': round(100 * total_sat / n, 1),
-                'totally_satisfied_pct': round(100 * counts['totally_satisfied'] / n, 1),
-                'dissatisfied_pct': round(100 * total_dis / n, 1),
-                'accreditation_target': 82.0,
-                'meets_target': (100 * total_sat / n) >= 82.0,
-            }
-
     # Trend from aggregate data
     bucket_totals = defaultdict(int)
     bucket_completed = defaultdict(int)
@@ -892,7 +838,6 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'first_call': first_call,
         'response_time': rt,
         'pts_ata': pts_ata,
-        'satisfaction': satisfaction,
         'dispatch_mix': dispatch_mix,
         'trend': trend,
         'period': {
@@ -901,15 +846,8 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
             'single_day': is_single_day,
         },
         'definitions': {
-            'total_calls': 'COUNT(ServiceAppointment.Id) WHERE ServiceAppointment.ServiceTerritoryId = \'{this garage}\' AND ServiceAppointment.CreatedDate >= {period_start} AND ServiceAppointment.Status IN (\'Dispatched\',\'Completed\',\'Canceled\',\'Cancel Call - Service Not En Route\',\'Cancel Call - Service En Route\',\'Unable to Complete\',\'Assigned\',\'No-Show\') AND WorkType.Name != \'Tow Drop-Off\'. Tow Drop-Offs excluded -- they are the second leg of a tow.',
-            'completion': 'COUNT(ServiceAppointment.Status = \'Completed\') / Total Calls x 100. Target: 95%.',
             'first_call_acceptance': '1st Call: SELECT ServiceAppointmentHistory.NewValue FROM ServiceAppointmentHistory WHERE Field = \'ServiceTerritory\' ORDER BY CreatedDate ASC -- first NewValue (ID starting with 0Hh) with OldValue=null = original garage. If original = this garage -> 1st Call (Primary). Otherwise -> 2nd+ Call (Secondary, received after cascade). Accepted = ERS_Facility_Decline_Reason__c IS NULL.',
             'completion_of_accepted': 'Filter: ServiceAppointment.ERS_Facility_Decline_Reason__c IS NULL (accepted only). Then: COUNT(ServiceAppointment.Status = \'Completed\') / COUNT(accepted) x 100. Isolates ops effectiveness from acceptance behavior.',
-            'median_response': 'MEDIAN(ServiceAppointment.ActualStartTime - ServiceAppointment.CreatedDate) in minutes, WHERE Status = \'Completed\' AND WorkType.Name != \'Tow Drop-Off\'. Guardrail: 0 < diff < 480 min. Towbook ATA is real (synced per-SA via Integrations Towbook, verified via ServiceAppointmentHistory). Target: 45 min.',
-            'eta_accuracy': 'COUNT(ActualStartTime - CreatedDate <= ERS_PTA__c) / COUNT(ERS_PTA__c BETWEEN 1 AND 998) x 100. Measures: did driver arrive within the promised ETA (ERS_PTA__c minutes)?',
-            'acceptance': 'COUNT(ServiceAppointment.ERS_Facility_Decline_Reason__c IS NULL) / COUNT(ServiceAppointment.ERS_Auto_Assign__c = true) x 100. Of auto-assigned SAs, what % had no decline reason?',
-            'satisfaction': 'Step 1: SELECT WorkOrder.WorkOrderNumber WHERE WorkOrder.ServiceTerritoryId = \'{garage}\'. Step 2: SELECT Survey_Result__c.ERS_Overall_Satisfaction__c WHERE Survey_Result__c.ERS_Work_Order_Number__c IN ({WO numbers}). Result: COUNT(ERS_Overall_Satisfaction__c = \'Totally Satisfied\') / COUNT(all surveys) x 100. Target: 82%. Surveys arrive days after the call.',
-            'dispatch_mix': 'COUNT(ServiceAppointment.ERS_Dispatch_Method__c = \'Field Services\') / Total x 100 for fleet. COUNT(ServiceAppointment.ERS_Dispatch_Method__c = \'Towbook\') / Total x 100 for contractors. ERS_Dispatch_Method__c is a Salesforce formula field set at dispatch.',
         },
     }
 

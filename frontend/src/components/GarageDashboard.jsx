@@ -5,9 +5,8 @@ import {
 } from 'recharts'
 import { clsx } from 'clsx'
 import {
-  TrendingDown, TrendingUp, CheckCircle2, XCircle, Clock, ThumbsUp,
-  AlertTriangle, Target, Activity, Users, ArrowRight, ChevronLeft, ChevronRight,
-  Calendar, Minus, Award, Truck, Loader2, ChevronRight as ChevronR, Zap,
+  CheckCircle2, XCircle, Clock, AlertTriangle, Target, Activity,
+  ArrowRight, ChevronLeft, ChevronRight, Award, Truck, Loader2, Zap,
 } from 'lucide-react'
 import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from '../api'
 import GaragePerformance from './GaragePerformance'
@@ -115,7 +114,7 @@ function ReasonBars({ items, color = 'bg-red-500' }) {
 function buildInsights(perf) {
   const insights = []
   const actions  = []
-  const { acceptance, completion, response_time: rt, pts_ata, satisfaction } = perf
+  const { acceptance, completion, response_time: rt, pts_ata } = perf
 
   // Completion
   if (completion.pct < 80) {
@@ -160,18 +159,6 @@ function buildInsights(perf) {
   if (acceptance.primary_total > 0 && acceptance.primary_pct < 70) {
     insights.push({ type: 'critical', text: `Only ${acceptance.primary_pct}% primary acceptance — declining ${+(100 - acceptance.primary_pct).toFixed(1)}% of auto-dispatched work.` })
     actions.push({ priority: 'HIGH', text: 'Identify top decline reasons. Driver availability? Truck mismatch?' })
-  }
-
-  // Satisfaction
-  if (satisfaction) {
-    if (satisfaction.total_satisfied_pct < 70) {
-      insights.push({ type: 'critical', text: `Satisfaction ${satisfaction.total_satisfied_pct}% — well below 82% accreditation.` })
-      actions.push({ priority: 'HIGH', text: `Read comments from ${satisfaction.dissatisfied + satisfaction.totally_dissatisfied} dissatisfied members.` })
-    } else if (satisfaction.total_satisfied_pct < 82) {
-      insights.push({ type: 'warn', text: `Satisfaction ${satisfaction.total_satisfied_pct}% — ${82 - satisfaction.total_satisfied_pct}% below accreditation.` })
-    } else {
-      insights.push({ type: 'good', text: `Satisfaction ${satisfaction.total_satisfied_pct}% — meeting 82% target.` })
-    }
   }
 
   // Path to 45
@@ -387,31 +374,6 @@ export default function GarageDashboard({ garageId, garageName }) {
             </div>
           )}
 
-          {/* Score dimensions mini */}
-          {score && score.dimensions && (
-            <div className="flex-1 min-w-0">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {Object.entries(score.dimensions)
-                  .filter(([key]) => key !== 'satisfaction')
-                  .slice(0, 4).map(([key, dim]) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[9px] text-slate-500 uppercase tracking-wider truncate">{dim.label}</div>
-                      <div className="flex items-baseline gap-1">
-                        <span className={clsx('text-sm font-bold',
-                          dim.score >= 80 ? 'text-emerald-400' : dim.score >= 60 ? 'text-amber-400' : dim.score != null ? 'text-red-400' : 'text-slate-600')}>
-                          {dim.actual_display}
-                        </span>
-                      </div>
-                      <ProgressBar value={dim.score || 0}
-                        color={dim.score >= 80 ? 'bg-emerald-500' : dim.score >= 60 ? 'bg-amber-500' : 'bg-red-500'}
-                        height="h-1" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
       </div>
 
       {error && (
@@ -448,17 +410,8 @@ export default function GarageDashboard({ garageId, garageName }) {
 
       {perf && (
         <>
-          {/* ═══ KPI STRIP ═══════════════════════════════════════════════════════ */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
-            <MetricCard label="Total Calls" value={perf.total_sas.toLocaleString()} icon={Activity}
-              sub={`${perf.completed} completed`}
-              definition={perf.definitions?.total_calls} defId="total_calls" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard label="Completion" value={`${perf.completion.pct}%`} icon={CheckCircle2}
-              sub={`${perf.completion.completed} / ${perf.completion.total}`}
-              color={perf.completion.pct >= 95 ? 'text-emerald-400' : perf.completion.pct >= 80 ? 'text-amber-400' : 'text-red-400'}
-              border={perf.completion.pct >= 95 ? 'border-emerald-800/30' : perf.completion.pct >= 80 ? 'border-amber-800/30' : 'border-red-800/30'}
-              target="95%" met={perf.completion.pct >= 95}
-              definition={perf.definitions?.completion} defId="completion" activeDef={activeDef} setActiveDef={setActiveDef} />
+          {/* ═══ KPI STRIP (unique to Operations — acceptance & completion of accepted) ═══ */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <MetricCard label="1st Call Acceptance"
               value={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_pct}%` : 'N/A'} icon={Zap}
               sub={perf.first_call?.first_call_total > 0 ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total} 1st calls` : 'No data'}
@@ -477,22 +430,6 @@ export default function GarageDashboard({ garageId, garageName }) {
               border={perf.first_call?.accepted_completion_pct >= 95 ? 'border-emerald-800/30' : 'border-amber-800/30'}
               definition={perf.definitions?.completion_of_accepted} defId="completion_accepted" activeDef={activeDef} setActiveDef={setActiveDef} />
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
-            <MetricCard label={perf.response_time.metric === 'PTA (promised)' ? 'Median PTA' : 'Median Response'} value={perf.response_time.median ? `${perf.response_time.median} min` : 'N/A'} icon={Clock}
-              sub={perf.response_time.total > 0 ? `${perf.response_time.under_45_pct}% under 45 min${perf.response_time.metric === 'PTA (promised)' ? ' · PTA' : ''}` : 'No arrival data this period'}
-              color={perf.response_time.median && perf.response_time.median <= 45 ? 'text-emerald-400' : perf.response_time.median && perf.response_time.median <= 70 ? 'text-amber-400' : !perf.response_time.median ? 'text-slate-500' : 'text-red-400'}
-              border={perf.response_time.median && perf.response_time.median <= 45 ? 'border-emerald-800/30' : !perf.response_time.median ? 'border-slate-700/30' : 'border-red-800/30'}
-              target="45 min" met={perf.response_time.median && perf.response_time.median <= 45}
-              definition={perf.definitions?.median_response} defId="median_response" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard
-              label="ETA Accuracy"
-              value={perf.pts_ata?.on_time_pct != null ? `${perf.pts_ata.on_time_pct}%` : 'N/A'}
-              icon={Target}
-              sub={perf.pts_ata?.on_time_pct != null ? `avg ${perf.pts_ata.avg_delta > 0 ? '+' : ''}${perf.pts_ata.avg_delta} min vs promise` : perf.response_time.total === 0 ? 'No arrival data this period' : ''}
-              color={perf.pts_ata?.on_time_pct >= 70 ? 'text-emerald-400' : perf.pts_ata?.on_time_pct != null ? 'text-red-400' : 'text-slate-500'}
-              border={perf.pts_ata?.on_time_pct >= 70 ? 'border-emerald-800/30' : 'border-slate-700/30'}
-              definition={perf.definitions?.eta_accuracy} defId="eta_accuracy" activeDef={activeDef} setActiveDef={setActiveDef} />
-          </div>
 
           {/* ═══ RESPONSE TIME (left) + DECOMPOSITION (right) ═════════════════ */}
           {perf.response_time.total === 0 ? (
@@ -501,7 +438,7 @@ export default function GarageDashboard({ garageId, garageName }) {
               <div className="text-sm font-semibold text-slate-400">Response Time Data Unavailable</div>
               <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
                 No completed SAs with arrival timestamps found for this period.
-                Completion rate, volume, acceptance, and satisfaction metrics are still available above.
+                Acceptance metrics are still available above.
               </div>
             </div>
           ) : (
@@ -510,7 +447,7 @@ export default function GarageDashboard({ garageId, garageName }) {
             {/* Response Time Buckets */}
             <div className="glass rounded-xl p-5 space-y-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
-                <Clock className="w-4 h-4 text-brand-400" /> {perf.response_time.metric === 'PTA (promised)' ? 'PTA Breakdown (Towbook)' : 'Response Time Breakdown'}
+                <Clock className="w-4 h-4 text-brand-400" /> {isTowbook ? 'PTA Breakdown (Towbook)' : 'Response Time Breakdown'}
               </h3>
               <BucketGrid buckets={[
                 { label: '< 45 min', count: perf.response_time.under_45, pct: perf.response_time.under_45_pct },
