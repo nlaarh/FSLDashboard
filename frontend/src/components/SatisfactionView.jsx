@@ -88,10 +88,23 @@ export default function SatisfactionView() {
     </div>
   )
   if (!data?.daily_trend?.length) return (
-    <div className="max-w-5xl mx-auto text-center py-10">
-      <AlertTriangle className="w-6 h-6 text-slate-600 mx-auto mb-2" />
-      <div className="text-sm text-slate-400">No satisfaction surveys yet for {monthLabel}</div>
-      <div className="text-xs text-slate-600 mt-1">Surveys typically arrive 1–3 days after the call</div>
+    <div className="max-w-5xl mx-auto space-y-4">
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] text-slate-600 mr-1">{now.getFullYear()}</span>
+        {monthPills.map(p => (
+          <button key={p.key} onClick={() => setMonth(p.key)}
+            className={clsx('px-3 py-1 rounded-md text-[11px] font-medium transition-all',
+              month === p.key
+                ? 'bg-violet-600/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-600 hover:text-slate-300 hover:bg-slate-800/40'
+            )}>{p.label}</button>
+        ))}
+      </div>
+      <div className="text-center py-10">
+        <AlertTriangle className="w-6 h-6 text-slate-600 mx-auto mb-2" />
+        <div className="text-sm text-slate-400">No satisfaction surveys yet for {monthLabel}</div>
+        <div className="text-xs text-slate-600 mt-1">Surveys typically arrive 1–3 days after the call</div>
+      </div>
     </div>
   )
 
