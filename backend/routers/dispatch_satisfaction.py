@@ -641,6 +641,7 @@ def _generate_satisfaction_overview(month: str):
         'all_garages': all_garages,
         'executive_insight': executive_insight,
         'zone_satisfaction': zone_sat,
+        'generated': True,
     }
 
 

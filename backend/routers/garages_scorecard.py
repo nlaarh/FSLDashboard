@@ -98,10 +98,15 @@ def api_garage_performance_scorecard(
         end_date = today.isoformat()
 
     cache_key = f'garage_perf_scorecard_{territory_id}_{start_date}_{end_date}'
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
 
+    def _compute():
+        return _build_scorecard(territory_id, start_date, end_date)
+
+    return cache.cached_query_persistent(cache_key, _compute, ttl=3600)
+
+
+def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
+    """Heavy computation — called only on cache miss."""
     start_utc = f"{start_date}T00:00:00Z"
     end_utc = f"{end_date}T23:59:59Z"
 
@@ -370,7 +375,6 @@ def api_garage_performance_scorecard(
         'ai_summary': None,  # loaded async via separate endpoint
     }
 
-    cache.put(cache_key, result, ttl=3600)
     return result
 
 

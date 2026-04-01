@@ -80,11 +80,18 @@ export default function SatisfactionView() {
     </div>
   )
   if (error) return <div className="max-w-5xl mx-auto text-center text-red-400 py-10 text-sm">{error}</div>
-  if (!data?.daily_trend?.length && !data?.loading) return (
+  if (!data?.generated) return (
     <div className="max-w-5xl mx-auto text-center py-10">
       <Loader2 className="w-5 h-5 animate-spin text-blue-500 mx-auto mb-2" />
       <div className="text-sm text-slate-500">Generating satisfaction data for {monthLabel}...</div>
       <div className="text-xs text-slate-600 mt-1">Auto-checking every 30 seconds</div>
+    </div>
+  )
+  if (!data?.daily_trend?.length) return (
+    <div className="max-w-5xl mx-auto text-center py-10">
+      <AlertTriangle className="w-6 h-6 text-slate-600 mx-auto mb-2" />
+      <div className="text-sm text-slate-400">No satisfaction surveys yet for {monthLabel}</div>
+      <div className="text-xs text-slate-600 mt-1">Surveys typically arrive 1–3 days after the call</div>
     </div>
   )
 
