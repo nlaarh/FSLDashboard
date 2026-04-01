@@ -250,7 +250,7 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
     Non-blocking: serves from cache. If no cache, triggers background generation.
     """
     import re, calendar, logging, threading
-    from datetime import date as _date
+    from datetime import date as _date, timedelta
 
     if not re.match(r'^\d{4}-\d{2}$', month):
         raise HTTPException(400, "month must be YYYY-MM format (e.g. 2026-03)")
@@ -270,6 +270,30 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
     if disk:
         cache.put(cache_key, disk, ttl)
         return disk
+
+    # Quick check: if month has zero surveys, return empty immediately
+    # instead of spawning a 60-90s background generation
+    last_day_num = calendar.monthrange(year, mon)[1]
+    end_day = _date(year, mon, last_day_num) + timedelta(days=1)
+    if is_current:
+        end_day = today
+    start_utc = f"{_date(year, mon, 1).isoformat()}T00:00:00Z"
+    end_utc = f"{end_day.isoformat()}T00:00:00Z"
+    survey_count = sf_query_all(f"""
+        SELECT COUNT(Id) cnt FROM Survey_Result__c
+        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc}
+          AND ERS_Work_Order__r.CreatedDate < {end_utc}
+          AND ERS_Overall_Satisfaction__c != null
+    """)
+    total = (survey_count[0].get('cnt', 0) or 0) if survey_count else 0
+    if total == 0:
+        empty_result = {
+            'month': month, 'summary': {}, 'daily_trend': [],
+            'all_garages': [], 'executive_insight': None,
+            'zone_satisfaction': {}, 'generated': True,
+        }
+        cache.put(cache_key, empty_result, 300 if is_current else ttl)  # short TTL for current month
+        return empty_result
 
     _log = logging.getLogger('satisfaction')
     gen_lock = f'gen_sat_overview_{month}'
