@@ -10,6 +10,7 @@ import {
   Calendar, Minus, Award, Truck, Loader2, ChevronRight as ChevronR, Zap,
 } from 'lucide-react'
 import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from '../api'
+import GaragePerformance from './GaragePerformance'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -257,19 +258,16 @@ function PeriodSelector({ periodType, setPeriodType, dayDate, setDayDate, weekOf
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function GarageDashboard({ garageId, garageName }) {
-  // ── Period state
-  const [periodType, setPeriodType] = useState('Weekly')
-  const [dayDate, setDayDate]       = useState(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0] })
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [monthOffset, setMonthOffset] = useState(0)
+  // ── Shared date range (used by all tabs)
+  const today = new Date()
+  const firstOfMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`
+  const todayStr = today.toISOString().slice(0, 10)
+  const [startDate, setStartDate] = useState(firstOfMonth)
+  const [endDate, setEndDate] = useState(todayStr)
 
-  const week  = getWeek(weekOffset)
-  const month = getMonth(monthOffset)
-  const { start, end, label } = (() => {
-    if (periodType === 'Daily')   return { start: dayDate, end: dayDate, label: dayDate }
-    if (periodType === 'Weekly')  return { ...week }
-    return { ...month }
-  })()
+  // Legacy period compat — Overview endpoints use start/end
+  const start = startDate
+  const end = endDate
 
   // ── Data state
   const [perf, setPerf]           = useState(null)
@@ -282,6 +280,7 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [scorecardError, setScorecardError] = useState(null)
   const [scoreError, setScoreError] = useState(null)
   const [activeDef, setActiveDef] = useState(null)  // which metric tooltip is open
+  const [activeTab, setActiveTab] = useState('performance')  // performance | overview
 
   // ── Load performance (period-dependent)
   useEffect(() => {
@@ -332,6 +331,35 @@ export default function GarageDashboard({ garageId, garageName }) {
 
   return (
     <div className="space-y-5">
+
+      {/* ═══ DATE RANGE + TAB BAR ════════════════════════════════════════════ */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
+          {[['performance', 'Performance'], ['overview', 'Overview']].map(([key, label]) => (
+            <button key={key}
+              onClick={() => setActiveTab(key)}
+              className={clsx('px-4 py-1.5 rounded-md text-xs font-semibold transition',
+                activeTab === key ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50')}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50" />
+          <span className="text-slate-600 text-xs">to</span>
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50" />
+        </div>
+      </div>
+
+      {/* ═══ PERFORMANCE TAB ══════════════════════════════════════════════════ */}
+      {activeTab === 'performance' && (
+        <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} />
+      )}
+
+      {/* ═══ OVERVIEW TAB (existing content) ══════════════════════════════════ */}
+      {activeTab === 'overview' && (<>
 
       {/* ═══ TOP BAR: Grade + Period ═══════════════════════════════════════════ */}
       <div className="glass rounded-xl p-5">
@@ -1035,6 +1063,8 @@ export default function GarageDashboard({ garageId, garageName }) {
           )}
         </>
       )}
+
+      </>)} {/* end overview tab */}
     </div>
   )
 }

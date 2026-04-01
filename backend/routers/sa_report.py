@@ -565,14 +565,25 @@ def sa_report(sa_number: str):
                    if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
 
         # ── Round trip 2b: cascade fallback (Towbook territory → find original fleet tid)
+        # Field name in SAHistory is 'ServiceTerritory' (not 'ServiceTerritoryId')
+        # First row with OldValue=null has the original territory ID in NewValue
+        # We need the SECOND row (first with OldValue != null) to get the original territory
         if not members:
             tid_hist = sf_query_all(f"""
-                SELECT OldValue FROM ServiceAppointmentHistory
+                SELECT OldValue, NewValue FROM ServiceAppointmentHistory
                 WHERE ServiceAppointmentId = '{sa_id}'
-                  AND Field = 'ServiceTerritoryId'
-                ORDER BY CreatedDate ASC LIMIT 1
+                  AND Field = 'ServiceTerritory'
+                ORDER BY CreatedDate ASC
             """)
-            original_tid = tid_hist[0].get('OldValue') if tid_hist else None
+            # Find original territory: first row with OldValue=null has NewValue=original ID
+            # Filter for ID rows (15+ chars starting with 0H), skip name rows
+            original_tid = None
+            for h in tid_hist:
+                if h.get('OldValue') is None:
+                    nv = h.get('NewValue') or ''
+                    if len(nv) >= 15 and nv.startswith('0H'):
+                        original_tid = nv
+                        break
             if original_tid and original_tid != tid:
                 orig_raw = sf_query_all(f"""
                     SELECT ServiceResourceId, ServiceResource.Name,

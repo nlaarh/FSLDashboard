@@ -58,6 +58,22 @@ export const fetchDecomposition = (id, start, end) =>
 export const fetchForecast = (territoryId, weeks = 8) =>
   api.get(`/territory/${territoryId}/forecast?weeks_history=${weeks}`).then(r => r.data)
 
+// Garage Performance Scorecard
+export const fetchGarageScorecard = (id, startDate, endDate) =>
+  api.get(`/garages/${id}/performance-scorecard?start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
+export const fetchGarageAiSummary = (id, startDate, endDate) =>
+  api.get(`/garages/${id}/performance-scorecard/ai-summary?start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
+
+export const exportGarageScorecard = (id, startDate, endDate) => {
+  const url = `/api/garages/${id}/performance-scorecard/export?start_date=${startDate}&end_date=${endDate}`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `garage_scorecard_${startDate}_to_${endDate}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 // Dispatch Insights Drill-Down (lazy, on-demand)
 export const fetchReassignmentDetail = () => api.get('/insights/reassignment-detail').then(r => r.data)
 export const fetchDispatcherDetail = (name) => api.get(`/insights/dispatcher-detail/${encodeURIComponent(name)}`).then(r => r.data)

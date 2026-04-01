@@ -227,18 +227,24 @@ def _fetch_sa_core(sa: dict) -> dict | None:
                if not ((m.get('ServiceResource') or {}).get('Name') or '').lower().startswith('towbook')]
 
     # Cascade fallback: if the SA's current territory has no fleet members (e.g. it was
-    # cascaded from a Fleet territory to a Towbook garage, so ServiceTerritoryId now points
-    # to the Towbook territory), look back in SAHistory for the original fleet territory.
+    # cascaded from a Fleet territory to a Towbook garage), look back in SAHistory
+    # for the original fleet territory. Field name is 'ServiceTerritory' (not 'ServiceTerritoryId').
     if not members:
         tid_hist = _sqa_local(f"""
-            SELECT OldValue, CreatedDate
+            SELECT OldValue, NewValue
             FROM ServiceAppointmentHistory
             WHERE ServiceAppointmentId = '{sa_id}'
-              AND Field = 'ServiceTerritoryId'
+              AND Field = 'ServiceTerritory'
             ORDER BY CreatedDate ASC
-            LIMIT 1
         """)
-        original_tid = tid_hist[0].get('OldValue') if tid_hist else None
+        # First row with OldValue=null has NewValue=original territory ID
+        original_tid = None
+        for h in tid_hist:
+            if h.get('OldValue') is None:
+                nv = h.get('NewValue') or ''
+                if len(nv) >= 15 and nv.startswith('0H'):
+                    original_tid = nv
+                    break
         if original_tid and original_tid != tid:
             orig_members_raw = _sqa_local(f"""
                 SELECT ServiceResourceId, ServiceResource.Name,

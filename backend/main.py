@@ -67,7 +67,7 @@ from routers import (
     auth, admin, garages, command_center, ops, map as map_router,
     dispatch_drill, dispatch_trends, dispatch_satisfaction,
     issues, pta, chatbot, data_quality, matrix,
-    tracking, misc, insights, sa_report,
+    tracking, misc, insights, sa_report, garages_scorecard,
 )
 
 app.include_router(auth.router)
@@ -87,6 +87,7 @@ app.include_router(matrix.router)
 app.include_router(tracking.router)
 app.include_router(misc.router)
 app.include_router(sa_report.router)
+app.include_router(garages_scorecard.router)
 app.include_router(insights.router)
 
 
