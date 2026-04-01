@@ -154,11 +154,36 @@ def api_garage_performance_scorecard(
             ORDER BY ServiceAppointmentId, CreatedDate ASC
         """)
 
+    def _get_towbook_on_location():
+        """Real arrival for Towbook SAs — ActualStartTime is fake."""
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'Status'
+              AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
+              AND ServiceAppointment.CreatedDate >= {start_utc}
+              AND ServiceAppointment.CreatedDate < {end_utc}
+              AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
+              AND ServiceAppointment.Status = 'Completed'
+              AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
+        """)
+
     data = sf_parallel(surveys=_get_surveys, sas=_get_sas,
-                       territory_hist=_get_territory_history)
+                       territory_hist=_get_territory_history,
+                       tb_on_loc=_get_towbook_on_location)
     surveys = data['surveys']
     sas = data['sas']
     territory_hist = data['territory_hist']
+
+    # Build Towbook real arrival map: SA Id → On Location datetime
+    towbook_arrival = {}
+    for r in data['tb_on_loc']:
+        if r.get('NewValue') != 'On Location':
+            continue
+        sa_id = r.get('ServiceAppointmentId')
+        ts = _parse_dt(r.get('CreatedDate'))
+        if ts and (sa_id not in towbook_arrival or ts < towbook_arrival[sa_id]):
+            towbook_arrival[sa_id] = ts
 
     # Find SAs where this garage is NOT the original territory (secondary)
     # The first record per SA with OldValue=null is the original assignment.
@@ -190,16 +215,19 @@ def api_garage_performance_scorecard(
         total = len(sa_list)
         completed = sum(1 for sa in sa_list if sa.get('Status') == 'Completed')
         cancelled = sum(1 for sa in sa_list if 'cancel' in (sa.get('Status') or '').lower())
-        declined = sum(1 for sa in sa_list if sa.get('Status') == 'No-Show' or
-                       'decline' in (sa.get('ERS_Facility_Decline_Reason__c') or '').lower() if sa.get('ERS_Facility_Decline_Reason__c'))
-        # ATA: CreatedDate → ActualStartTime (Fleet only, Towbook is fake)
+        declined = sum(1 for sa in sa_list if sa.get('ERS_Facility_Decline_Reason__c'))
+        # ATA: Fleet = ActualStartTime, Towbook = SAHistory "On Location"
         ata_vals = []
         pta_vals = []
         for sa in sa_list:
             if sa.get('Status') != 'Completed':
                 continue
             created = _parse_dt(sa.get('CreatedDate'))
-            actual = _parse_dt(sa.get('ActualStartTime'))
+            dm = sa.get('ERS_Dispatch_Method__c') or ''
+            if dm == 'Towbook':
+                actual = towbook_arrival.get(sa['Id'])
+            else:
+                actual = _parse_dt(sa.get('ActualStartTime'))
             if created and actual:
                 ata = (actual - created).total_seconds() / 60
                 if 0 < ata < 480:
@@ -225,6 +253,7 @@ def api_garage_performance_scorecard(
     # SA.ParentRecordId = WOLI.Id. Query WOLI to get WorkOrderId.
     woli_ids = [sa.get('ParentRecordId') for sa in sas if sa.get('ParentRecordId')]
     wo_to_sa = {}  # WO Id → SA Id
+    wo_to_sa_number = {}  # WO Id → SA AppointmentNumber
     if woli_ids:
         # Batch query WOLI in chunks of 200
         for i in range(0, len(woli_ids), 200):
@@ -237,6 +266,7 @@ def api_garage_performance_scorecard(
                 wo_id = woli_to_wo.get(woli_id)
                 if wo_id and wo_id not in wo_to_sa:
                     wo_to_sa[wo_id] = sa['Id']
+                    wo_to_sa_number[wo_id] = sa.get('AppointmentNumber', '')
 
     primary_surveys = []
     secondary_surveys = []
@@ -290,8 +320,11 @@ def api_garage_performance_scorecard(
         for sv in svs:
             wo = sv.get('ERS_Work_Order__r') or {}
             created = _parse_dt(wo.get('CreatedDate'))
+            wo_id = sv.get('ERS_Work_Order__c') or ''
+            sa_num = wo_to_sa_number.get(wo_id, '')
             survey_details.append({
                 'wo_number': wo.get('WorkOrderNumber', ''),
+                'sa_number': sa_num,
                 'call_date': created.strftime('%Y-%m-%d') if created else '',
                 'overall': sv.get('ERS_Overall_Satisfaction__c'),
                 'response_time': sv.get('ERS_Response_Time_Satisfaction__c'),
@@ -355,7 +388,7 @@ def api_garage_ai_summary(
     if not end_date:
         end_date = today.isoformat()
 
-    cache_key = f'garage_ai_summary_{territory_id}_{start_date}_{end_date}'
+    cache_key = f'garage_ai_summary_v2_{territory_id}_{start_date}_{end_date}'
     cached = cache.get(cache_key)
     if cached:
         return cached

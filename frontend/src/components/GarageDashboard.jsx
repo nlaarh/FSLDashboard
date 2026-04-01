@@ -259,11 +259,12 @@ function PeriodSelector({ periodType, setPeriodType, dayDate, setDayDate, weekOf
 
 export default function GarageDashboard({ garageId, garageName }) {
   // ── Shared date range (used by all tabs)
+  // Default to last 30 days so there's always data
   const today = new Date()
-  const firstOfMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`
-  const todayStr = today.toISOString().slice(0, 10)
-  const [startDate, setStartDate] = useState(firstOfMonth)
-  const [endDate, setEndDate] = useState(todayStr)
+  const thirtyDaysAgo = new Date(today)
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+  const [startDate, setStartDate] = useState(thirtyDaysAgo.toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(today.toISOString().slice(0, 10))
 
   // Legacy period compat — Overview endpoints use start/end
   const start = startDate
@@ -335,7 +336,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       {/* ═══ DATE RANGE + TAB BAR ════════════════════════════════════════════ */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
-          {[['performance', 'Performance'], ['overview', 'Overview']].map(([key, label]) => (
+          {[['performance', 'Performance'], ['operations', 'Operations']].map(([key, label]) => (
             <button key={key}
               onClick={() => setActiveTab(key)}
               className={clsx('px-4 py-1.5 rounded-md text-xs font-semibold transition',
@@ -346,10 +347,10 @@ export default function GarageDashboard({ garageId, garageName }) {
         </div>
         <div className="flex items-center gap-2">
           <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50" />
+            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
           <span className="text-slate-600 text-xs">to</span>
           <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50" />
+            className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
         </div>
       </div>
 
@@ -358,25 +359,13 @@ export default function GarageDashboard({ garageId, garageName }) {
         <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} />
       )}
 
-      {/* ═══ OVERVIEW TAB (existing content) ══════════════════════════════════ */}
-      {activeTab === 'overview' && (<>
+      {/* ═══ OPERATIONS TAB ═════════════════════════════════════════════════ */}
+      {activeTab === 'operations' && (<>
 
-      {/* ═══ TOP BAR: Grade + Period ═══════════════════════════════════════════ */}
-      <div className="glass rounded-xl p-5">
-        <div className="flex items-center gap-5 flex-wrap">
-          {/* Grade */}
+      {/* Grade badge + dispatch type */}
+      <div className="glass rounded-xl p-4 flex items-center gap-4 flex-wrap">
           {score && !score.error && (
             <GradeRing grade={score.grade} composite={score.composite} />
-          )}
-          {!score && scoreError && !loading.score && (
-            <div className="w-20 h-20 rounded-2xl bg-slate-800/50 border border-red-800/30 flex items-center justify-center">
-              <span className="text-[10px] text-red-400 text-center px-1">Grade unavailable</span>
-            </div>
-          )}
-          {loading.score && !score && (
-            <div className="w-20 h-20 rounded-2xl bg-slate-800/50 border border-slate-700/30 flex items-center justify-center">
-              <Loader2 className="w-5 h-5 animate-spin text-brand-400" />
-            </div>
           )}
 
           {/* Dispatch method badge */}
@@ -423,18 +412,6 @@ export default function GarageDashboard({ garageId, garageName }) {
               </div>
             </div>
           )}
-
-          {/* Period selector */}
-          <div className="w-full pt-3 border-t border-slate-800/60">
-            <PeriodSelector
-              periodType={periodType} setPeriodType={setPeriodType}
-              dayDate={dayDate} setDayDate={setDayDate}
-              weekOffset={weekOffset} setWeekOffset={setWeekOffset}
-              monthOffset={monthOffset} setMonthOffset={setMonthOffset}
-              loading={anyLoading} week={week} month={month}
-            />
-          </div>
-        </div>
       </div>
 
       {error && (
@@ -515,17 +492,6 @@ export default function GarageDashboard({ garageId, garageName }) {
               color={perf.pts_ata?.on_time_pct >= 70 ? 'text-emerald-400' : perf.pts_ata?.on_time_pct != null ? 'text-red-400' : 'text-slate-500'}
               border={perf.pts_ata?.on_time_pct >= 70 ? 'border-emerald-800/30' : 'border-slate-700/30'}
               definition={perf.definitions?.eta_accuracy} defId="eta_accuracy" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard label="Acceptance" value={`${perf.acceptance.primary_pct}%`} icon={Users}
-              sub={`${perf.acceptance.primary_accepted} / ${perf.acceptance.primary_total} auto`}
-              color={perf.acceptance.primary_pct >= 90 ? 'text-emerald-400' : perf.acceptance.primary_pct >= 75 ? 'text-amber-400' : 'text-red-400'}
-              border={perf.acceptance.primary_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
-              definition={perf.definitions?.acceptance} defId="acceptance" activeDef={activeDef} setActiveDef={setActiveDef} />
-            <MetricCard label="Satisfaction" value={perf.satisfaction ? `${perf.satisfaction.total_satisfied_pct}%` : 'N/A'} icon={ThumbsUp}
-              sub={perf.satisfaction ? `${perf.satisfaction.total} surveys` : ''}
-              color={perf.satisfaction && perf.satisfaction.total_satisfied_pct >= 82 ? 'text-emerald-400' : 'text-red-400'}
-              border={perf.satisfaction && perf.satisfaction.meets_target ? 'border-emerald-800/30' : 'border-red-800/30'}
-              target="82%" met={perf.satisfaction?.meets_target}
-              definition={perf.definitions?.satisfaction} defId="satisfaction" activeDef={activeDef} setActiveDef={setActiveDef} />
           </div>
 
           {/* ═══ RESPONSE TIME (left) + DECOMPOSITION (right) ═════════════════ */}
@@ -877,85 +843,6 @@ export default function GarageDashboard({ garageId, garageName }) {
             </div>
           )}
 
-          {/* ═══ ACCEPTANCE + SATISFACTION ═════════════════════════════════════ */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-            {/* Acceptance */}
-            <div className="glass rounded-xl p-5 space-y-3">
-              <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
-                <Users className="w-4 h-4 text-brand-400" /> Dispatch Acceptance
-              </h3>
-              {[
-                { label: 'Primary (Auto-Dispatched)', pct: perf.acceptance.primary_pct, accepted: perf.acceptance.primary_accepted, total: perf.acceptance.primary_total },
-                { label: 'Secondary (Manual)', pct: perf.acceptance.not_primary_pct, accepted: perf.acceptance.not_primary_accepted, total: perf.acceptance.not_primary_total },
-              ].map(a => (
-                <div key={a.label}>
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[10px] text-slate-400 font-medium">{a.label}</span>
-                    <span className={clsx('text-sm font-bold',
-                      a.pct >= 90 ? 'text-emerald-400' : a.pct >= 75 ? 'text-amber-400' : 'text-red-400')}>
-                      {a.pct}%
-                    </span>
-                  </div>
-                  <ProgressBar value={a.pct}
-                    color={a.pct >= 90 ? 'bg-emerald-500' : a.pct >= 75 ? 'bg-amber-500' : 'bg-red-500'}
-                    height="h-2.5" />
-                  <div className="text-[9px] text-slate-600 mt-0.5">{a.accepted} / {a.total}</div>
-                </div>
-              ))}
-              <div className="text-[10px] text-slate-600 pt-1 border-t border-slate-800/50">
-                Total declines: <span className="text-red-400 font-medium">{perf.acceptance.total_declined}</span>
-              </div>
-            </div>
-
-            {/* Satisfaction */}
-            {perf.satisfaction && (
-              <div className="glass rounded-xl p-5 space-y-3">
-                <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
-                  <ThumbsUp className="w-4 h-4 text-brand-400" /> Member Satisfaction
-                  <span className="ml-auto text-[10px] text-slate-500 font-normal">{perf.satisfaction.total} surveys</span>
-                </h3>
-                <div className="flex items-center gap-4">
-                  <div className={clsx('text-4xl font-black',
-                    perf.satisfaction.meets_target ? 'text-emerald-400' : 'text-amber-400')}>
-                    {perf.satisfaction.total_satisfied_pct}%
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {perf.satisfaction.meets_target
-                      ? 'Meeting 82% accreditation target'
-                      : `${(82 - perf.satisfaction.total_satisfied_pct).toFixed(1)}% below 82% target`}
-                  </div>
-                </div>
-                <div className="flex gap-1 h-6 rounded-lg overflow-hidden">
-                  {[
-                    { count: perf.satisfaction.totally_satisfied, color: 'bg-emerald-500', label: 'Totally Satisfied' },
-                    { count: perf.satisfaction.satisfied, color: 'bg-teal-500', label: 'Satisfied' },
-                    { count: perf.satisfaction.neither, color: 'bg-slate-500', label: 'Neither' },
-                    { count: perf.satisfaction.dissatisfied, color: 'bg-orange-500', label: 'Dissatisfied' },
-                    { count: perf.satisfaction.totally_dissatisfied, color: 'bg-red-500', label: 'Totally Dissatisfied' },
-                  ].map(s => {
-                    const w = perf.satisfaction.total > 0 ? (s.count / perf.satisfaction.total) * 100 : 0
-                    return w > 0 ? (
-                      <div key={s.label} className={clsx('transition-all', s.color)} style={{ width: `${w}%` }}
-                        title={`${s.label}: ${s.count} (${Math.round(w)}%)`} />
-                    ) : null
-                  })}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500">
-                  {[
-                    { label: 'Totally Satisfied', count: perf.satisfaction.totally_satisfied, color: 'bg-emerald-500' },
-                    { label: 'Satisfied', count: perf.satisfaction.satisfied, color: 'bg-teal-500' },
-                    { label: 'Neither', count: perf.satisfaction.neither, color: 'bg-slate-500' },
-                    { label: 'Dissatisfied', count: perf.satisfaction.dissatisfied + perf.satisfaction.totally_dissatisfied, color: 'bg-red-500' },
-                  ].map(s => (
-                    <span key={s.label} className="flex items-center gap-1">
-                      <span className={clsx('w-2 h-2 rounded-sm', s.color)} /> {s.label}: {s.count}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
 
           {/* ═══ SUPERVISOR ANALYSIS ══════════════════════════════════════════ */}
           <div className="glass rounded-xl p-5">
@@ -963,7 +850,7 @@ export default function GarageDashboard({ garageId, garageName }) {
               <AlertTriangle className="w-5 h-5 text-amber-400" />
               Supervisor Analysis
               <span className="ml-auto text-[10px] font-normal text-slate-500">
-                {label} · {perf.total_sas.toLocaleString()} SAs
+                {`${startDate} – ${endDate}`} · {perf.total_sas.toLocaleString()} SAs
               </span>
             </h3>
 
@@ -1063,8 +950,7 @@ export default function GarageDashboard({ garageId, garageName }) {
           )}
         </>
       )}
-
-      </>)} {/* end overview tab */}
+      </>)} {/* end operations tab */}
     </div>
   )
 }

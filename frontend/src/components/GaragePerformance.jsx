@@ -86,8 +86,8 @@ function DriverRow({ driver, onToggle, expanded }) {
       {/* Drill-down: individual surveys */}
       {expanded && driver.surveys && (
         <div className="bg-slate-900/40 px-4 py-2 space-y-1.5">
-          <div className="grid grid-cols-[80px_60px_60px_60px_60px_1fr] gap-2 text-[8px] text-slate-600 uppercase tracking-wider pb-1 border-b border-slate-800/40">
-            <span>Date</span><span>Overall</span><span>Resp</span><span>Tech</span><span>Informed</span><span>Comment</span>
+          <div className="grid grid-cols-[100px_70px_60px_60px_60px_60px_1fr] gap-2 text-[8px] text-slate-600 uppercase tracking-wider pb-1 border-b border-slate-800/40">
+            <span>SA #</span><span>Date</span><span>Overall</span><span>Resp</span><span>Tech</span><span>Informed</span><span>Comment</span>
           </div>
           {driver.surveys.map((sv, i) => {
             const satBadge = (val) => {
@@ -104,14 +104,15 @@ function DriverRow({ driver, onToggle, expanded }) {
               return <span className={clsx('font-semibold', cls)}>{short}</span>
             }
             return (
-              <div key={i} className="grid grid-cols-[80px_60px_60px_60px_60px_1fr] gap-2 text-[10px] items-start">
+              <div key={i} className="grid grid-cols-[100px_70px_60px_60px_60px_60px_1fr] gap-2 text-[10px] items-start">
                 <span className="text-slate-400">
-                  {sv.wo_number ? (
-                    <button className="text-blue-400 hover:underline" onClick={(e) => { e.stopPropagation(); saCtx?.open(`SA-${sv.wo_number}`) }}>
-                      {sv.call_date}
+                  {sv.sa_number ? (
+                    <button className="text-blue-400 hover:underline font-mono" onClick={(e) => { e.stopPropagation(); saCtx?.open(sv.sa_number) }}>
+                      {sv.sa_number}
                     </button>
                   ) : sv.call_date}
                 </span>
+                <span className="text-slate-500">{sv.call_date}</span>
                 {satBadge(sv.overall)}
                 {satBadge(sv.response_time)}
                 {satBadge(sv.technician)}
@@ -137,6 +138,7 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
   const [expandedDriver, setExpandedDriver] = useState(null)
   const [sortBy, setSortBy] = useState('survey_count')
   const [sortDir, setSortDir] = useState('desc')
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     if (!startDate || !endDate) return
@@ -180,11 +182,20 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
         </div>
         {data && !loading && (
           <button
-            onClick={() => exportGarageScorecard(garageId, startDate, endDate)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-slate-300 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-lg transition"
+            disabled={exporting}
+            onClick={() => {
+              setExporting(true)
+              exportGarageScorecard(garageId, startDate, endDate)
+              setTimeout(() => setExporting(false), 5000)
+            }}
+            className={clsx("flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg transition",
+              exporting
+                ? "text-amber-400 bg-amber-900/20 border-amber-700/40 cursor-wait"
+                : "text-slate-300 bg-slate-800/60 hover:bg-slate-700/60 border-slate-700/40"
+            )}
           >
-            <Download className="w-3.5 h-3.5" />
-            Export Excel
+            {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {exporting ? 'Generating...' : 'Export Excel'}
           </button>
         )}
       </div>
