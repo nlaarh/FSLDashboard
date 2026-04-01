@@ -1023,11 +1023,12 @@ def chatbot_ask(request: Request, response: Response, body: dict = None):
         # Low: just return the reason as a friendly message
         return {"answer": reason, "model": "guardrail", "provider": "system", "blocked": True}
 
-    # ── Layer 3: Load AI config ──
+    # ── Layer 3: Load AI config (env var takes priority over settings.json) ──
     settings = _load_settings()
     cb_settings = settings.get("chatbot", {})
-    provider = cb_settings.get("provider", "")
-    api_key = cb_settings.get("api_key", "")
+    env_key = os.environ.get('OPENAI_API_KEY', '')
+    provider = 'openai' if env_key else cb_settings.get("provider", "")
+    api_key = env_key or cb_settings.get("api_key", "")
 
     if not provider or not api_key:
         raise HTTPException(status_code=400, detail="Chatbot not configured. Go to Admin → AI Assistant to set up a provider and API key.")

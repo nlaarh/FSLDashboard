@@ -46,6 +46,10 @@ def _totally_satisfied_pct(rows, field):
 
 
 def _load_ai_settings():
+    # Env var takes priority (Azure App Settings), fall back to settings.json
+    env_key = os.environ.get('OPENAI_API_KEY', '')
+    if env_key:
+        return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
     try:
         with open(_SETTINGS_FILE) as f:
             settings = _json.load(f)
