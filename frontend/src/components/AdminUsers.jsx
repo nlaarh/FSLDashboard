@@ -90,7 +90,7 @@ export default function AdminUsers({ pin }) {
         if (userForm.password) data.password = userForm.password
         await adminUpdateUser(pin, editingUser, data)
         if (userForm.password) {
-          setGeneratedPw(prev => ({ ...prev, [editingUser]: userForm.password }))
+          showPwTemporarily(editingUser, userForm.password)
         }
       } else {
         if (!userForm.username || !userForm.password || !userForm.name) {
@@ -99,7 +99,7 @@ export default function AdminUsers({ pin }) {
           return
         }
         await adminCreateUser(pin, { ...userForm })
-        setGeneratedPw(prev => ({ ...prev, [userForm.username]: userForm.password }))
+        showPwTemporarily(userForm.username, userForm.password)
       }
       setShowUserForm(false)
       loadUsers()
@@ -123,11 +123,16 @@ export default function AdminUsers({ pin }) {
     } catch { /* ignore */ }
   }
 
+  const showPwTemporarily = (username, pw) => {
+    setGeneratedPw(prev => ({ ...prev, [username]: pw }))
+    setTimeout(() => setGeneratedPw(prev => { const n = { ...prev }; delete n[username]; return n }), 15000)
+  }
+
   const resetPassword = async (username) => {
     const pw = genPassword()
     try {
       await adminUpdateUser(pin, username, { password: pw })
-      setGeneratedPw(prev => ({ ...prev, [username]: pw }))
+      showPwTemporarily(username, pw)
     } catch { /* ignore */ }
   }
 
