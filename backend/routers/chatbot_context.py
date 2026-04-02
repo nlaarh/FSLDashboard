@@ -4,30 +4,9 @@ import re as _re
 import json as _json
 
 import cache
-from dispatch import get_live_queue, recommend_drivers
+from dispatch import get_live_queue, recommend_drivers, _driver_tier
 
 from routers.chatbot_knowledge import CHATBOT_SYSTEM_BASE  # noqa: F401 — re-exported
-
-
-# ── Skill hierarchy (for driver tier classification in live data) ────────────
-_TOW_CAPS = {'tow', 'flat bed', 'wheel lift'}
-_BATTERY_CAPS = {'battery', 'battery service', 'jumpstart'}
-
-
-def _driver_tier(truck_capabilities: str) -> str:
-    """Classify driver tier from truck capabilities string (semicolon-separated)."""
-    caps = {c.strip().lower() for c in (truck_capabilities or '').split(';') if c.strip()}
-    if caps & _TOW_CAPS:
-        return 'tow'
-    if caps & _BATTERY_CAPS:
-        # Has battery but NOT light-service items like Tire/Lockout -> battery-only
-        light_caps = {'tire', 'lockout', 'locksmith', 'fuel - gasoline', 'fuel - diesel',
-                      'extrication- driveway', 'extrication- highway/roadway', 'winch'}
-        if caps & light_caps:
-            return 'light'
-        return 'battery'
-    # Has light-service caps (tire, lockout, etc.) but no tow and no battery
-    return 'light'
 
 
 def _classify_and_fetch_context(question: str) -> str:

@@ -21,7 +21,6 @@ import hashlib, hmac, secrets
 
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
 
-_SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
 
 _AGENTMAIL_API_KEY = os.environ.get("AGENTMAIL_API_KEY", "")
 _AGENTMAIL_INBOX = os.environ.get("AGENTMAIL_INBOX", "fslnyaaa@agentmail.to")
@@ -315,7 +314,7 @@ def chatbot_ask(request: Request, response: Response, body: dict = None):
         # Low: just return the reason as a friendly message
         return {"answer": reason, "model": "guardrail", "provider": "system", "blocked": True}
 
-    # ── Layer 3: Load AI config (env var takes priority over settings.json) ──
+    # ── Layer 3: Load AI config (env var takes priority over SQLite settings) ──
     settings = _load_settings()
     cb_settings = settings.get("chatbot", {})
     env_key = os.environ.get('OPENAI_API_KEY', '')

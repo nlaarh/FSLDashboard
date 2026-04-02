@@ -79,3 +79,33 @@ def minutes_since(dt_str, now_utc):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return round((now_utc - dt).total_seconds() / 60)
+
+
+def totally_satisfied_pct(rows, field):
+    """Calculate Totally Satisfied % from a list of survey rows.
+
+    Single source of truth — use this everywhere instead of inline
+    ``round(100 * ts_count / total_count)`` patterns.
+    """
+    total = sum(1 for r in rows if r.get(field))
+    if total == 0:
+        return None
+    ts = sum(1 for r in rows if (r.get(field) or '').lower() == 'totally satisfied')
+    return round(100 * ts / total)
+
+
+def soql_date_range(start_date: str, end_date: str = None):
+    """Return (start_utc, end_utc) for SOQL WHERE clauses.
+
+    start_date / end_date: 'YYYY-MM-DD'.
+    end_utc uses T23:59:59Z when end_date is provided,
+    or T00:00:00Z of the next day when end_date is None (exclusive upper bound).
+    """
+    from datetime import timedelta as _td
+    start_utc = f"{start_date}T00:00:00Z"
+    if end_date:
+        end_utc = f"{end_date}T23:59:59Z"
+    else:
+        d = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_utc = f"{(d + _td(days=1)).isoformat()}T00:00:00Z"
+    return start_utc, end_utc

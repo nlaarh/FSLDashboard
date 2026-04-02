@@ -23,7 +23,7 @@ _nightly_last_run: str = ''  # 'YYYY-MM-DD' — prevent running twice on same da
 
 # Lock file for leader election — only one refresher runs across all workers/instances
 _ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
-_LOCK_DIR = Path('/home/fslapp/cache') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/cache'))
+_LOCK_DIR = Path('/home/fslapp/locks') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/locks'))
 _LOCK_FILE = _LOCK_DIR / '.refresher_leader.lock'
 _LEADER_STALE_AGE = 60    # seconds before a leader lock is considered stale
 

@@ -20,7 +20,6 @@ def _check_pin(request: Request):
 
 
 # ── Settings persistence ─────────────────────────────────────────────────────
-_SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
 
 _DEFAULT_FEATURES = {
     'pta_advisor': True,

@@ -9,32 +9,13 @@ from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
     is_fleet_territory,
 )
+from dispatch import _driver_tier
 from scheduler import generate_schedule
 from simulator import simulate_day
 from scorer import compute_score
 import cache
 
 router = APIRouter()
-
-
-# ── Skill hierarchy for driver-call matching ─────────────────────────────────
-_TOW_CAPS = {'tow', 'flat bed', 'wheel lift'}
-_BATTERY_CAPS = {'battery', 'battery service', 'jumpstart'}
-
-def _driver_tier(truck_capabilities: str) -> str:
-    """Classify driver tier from truck capabilities string (semicolon-separated)."""
-    caps = {c.strip().lower() for c in (truck_capabilities or '').split(';') if c.strip()}
-    if caps & _TOW_CAPS:
-        return 'tow'
-    if caps & _BATTERY_CAPS:
-        # Has battery but NOT light-service items like Tire/Lockout -> battery-only
-        light_caps = {'tire', 'lockout', 'locksmith', 'fuel - gasoline', 'fuel - diesel',
-                      'extrication- driveway', 'extrication- highway/roadway', 'winch'}
-        if caps & light_caps:
-            return 'light'
-        return 'battery'
-    # Has light-service caps (tire, lockout, etc.) but no tow and no battery
-    return 'light'
 
 
 # ── Garages ──────────────────────────────────────────────────────────────────

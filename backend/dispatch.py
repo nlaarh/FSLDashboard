@@ -58,6 +58,32 @@ def _can_cover(driver_tier, call_tier):
     return call_tier in SKILL_HIERARCHY.get(driver_tier, [])
 
 
+def _call_tier(work_type: str) -> str:
+    """Classify call tier from work type name. 4 types: tow, winch, battery, light."""
+    wt = (work_type or '').lower()
+    if 'tow' in wt:
+        return 'tow'
+    if 'winch' in wt or 'extrication' in wt:
+        return 'winch'
+    if wt in ('battery', 'jumpstart'):
+        return 'battery'
+    return 'light'
+
+
+def _can_serve(driver_tier: str, call_tier: str) -> bool:
+    """Check if a driver tier can serve a call tier (4-type skill hierarchy).
+
+    Unlike _can_cover (which uses the 3-type SKILL_HIERARCHY constant),
+    this supports the 4-type model (tow, winch, battery, light).
+    """
+    hierarchy = {
+        'tow': {'tow', 'winch', 'light', 'battery'},
+        'light': {'winch', 'light', 'battery'},
+        'battery': {'battery'},
+    }
+    return call_tier in hierarchy.get(driver_tier, set())
+
+
 def _urgency(wait_min, pta=None):
     if pta and wait_min > float(pta):
         return 'red'

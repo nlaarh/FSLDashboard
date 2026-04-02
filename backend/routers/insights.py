@@ -19,7 +19,6 @@ router = APIRouter()
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-_SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
 
 def _load_settings():
     try:
