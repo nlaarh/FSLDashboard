@@ -95,6 +95,18 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_log_timestamp ON activity_log(timestamp);
             CREATE INDEX IF NOT EXISTS idx_log_user ON activity_log(user);
+
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT DEFAULT 'viewer',
+                email TEXT DEFAULT '',
+                phone TEXT DEFAULT '',
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                active INTEGER DEFAULT 1,
+                created_at REAL
+            );
         """)
 
         # Seed default bonus tiers if empty

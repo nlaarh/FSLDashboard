@@ -217,9 +217,12 @@ def _nightly_trends_refresh():
 
 @app.on_event("startup")
 async def startup():
-    # Initialize SQLite database (settings, cache, bonus_tiers)
+    # Initialize SQLite database (settings, cache, bonus_tiers, users)
     database.init_db()
     database.migrate_settings_json()
+    import users
+    users.migrate_json_users()
+    users.seed_users()
 
     # Start proactive cache refresher (replaces _warmup_cache)
     # The refresher handles leader election — safe to call from all workers
