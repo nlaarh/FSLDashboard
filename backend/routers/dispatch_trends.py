@@ -94,15 +94,10 @@ def api_trends():
                   AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
             """)
 
-        # Run sequentially to avoid starving SF API for user requests
-        # (this runs in a background thread for nightly refresh)
-        import time as _time
-        data = {}
-        for name, fn in [('sas', _get_sas), ('status_hist', _get_status_history),
-                          ('reassign_hist', _get_reassignment_history),
-                          ('satisfaction', _get_satisfaction), ('assign_hist', _get_reassign_with_creator)]:
-            data[name] = fn()
-            _time.sleep(0.5)
+        # All queries in parallel for speed
+        data = sf_parallel(sas=_get_sas, status_hist=_get_status_history,
+                           reassign_hist=_get_reassignment_history,
+                           satisfaction=_get_satisfaction, assign_hist=_get_reassign_with_creator)
 
         all_sas = data['sas']
         status_hist = data['status_hist']
@@ -436,14 +431,10 @@ def _fetch_trends_range(start_utc: str, end_utc: str) -> list[dict]:
               AND ServiceAppointment.ServiceTerritoryId != null
         """)
 
-    # Run sequentially (not sf_parallel) to avoid starving the SF API rate limiter
-    # when this runs in a background thread alongside user requests
-    import time as _time
-    data = {}
-    for name, fn in [('sas', _get_sas), ('hist', _get_hist), ('reassign', _get_reassign),
-                      ('sat', _get_sat), ('assign_hist', _get_assign_hist)]:
-        data[name] = fn()
-        _time.sleep(0.5)  # brief pause between queries to yield API bandwidth
+    # Run in parallel with small batches to avoid SF rate limiting
+    from sf_client import sf_parallel
+    data = sf_parallel(sas=_get_sas, hist=_get_hist, reassign=_get_reassign,
+                       sat=_get_sat, assign_hist=_get_assign_hist)
 
     # Manual dispatch: SA was reassigned (SAHistory count > 2) AND a human was involved.
     # Each assignment creates 2 SAHistory rows (display name + SF ID).

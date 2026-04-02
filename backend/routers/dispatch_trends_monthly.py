@@ -157,24 +157,22 @@ def api_trends_month(month: str = Query(..., description="YYYY-MM format, e.g. 2
         raise HTTPException(400, "Cannot fetch future months")
 
     is_current = (year == today.year and mon == today.month)
+    is_previous = (today.replace(day=1) - __import__('datetime').timedelta(days=1)).month == mon
+    is_recent = is_current or is_previous
     cache_key = f'insights_trends_month_{month}'
-    ttl = 43200 if is_current else 604800  # 12h current, 7d past
 
-    # 1. Memory cache
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
-    # 2. Disk cache
-    disk = cache.disk_get(cache_key, ttl=ttl)
-    if disk:
-        cache.put(cache_key, disk, ttl)
-        return disk
+    return cache.cached_query_persistent(
+        cache_key,
+        lambda: _generate_month_trends(month),
+        max_stale_hours=26 if is_recent else 0,
+    )
 
-    # 3. No cache — trigger background generation, return immediately
+
+def _api_trends_month_old():
+    """Old background-thread approach — kept for reference, not called."""
     import threading
-    _log = logging.getLogger('trends_month')
-
-    gen_lock = f'gen_month_{month}'
+    _log = __import__('logging').getLogger('trends_month')
+    gen_lock = f'gen_month_unused'
     if cache.fs_lock_acquire(gen_lock, max_age=1800):
         def _bg():
             try:
