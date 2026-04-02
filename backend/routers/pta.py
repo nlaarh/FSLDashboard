@@ -7,6 +7,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Request
 
 from utils import _ET, parse_dt as _parse_dt
+from dispatch import _driver_tier, _call_tier, _can_serve
 import cache
 
 router = APIRouter()
@@ -54,44 +55,6 @@ def _check_pin(request: Request):
     if pin != _ADMIN_PIN:
         raise HTTPException(status_code=403, detail="Invalid PIN")
 
-
-# ── Skill hierarchy helpers (same as main.py) ────────────────────────────────
-
-_TOW_CAPS = {'tow', 'flat bed', 'wheel lift'}
-_BATTERY_CAPS = {'battery', 'battery service', 'jumpstart'}
-
-def _driver_tier(truck_capabilities: str) -> str:
-    """Classify driver tier from truck capabilities string (semicolon-separated)."""
-    caps = {c.strip().lower() for c in (truck_capabilities or '').split(';') if c.strip()}
-    if caps & _TOW_CAPS:
-        return 'tow'
-    if caps & _BATTERY_CAPS:
-        light_caps = {'tire', 'lockout', 'locksmith', 'fuel - gasoline', 'fuel - diesel',
-                      'extrication- driveway', 'extrication- highway/roadway', 'winch'}
-        if caps & light_caps:
-            return 'light'
-        return 'battery'
-    return 'light'
-
-def _call_tier(work_type: str) -> str:
-    """Classify call tier from work type name. 4 types: tow, winch, battery, light."""
-    wt = (work_type or '').lower()
-    if 'tow' in wt:
-        return 'tow'
-    if 'winch' in wt or 'extrication' in wt:
-        return 'winch'
-    if wt in ('battery', 'jumpstart'):
-        return 'battery'
-    return 'light'
-
-def _can_serve(driver_tier: str, call_tier: str) -> bool:
-    """Check if a driver tier can serve a call tier (skill hierarchy)."""
-    hierarchy = {
-        'tow': {'tow', 'winch', 'light', 'battery'},
-        'light': {'winch', 'light', 'battery'},
-        'battery': {'battery'},
-    }
-    return call_tier in hierarchy.get(driver_tier, set())
 
 def _count_by_tier(driver_list):
     counts = defaultdict(int)

@@ -4,7 +4,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from utils import parse_dt as _parse_dt
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_parallel, sanitize_soql  # sf_parallel used in garage detail
 import cache
 
 from routers.dispatch_shared import _fmt_et, _is_real_garage
@@ -91,41 +91,39 @@ def _generate_satisfaction_garage(name: str, month: str):
     """)
     _time.sleep(0.5)
 
-    # Query 2: Completed SAs for ATA calculation (reuse existing pattern)
-    sas = sf_query_all(f"""
-        SELECT Id, CreatedDate, Status, ActualStartTime,
-               ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
-        FROM ServiceAppointment
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ServiceTerritory.Name = '{safe_name}'
-          AND ServiceTerritoryId != null
-          AND Status = 'Completed'
-    """)
-    _time.sleep(0.5)
+    # Query 2 + 3: Completed SAs + Towbook on-location times (parallel)
+    data = sf_parallel(
+        sas=lambda: sf_query_all(f"""
+            SELECT Id, CreatedDate, Status, ActualStartTime,
+                   ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritory.Name = '{safe_name}'
+              AND ServiceTerritoryId != null
+              AND Status = 'Completed'
+        """),
+        tb_on_loc=lambda: sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'Status'
+              AND ServiceAppointment.CreatedDate >= {start_utc}
+              AND ServiceAppointment.CreatedDate < {end_utc}
+              AND ServiceAppointment.ServiceTerritory.Name = '{safe_name}'
+              AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
+              AND ServiceAppointment.Status = 'Completed'
+        """),
+    )
+    sas = data['sas']
 
-    # Query 3: Towbook on-location times
-    sa_ids = [sa.get('Id') for sa in sas if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook']
+    # Build Towbook on-location map from parallel query result
     towbook_on_location = {}
-    if sa_ids:
-        # Batch in chunks of 200
-        for i in range(0, len(sa_ids), 200):
-            chunk = sa_ids[i:i+200]
-            id_list = "','".join(chunk)
-            hist_rows = sf_query_all(f"""
-                SELECT ServiceAppointmentId, CreatedDate, NewValue
-                FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId IN ('{id_list}')
-                  AND Field = 'Status'
-            """)
-            for r in hist_rows:
-                if r.get('NewValue') != 'On Location':
-                    continue
-                sa_id = r.get('ServiceAppointmentId')
-                ts = _parse_dt(r.get('CreatedDate'))
-                if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
-                    towbook_on_location[sa_id] = ts
-            if i + 200 < len(sa_ids):
-                _time.sleep(0.3)
+    for r in data['tb_on_loc']:
+        if r.get('NewValue') != 'On Location':
+            continue
+        sa_id = r.get('ServiceAppointmentId')
+        ts = _parse_dt(r.get('CreatedDate'))
+        if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
+            towbook_on_location[sa_id] = ts
 
     # ── Build daily satisfaction buckets ──
     day_sat = defaultdict(lambda: {'totally_satisfied': 0, 'total': 0, 'rt_ts': 0, 'rt_total': 0})

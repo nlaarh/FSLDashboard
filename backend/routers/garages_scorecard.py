@@ -8,7 +8,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
-from utils import parse_dt as _parse_dt, is_fleet_territory
+from utils import parse_dt as _parse_dt, is_fleet_territory, totally_satisfied_pct as _totally_satisfied_pct, soql_date_range
 import cache
 
 router = APIRouter()
@@ -20,15 +20,6 @@ def _bonus_for_pct(pct):
     """Return (bonus_per_sa, tier_label) — reads configurable tiers from SQLite."""
     import database
     return database.bonus_for_pct(pct)
-
-
-def _totally_satisfied_pct(rows, field):
-    """Calculate Totally Satisfied % from a list of survey rows."""
-    total = sum(1 for r in rows if r.get(field))
-    if total == 0:
-        return None
-    ts = sum(1 for r in rows if (r.get(field) or '').lower() == 'totally satisfied')
-    return round(100 * ts / total)
 
 
 def _load_ai_settings():
@@ -96,8 +87,7 @@ def api_garage_performance_scorecard(
 
 def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
     """Heavy computation — called only on cache miss."""
-    start_utc = f"{start_date}T00:00:00Z"
-    end_utc = f"{end_date}T23:59:59Z"
+    start_utc, end_utc = soql_date_range(start_date, end_date)
 
     # ── Parallel queries: surveys + SAs + territory history ──
     def _get_surveys():
