@@ -63,6 +63,48 @@ async def auth_middleware(request: Request, call_next):
     return RedirectResponse("/login")
 
 
+@app.middleware("http")
+async def activity_log_middleware(request: Request, call_next):
+    """Log API requests with timing, user, and endpoint."""
+    import time as _time
+    path = request.url.path
+    # Only log API calls, not static assets
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    # Skip noisy endpoints
+    if path in ("/api/admin/status", "/api/admin/sessions", "/api/ops/brief"):
+        return await call_next(request)
+
+    start = _time.time()
+    response = await call_next(request)
+    duration_ms = round((_time.time() - start) * 1000, 1)
+
+    # Extract user from cookie
+    user = None
+    cookie = request.cookies.get("fslapp_auth")
+    if cookie:
+        payload = _verify_cookie(cookie)
+        if payload:
+            parts = payload.split(":")
+            user = parts[0] if parts else None
+
+    try:
+        database.log_activity(
+            user=user,
+            action='api_request',
+            endpoint=path,
+            method=request.method,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            ip=request.client.host if request.client else None,
+            user_agent=(request.headers.get('user-agent') or '')[:200],
+        )
+    except Exception:
+        pass  # never fail the request for logging
+
+    return response
+
+
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (

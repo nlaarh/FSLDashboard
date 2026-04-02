@@ -4,6 +4,7 @@ import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistori
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 import AdminAI from '../components/AdminAI'
 import AdminUsers from '../components/AdminUsers'
+import AdminActivityLog from '../components/AdminActivityLog'
 
 export default function Admin() {
   const [pin, setPin] = useState('')
@@ -148,6 +149,9 @@ export default function Admin() {
 
       {/* Users & Sessions (extracted component) */}
       <AdminUsers pin={pin} />
+
+      {/* ── Activity Log ── */}
+      <AdminActivityLog pin={pin} />
 
       {/* ── Map Style ── */}
       <div className="glass rounded-xl overflow-hidden">

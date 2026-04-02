@@ -79,6 +79,22 @@ def init_db():
                 label TEXT,
                 sort_order INTEGER DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                user TEXT,
+                action TEXT NOT NULL,
+                endpoint TEXT,
+                method TEXT DEFAULT 'GET',
+                status_code INTEGER,
+                duration_ms REAL,
+                ip TEXT,
+                user_agent TEXT,
+                detail TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_log_timestamp ON activity_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_log_user ON activity_log(user);
         """)
 
         # Seed default bonus tiers if empty
@@ -95,6 +111,11 @@ def init_db():
         deleted = conn.execute("DELETE FROM cache WHERE expires_at < ?", (time.time(),)).rowcount
         if deleted:
             log.info(f"Cleaned up {deleted} expired cache rows")
+
+        # Purge activity logs older than 30 days
+        purged = conn.execute("DELETE FROM activity_log WHERE timestamp < datetime('now', '-30 days')").rowcount
+        if purged:
+            log.info(f"Purged {purged} activity log entries older than 30 days")
 
     log.info(f"Database initialized at {DB_PATH}")
 
@@ -286,3 +307,47 @@ def migrate_settings_json():
         log.info(f"Renamed settings.json → settings.json.bak")
     except Exception as e:
         log.warning(f"Could not rename settings.json: {e}")
+
+
+# ── Activity Log ──────────────────────────────────────────────────────────────
+
+def log_activity(user: str = None, action: str = '', endpoint: str = None,
+                 method: str = 'GET', status_code: int = None, duration_ms: float = None,
+                 ip: str = None, user_agent: str = None, detail: str = None):
+    """Log an activity event. Fire-and-forget — never raises."""
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO activity_log (user, action, endpoint, method, status_code, duration_ms, ip, user_agent, detail)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user, action, endpoint, method, status_code, duration_ms, ip, user_agent, detail),
+            )
+    except Exception:
+        pass  # never crash the request for logging
+
+
+def get_activity_log(limit: int = 100, user: str = None, action: str = None) -> list:
+    """Get recent activity log entries."""
+    with get_db() as conn:
+        query = "SELECT * FROM activity_log WHERE 1=1"
+        params = []
+        if user:
+            query += " AND user = ?"
+            params.append(user)
+        if action:
+            query += " AND action LIKE ?"
+            params.append(f"%{action}%")
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_activity_stats() -> dict:
+    """Get activity log summary stats."""
+    with get_db() as conn:
+        total = conn.execute("SELECT COUNT(*) cnt FROM activity_log").fetchone()['cnt']
+        today = conn.execute("SELECT COUNT(*) cnt FROM activity_log WHERE timestamp >= datetime('now', '-1 day')").fetchone()['cnt']
+        users = conn.execute("SELECT COUNT(DISTINCT user) cnt FROM activity_log WHERE user IS NOT NULL").fetchone()['cnt']
+        slow = conn.execute("SELECT COUNT(*) cnt FROM activity_log WHERE duration_ms > 5000").fetchone()['cnt']
+        return {'total_entries': total, 'last_24h': today, 'unique_users': users, 'slow_queries': slow}

@@ -120,10 +120,13 @@ def admin_create_user(request: Request, body: dict):
     role = body.get("role", "viewer")
     if not username or not password or not name:
         raise HTTPException(status_code=400, detail="username, password, and name are required")
-    if role not in ("admin", "supervisor", "viewer"):
-        raise HTTPException(status_code=400, detail="role must be admin, supervisor, or viewer")
+    email = body.get("email", "").strip()
+    phone = body.get("phone", "").strip()
+    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer")
+    if role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(valid_roles)}")
     try:
-        return users.create_user(username, password, name, role)
+        return users.create_user(username, password, name, role, email=email, phone=phone)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -139,6 +142,8 @@ def admin_update_user(request: Request, username: str, body: dict):
             role=body.get("role"),
             password=body.get("password") or None,
             active=body.get("active"),
+            email=body.get("email"),
+            phone=body.get("phone"),
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -224,3 +229,21 @@ def api_set_bonus_tiers(request: Request, body: list):
             raise HTTPException(400, "Each tier needs min_pct and bonus_per_sa")
     database.set_bonus_tiers(body)
     return database.get_bonus_tiers()
+
+
+# ── Activity Log ─────────────────────────────────────────────────────────────
+
+@router.get("/api/admin/activity-log")
+def api_get_activity_log(request: Request, limit: int = 100, user: str = None, action: str = None):
+    """Get recent activity log entries."""
+    _check_pin(request)
+    import database
+    return database.get_activity_log(limit=limit, user=user, action=action)
+
+
+@router.get("/api/admin/activity-stats")
+def api_get_activity_stats(request: Request):
+    """Get activity log summary stats."""
+    _check_pin(request)
+    import database
+    return database.get_activity_stats()

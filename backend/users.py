@@ -113,13 +113,14 @@ def list_users() -> list[dict]:
             "name": u.get("name", username),
             "role": u.get("role", "viewer"),
             "email": u.get("email", ""),
+            "phone": u.get("phone", ""),
             "active": u.get("active", True),
             "created": u.get("created"),
         })
     return sorted(result, key=lambda u: u["username"])
 
 
-def create_user(username: str, password: str, name: str, role: str = "viewer", email: str = "") -> dict:
+def create_user(username: str, password: str, name: str, role: str = "viewer", email: str = "", phone: str = "") -> dict:
     """Create a new user. Raises ValueError if exists."""
     users = _load_users()
     if username in users:
@@ -129,17 +130,18 @@ def create_user(username: str, password: str, name: str, role: str = "viewer", e
         "name": name,
         "role": role,
         "email": email,
+        "phone": phone,
         "password_hash": h,
         "salt": salt,
         "created": time.time(),
         "active": True,
     }
     _save_users(users)
-    return {"username": username, "name": name, "role": role, "email": email}
+    return {"username": username, "name": name, "role": role, "email": email, "phone": phone}
 
 
 def update_user(username: str, name: str = None, role: str = None,
-                password: str = None, active: bool = None, email: str = None) -> dict:
+                password: str = None, active: bool = None, email: str = None, phone: str = None) -> dict:
     """Update user fields. Raises ValueError if not found."""
     users = _load_users()
     if username not in users:
@@ -153,12 +155,14 @@ def update_user(username: str, name: str = None, role: str = None,
         u["active"] = active
     if email is not None:
         u["email"] = email
+    if phone is not None:
+        u["phone"] = phone
     if password is not None:
         h, salt = _hash_password(password)
         u["password_hash"] = h
         u["salt"] = salt
     _save_users(users)
-    return {"username": username, "name": u["name"], "role": u["role"], "active": u["active"]}
+    return {"username": username, "name": u["name"], "role": u["role"], "active": u["active"], "email": u.get("email", ""), "phone": u.get("phone", "")}
 
 
 def delete_user(username: str):
