@@ -9,7 +9,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
-from utils import parse_dt as _parse_dt
+from utils import parse_dt as _parse_dt, is_fleet_territory
 import cache
 
 router = APIRouter()
@@ -177,12 +177,26 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
               AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
         """)
 
+    def _get_woli():
+        """Map WOLI → WO in one query (replaces sequential chunked batches)."""
+        return sf_query_all(f"""
+            SELECT Id, WorkOrderId
+            FROM WorkOrderLineItem
+            WHERE WorkOrder.ServiceTerritoryId = '{territory_id}'
+              AND WorkOrder.CreatedDate >= {start_utc}
+              AND WorkOrder.CreatedDate < {end_utc}
+        """)
+
     data = sf_parallel(surveys=_get_surveys, sas=_get_sas,
                        territory_hist=_get_territory_history,
-                       tb_on_loc=_get_towbook_on_location)
+                       tb_on_loc=_get_towbook_on_location,
+                       woli=_get_woli,
+                       territory=lambda: sf_query_all(f"SELECT Name FROM ServiceTerritory WHERE Id = '{territory_id}' LIMIT 1"))
     surveys = data['surveys']
     sas = data['sas']
     territory_hist = data['territory_hist']
+    territory_name = data['territory'][0].get('Name', '') if data['territory'] else ''
+    _is_fleet = is_fleet_territory(territory_name)
 
     # Build Towbook real arrival map: SA Id → On Location datetime
     towbook_arrival = {}
@@ -259,23 +273,16 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
         }
 
     # ── Map WorkOrder → SA to classify surveys as primary/secondary ──
-    # SA.ParentRecordId = WOLI.Id. Query WOLI to get WorkOrderId.
-    woli_ids = [sa.get('ParentRecordId') for sa in sas if sa.get('ParentRecordId')]
+    # WOLI was fetched in parallel — build mapping: WO Id → SA Id
+    woli_to_wo = {r['Id']: r.get('WorkOrderId') for r in data['woli']}
     wo_to_sa = {}  # WO Id → SA Id
     wo_to_sa_number = {}  # WO Id → SA AppointmentNumber
-    if woli_ids:
-        # Batch query WOLI in chunks of 200
-        for i in range(0, len(woli_ids), 200):
-            chunk = woli_ids[i:i+200]
-            id_list = "','".join(chunk)
-            woli_rows = sf_query_all(f"SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE Id IN ('{id_list}')")
-            woli_to_wo = {r['Id']: r.get('WorkOrderId') for r in woli_rows}
-            for sa in sas:
-                woli_id = sa.get('ParentRecordId')
-                wo_id = woli_to_wo.get(woli_id)
-                if wo_id and wo_id not in wo_to_sa:
-                    wo_to_sa[wo_id] = sa['Id']
-                    wo_to_sa_number[wo_id] = sa.get('AppointmentNumber', '')
+    for sa in sas:
+        woli_id = sa.get('ParentRecordId')
+        wo_id = woli_to_wo.get(woli_id)
+        if wo_id and wo_id not in wo_to_sa:
+            wo_to_sa[wo_id] = sa['Id']
+            wo_to_sa_number[wo_id] = sa.get('AppointmentNumber', '')
 
     primary_surveys = []
     secondary_surveys = []
@@ -293,8 +300,12 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
     tech_pct = _totally_satisfied_pct(surveys, 'ERS_Technician_Satisfaction__c')
     informed_pct = _totally_satisfied_pct(surveys, 'ERSSatisfaction_With_Being_Kept_Informed__c')
 
-    bonus_per_sa, bonus_tier = _bonus_for_pct(tech_pct)
-    total_bonus = bonus_per_sa * total_completed
+    # Bonus only applies to contractors — fleet drivers are internal employees
+    if _is_fleet:
+        bonus_per_sa, bonus_tier, total_bonus = 0, 'N/A (Fleet)', 0
+    else:
+        bonus_per_sa, bonus_tier = _bonus_for_pct(tech_pct)
+        total_bonus = bonus_per_sa * total_completed
 
     # ── Primary vs Secondary scores + SA stats ──
     primary_sa_stats = _sa_stats(primary_sas)
@@ -320,9 +331,6 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
     drivers = []
     for name, svs in sorted(driver_map.items(), key=lambda x: len(x[1]), reverse=True):
         d_tech_pct = _totally_satisfied_pct(svs, 'ERS_Technician_Satisfaction__c')
-        d_bonus_per_sa, d_bonus_tier = _bonus_for_pct(d_tech_pct)
-        d_sa_count = len(svs)  # approximate: survey count ≈ SA count for this driver
-        d_total_bonus = d_bonus_per_sa * d_sa_count
 
         # Individual survey details for drill-down
         survey_details = []
@@ -349,16 +357,17 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
             'response_time_pct': _totally_satisfied_pct(svs, 'ERS_Response_Time_Satisfaction__c'),
             'technician_pct': d_tech_pct,
             'kept_informed_pct': _totally_satisfied_pct(svs, 'ERSSatisfaction_With_Being_Kept_Informed__c'),
-            'bonus_per_sa': d_bonus_per_sa,
-            'bonus_tier': d_bonus_tier,
-            'total_bonus': d_total_bonus,
             'surveys': survey_details,
         })
+
+    # Overall SA stats (all SAs combined)
+    overall_sa_stats = _sa_stats(sas)
 
     result = {
         'territory_id': territory_id,
         'start_date': start_date,
         'end_date': end_date,
+        'garage_type': 'fleet' if _is_fleet else 'contractor',
         'garage_summary': {
             'overall_pct': overall_pct,
             'response_time_pct': rt_pct,
@@ -370,8 +379,12 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
             'bonus_tier': bonus_tier,
             'bonus_per_sa': bonus_per_sa,
             'total_bonus': total_bonus,
+            **overall_sa_stats,
         },
         'primary_vs_secondary': {
+            'overall': {
+                **_group_scores(surveys, overall_sa_stats),
+            },
             'primary': _group_scores(primary_surveys, primary_sa_stats),
             'secondary': _group_scores(secondary_surveys, secondary_sa_stats),
         },
@@ -417,14 +430,8 @@ def api_garage_ai_summary(
         driver_lines.append(
             f"  {d['name']}: {d['survey_count']} surveys, "
             f"Overall={d['overall_pct']}%, Tech={d['technician_pct']}%, "
-            f"ResponseTime={d['response_time_pct']}%, Informed={d['kept_informed_pct']}%, "
-            f"Bonus=${d['total_bonus']}"
+            f"ResponseTime={d['response_time_pct']}%, Informed={d['kept_informed_pct']}%"
         )
-
-    # Compute total driver bonuses for accuracy
-    total_driver_bonuses = sum(d.get('total_bonus', 0) for d in drivers)
-    drivers_with_bonus = sum(1 for d in drivers if d.get('total_bonus', 0) > 0)
-    drivers_without_bonus = sum(1 for d in drivers if d.get('total_bonus', 0) == 0 and d.get('technician_pct') is not None)
 
     prompt = f"""Analyze this garage performance scorecard for {start_date} to {end_date}:
 
@@ -434,13 +441,10 @@ GARAGE SCORES (Totally Satisfied %):
 - Technician: {gs['technician_pct']}%
 - Kept Informed: {gs['kept_informed_pct']}%
 
-BONUS RULES (IMPORTANT — read carefully):
-- Bonuses are based ONLY on TECHNICIAN satisfaction score, NOT overall score.
-- Bonuses are calculated PER DRIVER based on each driver's INDIVIDUAL technician score.
+GARAGE-LEVEL BONUS:
+- Bonus is based on the GARAGE's overall Technician satisfaction score (not per-driver).
 - Tiers: ≥98% = $4/SA, ≥96% = $3/SA, ≥94% = $2/SA, ≥92% = $1/SA, <92% = $0.
-- Garage-wide bonus: {gs['bonus_tier']} tier → ${gs['bonus_per_sa']}/SA × {gs['total_completed']} SAs = ${gs['total_bonus']} total
-- Individual driver totals: {drivers_with_bonus} drivers earned bonuses totaling ${total_driver_bonuses:,.0f}. {drivers_without_bonus} drivers earned $0.
-- A driver can earn a bonus even if the garage average is below 92%, as long as their individual tech score is ≥92%.
+- This garage: Tech {gs['technician_pct']}% → {gs['bonus_tier']} tier → ${gs['bonus_per_sa']}/SA × {gs['total_completed']} completed SAs = ${gs['total_bonus']} total bonus.
 
 PRIMARY vs SECONDARY:
 - Primary (first assigned): {ps_p.get('total_sas',0)} SAs, {ps_p.get('completed',0)} completed, {ps_p.get('declined',0)} declined, ATA={ps_p.get('avg_ata','N/A')}m, PTA hit={ps_p.get('pta_hit_pct','N/A')}%, {ps_p.get('survey_count',0)} surveys, Tech={ps_p.get('technician_pct')}%
@@ -451,7 +455,7 @@ DRIVER BREAKDOWN:
 
 Write a 3-4 paragraph executive summary:
 1. Overall performance assessment — cite the 4 satisfaction scores. Note which are strong and which need improvement.
-2. Bonus analysis — state exactly how many drivers earned bonuses and the total dollar amount. Name the top earners with their tech scores and bonus amounts. Do NOT say "no bonuses" if individual drivers earned bonuses.
+2. Bonus analysis — state the garage-level bonus calculation. Which drivers have the highest/lowest tech scores?
 3. Which drivers are underperforming (tech score <92%) and dragging the garage average down? Name them with scores.
 4. Specific action items to improve — focus on the weakest satisfaction categories (response time, kept informed, etc.)."""
 
@@ -534,20 +538,26 @@ def api_garage_export(
     ws.append([])
     ws.append(['Metric', 'Value'])
     _style_header(ws, 4, 2)
-    ws.append(['Total Surveys', gs.get('total_surveys', 0)])
+    ws.append(['Total SAs', gs.get('total_sas', 0)])
     ws.append(['Total Completed SAs', gs.get('total_completed', 0)])
+    ws.append(['Total Surveys', gs.get('total_surveys', 0)])
+    ws.append(['Avg ATA (min)', gs.get('avg_ata')])
+    ws.append(['PTA Hit Rate %', gs.get('pta_hit_pct')])
+    ws.append([])
     ws.append(['Overall Satisfaction %', gs.get('overall_pct')])
     ws.append(['Response Time Satisfaction %', gs.get('response_time_pct')])
     ws.append(['Technician Satisfaction %', gs.get('technician_pct')])
     ws.append(['Kept Informed Satisfaction %', gs.get('kept_informed_pct')])
+    ws.append([])
     ws.append(['Bonus Tier', gs.get('bonus_tier', 'N/A')])
     ws.append(['Bonus per SA', f"${gs.get('bonus_per_sa', 0)}"])
     ws.append(['Total Garage Bonus', f"${gs.get('total_bonus', 0):,}"])
-    ws.column_dimensions['A'].width = 32
-    ws.column_dimensions['B'].width = 18
+    ws.append(['Bonus Formula', f"Garage Tech {gs.get('technician_pct', '—')}% → ${gs.get('bonus_per_sa', 0)}/SA × {gs.get('total_completed', 0)} completed"])
+    ws.column_dimensions['A'].width = 34
+    ws.column_dimensions['B'].width = 50
 
-    # Color code score cells
-    for row_num in range(7, 11):
+    # Color code satisfaction score cells
+    for row_num in range(11, 15):
         cell = ws.cell(row=row_num, column=2)
         fill = _score_fill(cell.value)
         if fill:
@@ -556,7 +566,7 @@ def api_garage_export(
     # ── Sheet 2: Driver Breakdown ──
     ws2 = wb.create_sheet('Drivers')
     headers = ['Driver', 'Surveys', 'Overall %', 'Response Time %', 'Technician %',
-               'Kept Informed %', 'Bonus Tier', '$/SA', 'Total Bonus']
+               'Kept Informed %']
     ws2.append(headers)
     _style_header(ws2, 1, len(headers))
 
@@ -565,8 +575,6 @@ def api_garage_export(
             d['name'], d['survey_count'],
             d.get('overall_pct'), d.get('response_time_pct'),
             d.get('technician_pct'), d.get('kept_informed_pct'),
-            d.get('bonus_tier', 'N/A'), d.get('bonus_per_sa', 0),
-            d.get('total_bonus', 0),
         ]
         ws2.append(row)
         row_num = ws2.max_row
@@ -587,9 +595,10 @@ def api_garage_export(
 
     # ── Sheet 3: Primary vs Secondary ──
     ws3 = wb.create_sheet('Primary vs Secondary')
-    ps_headers = ['Metric', 'Primary', 'Secondary']
+    ps_headers = ['Metric', 'Overall', 'Primary', 'Secondary']
     ws3.append(ps_headers)
-    _style_header(ws3, 1, 3)
+    _style_header(ws3, 1, 4)
+    o = ps.get('overall', {})
     p = ps.get('primary', {})
     s = ps.get('secondary', {})
     for label, key in [('Total SAs', 'total_sas'), ('Completed', 'completed'),
@@ -597,10 +606,11 @@ def api_garage_export(
                         ('PTA Hit %', 'pta_hit_pct'), ('Surveys', 'survey_count'),
                         ('Overall %', 'overall_pct'), ('Response Time %', 'response_time_pct'),
                         ('Technician %', 'technician_pct'), ('Kept Informed %', 'kept_informed_pct')]:
-        ws3.append([label, p.get(key), s.get(key)])
+        ws3.append([label, o.get(key), p.get(key), s.get(key)])
     ws3.column_dimensions['A'].width = 22
     ws3.column_dimensions['B'].width = 14
     ws3.column_dimensions['C'].width = 14
+    ws3.column_dimensions['D'].width = 14
 
     # ── Sheet 4: All Survey Details ──
     ws4 = wb.create_sheet('Survey Details')
@@ -821,3 +831,127 @@ def api_garage_export(
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
+
+
+def _build_report_html(garage_name: str, start_date: str, end_date: str, gs: dict, ps: dict, drivers: list, ai_summary: str) -> str:
+    """Build rich HTML email body for garage performance report."""
+    ov = ps.get('overall', {})
+
+    def sc(pct):
+        if pct is None: return '#999'
+        if pct >= 92: return '#34d399'
+        if pct >= 82: return '#60a5fa'
+        if pct >= 70: return '#fbbf24'
+        return '#f87171'
+
+    driver_rows = ''
+    for d in sorted(drivers, key=lambda x: x.get('survey_count', 0), reverse=True):
+        driver_rows += f"""<tr>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">{d['name']}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">{d.get('survey_count', 0)}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('overall_pct'))};font-weight:700">{d.get('overall_pct', '—')}%</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('response_time_pct'))};font-weight:700">{d.get('response_time_pct', '—')}%</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('technician_pct'))};font-weight:700">{d.get('technician_pct', '—')}%</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('kept_informed_pct'))};font-weight:700">{d.get('kept_informed_pct', '—')}%</td>
+        </tr>"""
+
+    bonus_bg = '#ecfdf5' if (gs.get('bonus_per_sa') or 0) > 0 else '#f8fafc'
+    bonus_border = '#a7f3d0' if (gs.get('bonus_per_sa') or 0) > 0 else '#e2e8f0'
+    bonus_color = '#34d399' if (gs.get('bonus_per_sa') or 0) > 0 else '#999'
+    ata_color = '#10b981' if (ov.get('avg_ata') or 999) <= 45 else '#ef4444'
+    pta_color = '#10b981' if (ov.get('pta_hit_pct') or 0) >= 80 else '#ef4444'
+
+    sat_cells = ''
+    for label, pct in [('Overall', gs.get('overall_pct')), ('Response Time', gs.get('response_time_pct')),
+                        ('Technician', gs.get('technician_pct')), ('Kept Informed', gs.get('kept_informed_pct'))]:
+        val = f"{pct}%" if pct is not None else '—'
+        sat_cells += f"""<td style="padding:10px;text-align:center;background:#f8fafc;border:1px solid #e2e8f0">
+            <div style="font-size:11px;color:#64748b">{label}</div>
+            <div style="font-size:24px;font-weight:800;color:{sc(pct)}">{val}</div>
+        </td>"""
+
+    summary_html = (ai_summary or 'No AI summary available.').replace('\n', '<br>')
+
+    return f"""<div style="font-family:Segoe UI,Arial,sans-serif;max-width:700px;color:#1e293b">
+        <h2 style="margin:0 0 4px;color:#0f172a">{garage_name}</h2>
+        <p style="margin:0 0 20px;color:#64748b;font-size:13px">Performance Report — {start_date} to {end_date}</p>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px">
+            <h3 style="margin:0 0 8px;color:#7c3aed;font-size:14px">Executive Summary</h3>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:#334155">{summary_html}</p>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px"><tr>
+            <td style="padding:10px;text-align:center;background:#f1f5f9"><div style="font-size:22px;font-weight:800;color:#0f172a">{ov.get('total_sas', 0)}</div><div style="font-size:11px;color:#64748b">Total SAs</div></td>
+            <td style="padding:10px;text-align:center;background:#f1f5f9"><div style="font-size:22px;font-weight:800;color:#10b981">{ov.get('completed', 0)}</div><div style="font-size:11px;color:#64748b">Completed</div></td>
+            <td style="padding:10px;text-align:center;background:#f1f5f9"><div style="font-size:22px;font-weight:800;color:#ef4444">{ov.get('declined', 0)}</div><div style="font-size:11px;color:#64748b">Declined</div></td>
+            <td style="padding:10px;text-align:center;background:#f1f5f9"><div style="font-size:18px;font-weight:700;color:{ata_color}">{str(ov['avg_ata']) + 'm' if ov.get('avg_ata') is not None else '—'}</div><div style="font-size:11px;color:#64748b">Avg ATA</div></td>
+            <td style="padding:10px;text-align:center;background:#f1f5f9"><div style="font-size:18px;font-weight:700;color:{pta_color}">{str(ov['pta_hit_pct']) + '%' if ov.get('pta_hit_pct') is not None else '—'}</div><div style="font-size:11px;color:#64748b">PTA Hit Rate</div></td>
+        </tr></table>
+        <h3 style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:1px">Satisfaction Scores (Totally Satisfied %)</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px"><tr>{sat_cells}</tr></table>
+        <div style="background:{bonus_bg};border:1px solid {bonus_border};border-radius:8px;padding:12px;margin-bottom:16px">
+            <span style="font-size:13px;font-weight:700;color:{bonus_color}">Garage Bonus: Tech {gs.get('technician_pct', '—')}% → ${gs.get('bonus_per_sa', 0)}/SA × {gs.get('total_completed', 0)} completed = ${gs.get('total_bonus', 0)}</span>
+        </div>
+        <h3 style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:1px">Driver Breakdown ({len(drivers)} drivers)</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
+            <tr style="background:#1e293b;color:#fff">
+                <th style="padding:8px 10px;text-align:left">Driver</th>
+                <th style="padding:8px 10px;text-align:center">Surveys</th>
+                <th style="padding:8px 10px;text-align:center">Overall</th>
+                <th style="padding:8px 10px;text-align:center">Resp Time</th>
+                <th style="padding:8px 10px;text-align:center">Technician</th>
+                <th style="padding:8px 10px;text-align:center">Informed</th>
+            </tr>
+            {driver_rows}
+        </table>
+        <p style="font-size:11px;color:#94a3b8;margin:16px 0 0">Generated by <strong style="color:#6366f1">FleetPulse</strong> · {gs.get('total_surveys', 0)} surveys · {start_date} to {end_date}</p>
+        <p style="font-size:10px;color:#64748b;margin:2px 0 0">@NourLaaroubi</p>
+    </div>"""
+
+
+@router.post("/api/garages/{territory_id}/performance-scorecard/email")
+def api_garage_email_report(
+    territory_id: str,
+    body: dict,
+):
+    """Send garage performance report via email."""
+    import requests as _req
+
+    territory_id = sanitize_soql(territory_id)
+    to_email = body.get('to', '')
+    start_date = body.get('start_date')
+    end_date = body.get('end_date')
+    garage_name = body.get('garage_name', '')
+
+    if not to_email or '@' not in to_email:
+        raise HTTPException(400, "Valid email address required")
+
+    # Get scorecard + AI summary
+    scorecard = api_garage_performance_scorecard(territory_id, start_date, end_date)
+    gs = scorecard['garage_summary']
+    ps = scorecard['primary_vs_secondary']
+    drivers = scorecard['drivers']
+
+    # Get AI summary (may already be cached)
+    ai_result = api_garage_ai_summary(territory_id, start_date, end_date)
+    ai_summary = ai_result.get('summary', '')
+
+    html = _build_report_html(garage_name, start_date, end_date, gs, ps, drivers, ai_summary)
+    subject = f"{garage_name} Performance Report — {start_date} to {end_date}"
+
+    # Send via AgentMail
+    agentmail_key = os.environ.get('AGENTMAIL_API_KEY', '')
+    agentmail_inbox = os.environ.get('AGENTMAIL_INBOX', 'fslnyaaa@agentmail.to')
+    if not agentmail_key:
+        raise HTTPException(500, "Email service not configured (AGENTMAIL_API_KEY)")
+
+    resp = _req.post(
+        f"https://api.agentmail.to/v0/inboxes/{agentmail_inbox}/messages/send",
+        headers={"Authorization": f"Bearer {agentmail_key}", "Content-Type": "application/json"},
+        json={"to": [to_email], "subject": subject, "html": html},
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        log.warning(f"Email send failed: {resp.status_code} {resp.text}")
+        raise HTTPException(500, f"Failed to send email: {resp.text[:200]}")
+
+    return {"status": "sent", "to": to_email}

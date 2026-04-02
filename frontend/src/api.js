@@ -74,6 +74,9 @@ export const exportGarageScorecard = (id, startDate, endDate) => {
   a.remove()
 }
 
+export const emailGarageReport = (id, to, startDate, endDate, garageName) =>
+  api.post(`/garages/${id}/performance-scorecard/email`, { to, start_date: startDate, end_date: endDate, garage_name: garageName }).then(r => r.data)
+
 // Dispatch Insights Drill-Down (lazy, on-demand)
 export const fetchReassignmentDetail = () => api.get('/insights/reassignment-detail').then(r => r.data)
 export const fetchDispatcherDetail = (name) => api.get(`/insights/dispatcher-detail/${encodeURIComponent(name)}`).then(r => r.data)

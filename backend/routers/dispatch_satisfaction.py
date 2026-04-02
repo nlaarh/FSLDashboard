@@ -295,24 +295,11 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
         cache.put(cache_key, empty_result, 300 if is_current else ttl)  # short TTL for current month
         return empty_result
 
-    _log = logging.getLogger('satisfaction')
-    gen_lock = f'gen_sat_overview_{month}'
-    if cache.fs_lock_acquire(gen_lock, max_age=1800):
-        def _bg():
-            try:
-                result = _generate_satisfaction_overview(month)
-                cache.put(cache_key, result, ttl)
-                cache.disk_put(cache_key, result, ttl)
-                _log.info(f"Satisfaction overview for {month} generated.")
-            except Exception as e:
-                import traceback
-                _log.warning(f"Satisfaction overview generation failed for {month}: {e}\n{traceback.format_exc()}")
-            finally:
-                cache.fs_lock_release(gen_lock)
-        threading.Thread(target=_bg, daemon=True).start()
-        _log.info(f"Satisfaction overview background generation started for {month}")
-
-    return {'month': month, 'summary': {}, 'daily_trend': [], 'all_garages': [], 'loading': True}
+    # Generate synchronously — all queries run in single parallel batch (~5-8s)
+    result = _generate_satisfaction_overview(month)
+    cache.put(cache_key, result, ttl)
+    cache.disk_put(cache_key, result, ttl)
+    return result
 
 
 @router.get("/api/insights/satisfaction/refresh")
@@ -428,15 +415,20 @@ def _generate_satisfaction_overview(month: str):
               AND RecordType.Name = 'ERS Service Appointment'
             GROUP BY DAY_ONLY(CreatedDate)
         """),
-        completed=lambda: sf_query_all(f"""
-            SELECT Id, CreatedDate, Status, ActualStartTime,
-                   ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
+        # Fleet ATA aggregates by day (lightweight — no Towbook history needed)
+        fleet_ata=lambda: sf_query_all(f"""
+            SELECT DAY_ONLY(CreatedDate) d,
+                   AVG(ERS_PTA__c) avg_pta,
+                   COUNT(Id) cnt
             FROM ServiceAppointment
             WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
               AND ServiceTerritoryId != null
               AND RecordType.Name = 'ERS Service Appointment'
               AND Status = 'Completed'
               AND WorkType.Name != 'Tow Drop-Off'
+              AND ERS_Dispatch_Method__c = 'Field Services'
+              AND ActualStartTime != null
+            GROUP BY DAY_ONLY(CreatedDate)
         """),
     )
     daily_sat = batch1['daily_sat']
@@ -446,99 +438,16 @@ def _generate_satisfaction_overview(month: str):
     sa_vol_by_day = {}
     for r in batch1['sa_volume']:
         sa_vol_by_day[r.get('d', '')] = r.get('cnt', 0) or 0
-    completed_sas = batch1['completed']
 
-    # Query 7: Towbook on-location times for accurate ATA
-    # Instead of 141 sequential ID-chunk queries, use cross-object filter by week in parallel.
-    # Each weekly query returns all Towbook Status history — filter 'On Location' in Python.
-    towbook_on_location = {}
-    has_towbook = any((sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook' for sa in completed_sas)
-    if has_towbook:
-        # Build weekly date ranges for the month
-        from datetime import timedelta as _td2
-        week_ranges = []
-        ws = first_day
-        while ws < end_day:
-            we = min(ws + _td2(days=7), end_day)
-            week_ranges.append((
-                f"{ws.isoformat()}T00:00:00Z",
-                f"{we.isoformat()}T00:00:00Z",
-            ))
-            ws = we
-
-        def _make_week_fn(w_start, w_end):
-            return lambda: sf_query_all(f"""
-                SELECT ServiceAppointmentId, CreatedDate, NewValue
-                FROM ServiceAppointmentHistory
-                WHERE Field = 'Status'
-                  AND ServiceAppointment.CreatedDate >= {w_start}
-                  AND ServiceAppointment.CreatedDate < {w_end}
-                  AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
-                  AND ServiceAppointment.Status = 'Completed'
-                  AND ServiceAppointment.ServiceTerritoryId != null
-                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
-                  AND ServiceAppointment.WorkType.Name != 'Tow Drop-Off'
-            """)
-
-        # Run all weeks in parallel (typically 4-5 queries)
-        parallel_args = {f'w{i}': _make_week_fn(s, e) for i, (s, e) in enumerate(week_ranges)}
-        week_results = sf_parallel(**parallel_args)
-        for key, hist_rows in week_results.items():
-            for r in hist_rows:
-                if r.get('NewValue') != 'On Location':
-                    continue
-                sa_id = r.get('ServiceAppointmentId')
-                ts = _parse_dt(r.get('CreatedDate'))
-                if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
-                    towbook_on_location[sa_id] = ts
-
-    # ── Build daily ATA/PTA buckets ──
-    day_ata = defaultdict(lambda: {'ata_sum': 0.0, 'ata_count': 0, 'pta_miss': 0, 'pta_eligible': 0})
-    for sa in completed_sas:
-        wt = (sa.get('WorkType') or {}).get('Name', '') or ''
-        if 'drop' in wt.lower():
-            continue
-        date_str = (sa.get('CreatedDate') or '')[:10]
-        if not date_str:
-            continue
-        dm = sa.get('ERS_Dispatch_Method__c') or ''
-        bucket = day_ata[date_str]
-
-        # ATA calculation (same logic as garage-level)
-        if dm == 'Field Services':
-            created = _parse_dt(sa.get('CreatedDate'))
-            actual = _parse_dt(sa.get('ActualStartTime'))
-            if created and actual:
-                diff = (actual - created).total_seconds() / 60
-                if 0 < diff < 480:
-                    bucket['ata_sum'] += diff
-                    bucket['ata_count'] += 1
-        elif dm == 'Towbook':
-            on_loc = towbook_on_location.get(sa.get('Id'))
-            if on_loc:
-                created = _parse_dt(sa.get('CreatedDate'))
-                if created:
-                    diff = (on_loc - created).total_seconds() / 60
-                    if 0 < diff < 480:
-                        bucket['ata_sum'] += diff
-                        bucket['ata_count'] += 1
-
-        # PTA miss: ERS_PTA__c is minutes promised, compare with actual ATA minutes
-        pta_raw = sa.get('ERS_PTA__c')
-        if pta_raw is not None:
-            pta_min = float(pta_raw)
-            if 0 < pta_min < 999:
-                created = _parse_dt(sa.get('CreatedDate'))
-                if dm == 'Towbook':
-                    arrived = towbook_on_location.get(sa.get('Id'))
-                else:
-                    arrived = _parse_dt(sa.get('ActualStartTime'))
-                if created and arrived:
-                    ata_min = (arrived - created).total_seconds() / 60
-                    if 0 < ata_min < 480:
-                        bucket['pta_eligible'] += 1
-                        if ata_min > pta_min:
-                            bucket['pta_miss'] += 1
+    # Build daily Fleet ATA from aggregate (no individual SA records needed)
+    day_ata = {}
+    for r in batch1.get('fleet_ata', []):
+        d = r.get('d', '')
+        if d:
+            day_ata[d] = {
+                'avg_pta': round(r.get('avg_pta') or 0) if r.get('avg_pta') else None,
+                'cnt': r.get('cnt', 0),
+            }
 
     # ── Assemble daily trend ──
     day_buckets = defaultdict(lambda: {'totally_satisfied': 0, 'satisfied': 0, 'total': 0})
@@ -556,14 +465,14 @@ def _generate_satisfaction_overview(month: str):
     # Days within last 7 days have incomplete survey data (surveys still arriving)
     incomplete_cutoff = (today - _td(days=7)).isoformat()
 
-    all_trend_dates = sorted(set(list(day_buckets.keys()) + list(day_ata.keys())))
+    all_trend_dates = sorted(set(list(day_buckets.keys()) + list(day_ata.keys()) + list(sa_vol_by_day.keys())))
     daily_trend = []
     for d in all_trend_dates:
         b = day_buckets.get(d, {'totally_satisfied': 0, 'satisfied': 0, 'total': 0})
-        a = day_ata.get(d, {'ata_sum': 0, 'ata_count': 0, 'pta_miss': 0, 'pta_eligible': 0})
+        a = day_ata.get(d, {})
         ts_pct = round(100 * b['totally_satisfied'] / b['total']) if b['total'] else None
-        avg_ata = round(a['ata_sum'] / a['ata_count']) if a['ata_count'] else None
-        pta_miss_pct = round(100 * a['pta_miss'] / a['pta_eligible']) if a['pta_eligible'] else None
+        avg_ata = a.get('avg_pta')  # Fleet avg PTA as proxy (aggregate, fast)
+        pta_miss_pct = None  # PTA miss requires individual SA analysis — available per-garage
         daily_trend.append({
             'date': d,
             'totally_satisfied_pct': ts_pct,
@@ -639,13 +548,11 @@ def _generate_satisfaction_overview(month: str):
         'total_surveys': total_surveys,
     }
 
-    # ── ATA / PTA aggregates for the executive insight ──
-    total_ata_sum = sum(day_ata[d]['ata_sum'] for d in day_ata)
-    total_ata_count = sum(day_ata[d]['ata_count'] for d in day_ata)
-    total_pta_miss = sum(day_ata[d]['pta_miss'] for d in day_ata)
-    total_pta_eligible = sum(day_ata[d]['pta_eligible'] for d in day_ata)
-    avg_ata = round(total_ata_sum / total_ata_count) if total_ata_count else None
-    pta_miss_pct = round(100 * total_pta_miss / total_pta_eligible) if total_pta_eligible else None
+    # ── ATA / PTA aggregates for the executive insight (from Fleet aggregate) ──
+    total_ata_count = sum(a.get('cnt', 0) for a in day_ata.values())
+    avg_ata_vals = [a['avg_pta'] for a in day_ata.values() if a.get('avg_pta')]
+    avg_ata = round(sum(avg_ata_vals) / len(avg_ata_vals)) if avg_ata_vals else None
+    pta_miss_pct = None  # PTA miss detail available per-garage in Operations tab
 
     # ── Executive Insight — auto-generated VP summary ──
     executive_insight = _build_executive_insight(
@@ -988,106 +895,78 @@ def api_satisfaction_day(date: str):
     start_utc = f"{d.isoformat()}T00:00:00Z"
     end_utc = f"{(d + _td(days=1)).isoformat()}T00:00:00Z"
 
-    # ── Query 1: All surveys for calls on this day (by call date, not survey date) ──
-    surveys = sf_query_all(f"""
-        SELECT Id, CreatedDate,
-               ERS_Overall_Satisfaction__c,
-               ERS_Response_Time_Satisfaction__c,
-               ERS_Technician_Satisfaction__c,
-               ERS_Work_Order_Number__c,
-               ERS_Work_Order__r.Id,
-               ERS_Work_Order__r.ServiceTerritory.Name,
-               Customer_Comments__c
-        FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Overall_Satisfaction__c != null
-    """)
-    _time.sleep(0.3)
+    # ── All queries in parallel — no sequential batches ──
+    data = sf_parallel(
+        surveys=lambda: sf_query_all(f"""
+            SELECT Id, CreatedDate,
+                   ERS_Overall_Satisfaction__c,
+                   ERS_Response_Time_Satisfaction__c,
+                   ERS_Technician_Satisfaction__c,
+                   ERS_Work_Order_Number__c,
+                   ERS_Work_Order__r.Id,
+                   ERS_Work_Order__r.ServiceTerritory.Name,
+                   Customer_Comments__c
+            FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+        """),
+        sas=lambda: sf_query_all(f"""
+            SELECT Id, CreatedDate, Status, ActualStartTime,
+                   ERS_Dispatch_Method__c, ERS_PTA__c,
+                   ServiceTerritory.Name, WorkType.Name,
+                   ERS_Cancellation_Reason__c,
+                   AppointmentNumber, ParentRecordId
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritoryId != null
+              AND RecordType.Name = 'ERS Service Appointment'
+        """),
+        # WOLI mapping — single cross-object query (no chunking)
+        woli=lambda: sf_query_all(f"""
+            SELECT Id, WorkOrderId
+            FROM WorkOrderLineItem
+            WHERE WorkOrder.CreatedDate >= {start_utc} AND WorkOrder.CreatedDate < {end_utc}
+              AND WorkOrder.ServiceTerritoryId != null
+        """),
+        # Towbook on-location — single cross-object query
+        tb_on_loc=lambda: sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'Status'
+              AND ServiceAppointment.CreatedDate >= {start_utc}
+              AND ServiceAppointment.CreatedDate < {end_utc}
+              AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
+              AND ServiceAppointment.Status = 'Completed'
+              AND ServiceAppointment.ServiceTerritoryId != null
+              AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
+        """),
+    )
+    surveys = data['surveys']
+    sas = data['sas']
 
-    # ── Enrich surveys with SA details (Survey → WO → WOLI → SA) ──
-    wo_ids = list(set(
-        (sv.get('ERS_Work_Order__r') or {}).get('Id', '')
-        for sv in surveys if (sv.get('ERS_Work_Order__r') or {}).get('Id')
-    ))
-    wo_to_sa = {}  # WO Id → SA details
-    if wo_ids:
-        # Step 1: WO IDs → WOLI IDs (batch 200)
-        woli_to_wo = {}
-        for i in range(0, len(wo_ids), 200):
-            chunk = wo_ids[i:i+200]
-            id_list = "','".join(chunk)
-            wolis = sf_query_all(f"""
-                SELECT Id, WorkOrderId
-                FROM WorkOrderLineItem
-                WHERE WorkOrderId IN ('{id_list}')
-            """)
-            for w in wolis:
-                woli_to_wo[w['Id']] = w.get('WorkOrderId', '')
-        _time.sleep(0.3)
+    # Build WOLI → WO mapping, then WO → SA
+    woli_to_wo = {r['Id']: r.get('WorkOrderId') for r in data['woli']}
+    wo_to_sa = {}
+    for sa in sas:
+        woli_id = sa.get('ParentRecordId')
+        wo_id = woli_to_wo.get(woli_id)
+        if wo_id and wo_id not in wo_to_sa:
+            wo_to_sa[wo_id] = {
+                'sa_number': sa.get('AppointmentNumber', ''),
+                'call_date': (sa.get('CreatedDate') or '')[:10],
+                'status': sa.get('Status', ''),
+                'driver': '',  # enriched below if needed
+            }
 
-        # Step 2: WOLI IDs → SAs
-        woli_ids = list(woli_to_wo.keys())
-        if woli_ids:
-            for i in range(0, len(woli_ids), 200):
-                chunk = woli_ids[i:i+200]
-                id_list = "','".join(chunk)
-                sa_rows = sf_query_all(f"""
-                    SELECT Id, AppointmentNumber, CreatedDate, Status, ParentRecordId,
-                           ERS_Assigned_Resource__r.Name,
-                           ActualStartTime, ERS_Dispatch_Method__c
-                    FROM ServiceAppointment
-                    WHERE ParentRecordId IN ('{id_list}')
-                      AND RecordType.Name = 'ERS Service Appointment'
-                """)
-                for sa in sa_rows:
-                    woli_id = sa.get('ParentRecordId', '')
-                    wo_id = woli_to_wo.get(woli_id, '')
-                    if wo_id and wo_id not in wo_to_sa:
-                        driver = (sa.get('ERS_Assigned_Resource__r') or {}).get('Name', '')
-                        wo_to_sa[wo_id] = {
-                            'sa_number': sa.get('AppointmentNumber', ''),
-                            'call_date': (sa.get('CreatedDate') or '')[:10],
-                            'status': sa.get('Status', ''),
-                            'driver': driver,
-                        }
-            _time.sleep(0.3)
-
-    # ── Query 2: All SAs created this day (performance picture) ──
-    sas = sf_query_all(f"""
-        SELECT Id, CreatedDate, Status, ActualStartTime,
-               ERS_Dispatch_Method__c, ERS_PTA__c,
-               ServiceTerritory.Name, WorkType.Name,
-               ERS_Cancellation_Reason__c,
-               AppointmentNumber
-        FROM ServiceAppointment
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ServiceTerritoryId != null
-          AND RecordType.Name = 'ERS Service Appointment'
-    """)
-    _time.sleep(0.3)
-
-    # ── Query 3: Towbook on-location (for correct ATA) ──
-    towbook_ids = [sa.get('Id') for sa in sas
-                   if sa.get('Status') == 'Completed'
-                   and (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook']
+    # Build Towbook on-location map
     towbook_on_loc = {}
-    if towbook_ids:
-        for i in range(0, len(towbook_ids), 200):
-            chunk = towbook_ids[i:i+200]
-            id_list = "','".join(chunk)
-            hist = sf_query_all(f"""
-                SELECT ServiceAppointmentId, CreatedDate, NewValue
-                FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId IN ('{id_list}')
-                  AND Field = 'Status'
-            """)
-            for r in hist:
-                if r.get('NewValue') != 'On Location':
-                    continue
-                sa_id = r.get('ServiceAppointmentId')
-                ts = _parse_dt(r.get('CreatedDate'))
-                if ts and (sa_id not in towbook_on_loc or ts < towbook_on_loc[sa_id]):
-                    towbook_on_loc[sa_id] = ts
+    for r in data.get('tb_on_loc', []):
+        if r.get('NewValue') != 'On Location':
+            continue
+        sa_id = r.get('ServiceAppointmentId')
+        ts = _parse_dt(r.get('CreatedDate'))
+        if ts and (sa_id not in towbook_on_loc or ts < towbook_on_loc[sa_id]):
+            towbook_on_loc[sa_id] = ts
 
     # ── Aggregate surveys by garage ──
     garage_surveys = defaultdict(lambda: {

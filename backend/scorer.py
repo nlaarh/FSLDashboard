@@ -8,8 +8,8 @@ from datetime import datetime, date, timedelta
 from collections import defaultdict
 
 from utils import parse_dt as _parse_dt, is_fleet_territory
-from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
-from cache import cached_query
+from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from cache import cached_query_persistent
 
 # ── Dimension weights ────────────────────────────────────────────────────────
 DIMENSIONS = {
@@ -95,13 +95,25 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
                   AND ERS_Facility_Decline_Reason__c != null
                   AND WorkType.Name != 'Tow Drop-Off'
             """),
-            # WO numbers for surveys (limited to 1000 most recent)
-            wo_nums=lambda: sf_query_all(f"""
-                SELECT WorkOrderNumber FROM WorkOrder
-                WHERE ServiceTerritoryId = '{territory_id}'
-                  AND CreatedDate >= {since}
-                ORDER BY CreatedDate DESC
-                LIMIT 1000
+            # Towbook on-location (single cross-object query, no chunking)
+            tb_on_loc=lambda: sf_query_all(f"""
+                SELECT ServiceAppointmentId, CreatedDate, NewValue
+                FROM ServiceAppointmentHistory
+                WHERE Field = 'Status'
+                  AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
+                  AND ServiceAppointment.CreatedDate >= {since}
+                  AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
+                  AND ServiceAppointment.Status = 'Completed'
+                  AND ServiceAppointment.WorkType.Name != 'Tow Drop-Off'
+            """),
+            # Survey satisfaction (aggregate — no WO lookup needed)
+            surveys=lambda: sf_query_all(f"""
+                SELECT ERS_Overall_Satisfaction__c, COUNT(Id) cnt
+                FROM Survey_Result__c
+                WHERE ERS_Work_Order__r.ServiceTerritoryId = '{territory_id}'
+                  AND ERS_Work_Order__r.CreatedDate >= {since}
+                  AND ERS_Overall_Satisfaction__c != null
+                GROUP BY ERS_Overall_Satisfaction__c
             """),
         )
 
@@ -125,10 +137,13 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         tb_count = sum(1 for s in completed_sas if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook')
         is_towbook = not _is_fleet and tb_count > len(completed_sas) * 0.5
 
-        # Fetch real on-location timestamps for Towbook SAs
-        towbook_ids = [s['Id'] for s in completed_sas
-                       if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook' and s.get('Id')]
-        towbook_on_loc = get_towbook_on_location(towbook_ids) if towbook_ids else {}
+        # Build Towbook on-location map from parallel query result
+        towbook_on_loc = {}
+        for r in data.get('tb_on_loc', []):
+            if r.get('NewValue') == 'On Location':
+                sid = r.get('ServiceAppointmentId')
+                if sid and sid not in towbook_on_loc:
+                    towbook_on_loc[sid] = r['CreatedDate']
 
         response_times = []
         for s in completed_sas:
@@ -210,30 +225,18 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
         decline_count = data['declines'][0].get('cnt', 0) if data['declines'] else 0
         decline_rate = decline_count / max(total, 1)
 
-        # Satisfaction — use WO numbers from parallel query (single batch, max 500)
+        # Satisfaction — from parallel survey query (no WO lookup needed)
         satisfaction_rate = None
         total_surveys = 0
         totally_satisfied = 0
-        wo_nums = [r.get('WorkOrderNumber') for r in data.get('wo_nums', []) if r.get('WorkOrderNumber')]
-        if wo_nums:
-            num_list = ",".join(f"'{w}'" for w in wo_nums[:500])
-            try:
-                all_surveys = sf_query_all(f"""
-                    SELECT ERS_Overall_Satisfaction__c, COUNT(Id) cnt
-                    FROM Survey_Result__c
-                    WHERE ERS_Work_Order_Number__c IN ({num_list})
-                    GROUP BY ERS_Overall_Satisfaction__c
-                """)
-                for sv in all_surveys:
-                    sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower()
-                    cnt = sv.get('cnt', 1)
-                    total_surveys += cnt
-                    if sat == 'totally satisfied':
-                        totally_satisfied += cnt
-                if total_surveys > 0:
-                    satisfaction_rate = totally_satisfied / total_surveys
-            except Exception:
-                pass  # Score still works without satisfaction
+        for sv in data.get('surveys', []):
+            sat = (sv.get('ERS_Overall_Satisfaction__c') or '').lower()
+            cnt = sv.get('cnt', 1)
+            total_surveys += cnt
+            if sat == 'totally satisfied':
+                totally_satisfied += cnt
+        if total_surveys > 0:
+            satisfaction_rate = totally_satisfied / total_surveys
 
         # Score each dimension
         actuals = {
@@ -320,4 +323,4 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
             },
         }
 
-    return cached_query(cache_key, _compute, ttl=1800)  # 30 min — historical data doesn't change fast
+    return cached_query_persistent(cache_key, _compute, ttl=1800)  # 30 min — historical data doesn't change fast

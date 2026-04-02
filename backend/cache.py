@@ -13,11 +13,14 @@ Key behaviors:
 4. Persistent disk cache: Survives restarts and redeployments (Azure /home is durable storage).
 """
 
-import time, logging, json, os
+import time, logging, json, os, shutil
 from threading import Lock, Event
 from pathlib import Path
 
 log = logging.getLogger('cache')
+
+# ── Cache version — bump this when response shapes change to auto-invalidate ──
+CACHE_VERSION = 'v4'
 
 _store = {}
 _lock = Lock()
@@ -28,8 +31,19 @@ DEFAULT_TTL = 300  # 5 minutes
 # On Azure App Service, /home is backed by Azure Storage and persists across
 # restarts AND redeployments. Locally, use ~/.fslapp/cache.
 _ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
-_DISK_DIR = Path('/home/fslapp/cache') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/cache'))
+_BASE_DIR = Path('/home/fslapp/cache') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/cache'))
+_DISK_DIR = _BASE_DIR / CACHE_VERSION
 _DISK_DIR.mkdir(parents=True, exist_ok=True)
+
+# Clean up old version directories on startup
+for old_dir in _BASE_DIR.iterdir():
+    if old_dir.is_dir() and old_dir.name != CACHE_VERSION and old_dir.name.startswith('v'):
+        shutil.rmtree(old_dir, ignore_errors=True)
+        log.info(f"Purged old cache version: {old_dir.name}")
+# Also clean up old flat .json files from pre-versioned cache
+for old_file in _BASE_DIR.glob('*.json'):
+    old_file.unlink(missing_ok=True)
+    log.info(f"Purged pre-versioned cache file: {old_file.name}")
 
 
 # ── L1: In-process memory cache ─────────────────────────────────────────────

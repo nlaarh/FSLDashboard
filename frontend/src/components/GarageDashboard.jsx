@@ -6,7 +6,7 @@ import {
 import { clsx } from 'clsx'
 import {
   CheckCircle2, XCircle, Clock, AlertTriangle, Target, Activity,
-  ArrowRight, ChevronLeft, ChevronRight, Award, Truck, Loader2, Zap,
+  ArrowRight, ChevronLeft, ChevronRight, Award, Truck, Loader2, Zap, RefreshCw,
 } from 'lucide-react'
 import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from '../api'
 import GaragePerformance from './GaragePerformance'
@@ -246,12 +246,16 @@ function PeriodSelector({ periodType, setPeriodType, dayDate, setDayDate, weekOf
 
 export default function GarageDashboard({ garageId, garageName }) {
   // ── Shared date range (used by all tabs)
-  // Default to last 30 days so there's always data
+  // Default to last month (always has full data). If today is past the 5th, use current month instead.
   const today = new Date()
-  const thirtyDaysAgo = new Date(today)
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-  const [startDate, setStartDate] = useState(thirtyDaysAgo.toISOString().slice(0, 10))
-  const [endDate, setEndDate] = useState(today.toISOString().slice(0, 10))
+  const defaultStart = today.getDate() > 5
+    ? new Date(today.getFullYear(), today.getMonth(), 1)
+    : new Date(today.getFullYear(), today.getMonth() - 1, 1)
+  const defaultEnd = today.getDate() > 5
+    ? today
+    : new Date(today.getFullYear(), today.getMonth(), 0)  // last day of previous month
+  const [startDate, setStartDate] = useState(defaultStart.toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(defaultEnd.toISOString().slice(0, 10))
 
   // Legacy period compat — Overview endpoints use start/end
   const start = startDate
@@ -269,6 +273,7 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [scoreError, setScoreError] = useState(null)
   const [activeDef, setActiveDef] = useState(null)  // which metric tooltip is open
   const [activeTab, setActiveTab] = useState('performance')  // performance | overview
+  const [refreshKey, setRefreshKey] = useState(0)  // bump to force all data refresh
 
   // ── Load performance (period-dependent)
   useEffect(() => {
@@ -281,7 +286,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       .catch(e => { if (!ignore) setError(e.response?.data?.detail || e.message) })
       .finally(() => { if (!ignore) setLoading(p => ({ ...p, perf: false })) })
     return () => { ignore = true }
-  }, [garageId, start, end])
+  }, [garageId, start, end, refreshKey])
 
   // ── Load decomposition (period-dependent)
   useEffect(() => {
@@ -294,7 +299,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       .catch(e => { if (!ignore) { console.error('Decomposition fetch failed:', e); setDecompError(e.response?.data?.detail || e.message || 'Failed to load') } })
       .finally(() => { if (!ignore) setLoading(p => ({ ...p, decomp: false })) })
     return () => { ignore = true }
-  }, [garageId, start, end])
+  }, [garageId, start, end, refreshKey])
 
   // ── Load scorecard + score (once, not period-dependent)
   useEffect(() => {
@@ -320,7 +325,7 @@ export default function GarageDashboard({ garageId, garageName }) {
   return (
     <div className="space-y-5">
 
-      {/* ═══ DATE RANGE + TAB BAR ════════════════════════════════════════════ */}
+      {/* ═══ TAB BAR + DATE PILLS + CUSTOM RANGE ══════════════════════════════ */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
           {[['performance', 'Performance'], ['operations', 'Operations']].map(([key, label]) => (
@@ -332,18 +337,48 @@ export default function GarageDashboard({ garageId, garageName }) {
             </button>
           ))}
         </div>
+        {/* Month pills */}
+        <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
+          {(() => {
+            const t = new Date()
+            const todayStr = t.toISOString().slice(0, 10)
+            const pills = []
+            for (let i = 0; i <= t.getMonth(); i++) {
+              const s = new Date(t.getFullYear(), i, 1).toISOString().slice(0, 10)
+              const e = i === t.getMonth() ? todayStr : new Date(t.getFullYear(), i + 1, 0).toISOString().slice(0, 10)
+              const label = new Date(t.getFullYear(), i, 1).toLocaleDateString('en-US', { month: 'short' })
+              pills.push({ label, s, e })
+            }
+            return pills.map(p => (
+              <button key={p.label}
+                onClick={() => { setStartDate(p.s); setEndDate(p.e) }}
+                className={clsx('px-2.5 py-1.5 rounded-md text-[10px] font-medium transition',
+                  startDate === p.s && endDate === p.e
+                    ? 'bg-brand-600/30 text-brand-400 border border-brand-500/30'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50')}>
+                {p.label}
+              </button>
+            ))
+          })()}
+        </div>
+        {/* Custom date range */}
         <div className="flex items-center gap-2">
           <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
             className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
           <span className="text-slate-600 text-xs">to</span>
           <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
+          <button onClick={() => setRefreshKey(k => k + 1)}
+            title="Force refresh all data"
+            className="p-1.5 rounded-lg hover:bg-slate-800/50 text-slate-500 hover:text-white transition">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
       {/* ═══ PERFORMANCE TAB ══════════════════════════════════════════════════ */}
       {activeTab === 'performance' && (
-        <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} />
+        <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} refreshKey={refreshKey} />
       )}
 
       {/* ═══ OPERATIONS TAB ═════════════════════════════════════════════════ */}
