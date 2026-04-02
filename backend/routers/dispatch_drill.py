@@ -7,11 +7,13 @@ from fastapi import APIRouter, HTTPException
 
 from utils import parse_dt as _parse_dt, is_fleet_territory, haversine as _haversine
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_batch import batch_soql_query
 from dispatch_utils import fetch_gps_history, gps_at_time, parse_assign_events, classify_dispatch
 from dispatch import (
     get_live_queue, recommend_drivers, get_cascade_status,
-    get_forecast, _classify_worktype, _driver_tier, _can_cover,
+    _classify_worktype, _driver_tier, _can_cover,
 )
+from dispatch_decomposition import get_forecast
 import cache
 
 from routers.dispatch_shared import _ET, _today_start_utc, _fmt_et, _sa_row
@@ -216,15 +218,12 @@ def api_reassignment_detail():
         if bounced_sas:
             bounced_ids = [b['sa_id'] for b in bounced_sas if b.get('sa_id')]
             driver_info = {}
-            for i in range(0, len(bounced_ids), 150):
-                batch = bounced_ids[i:i + 150]
-                id_str = "','".join(batch)
-                extras = sf_query_all(f"""
+            extras = batch_soql_query("""
                     SELECT Id, Off_Platform_Driver__r.Name, ERS_Dispatch_Method__c
                     FROM ServiceAppointment
-                    WHERE Id IN ('{id_str}')
-                """)
-                for e in extras:
+                    WHERE Id IN ('{id_list}')
+                """, bounced_ids, chunk_size=150)
+            for e in extras:
                     drv = (e.get('Off_Platform_Driver__r') or {}).get('Name')
                     driver_info[e['Id']] = {
                         'off_platform_driver': drv or '',
@@ -268,25 +267,21 @@ def api_human_intervention():
         # means the resource changed at least once after initial assignment.
         hist_count: dict[str, int] = {}    # sa_id -> total SAHistory rows for field
         human_sas: dict[str, str] = {}     # sa_id -> dispatcher name (first human found)
-        batch_size = 150
-        for i in range(0, len(sa_ids), batch_size):
-            batch = sa_ids[i:i + batch_size]
-            id_str = "','".join(batch)
-            rows = sf_query_all(f"""
+        rows = batch_soql_query("""
                 SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId IN ('{id_str}')
+                WHERE ServiceAppointmentId IN ('{id_list}')
                   AND Field = 'ERS_Assigned_Resource__c'
-            """)
-            for r in rows:
-                sa_id = r.get('ServiceAppointmentId')
-                if not sa_id:
-                    continue
-                hist_count[sa_id] = hist_count.get(sa_id, 0) + 1
-                cb = r.get('CreatedBy') or {}
-                profile = (cb.get('Profile') or {}).get('Name', '')
-                if profile == 'Membership User' and sa_id not in human_sas:
-                    human_sas[sa_id] = cb.get('Name', '?')
+            """, sa_ids, chunk_size=150)
+        for r in rows:
+            sa_id = r.get('ServiceAppointmentId')
+            if not sa_id:
+                continue
+            hist_count[sa_id] = hist_count.get(sa_id, 0) + 1
+            cb = r.get('CreatedBy') or {}
+            profile = (cb.get('Profile') or {}).get('Name', '')
+            if profile == 'Membership User' and sa_id not in human_sas:
+                human_sas[sa_id] = cb.get('Name', '?')
 
         # Only manual if reassigned (count > 2) AND human was involved
         human_sas = {sa_id: name for sa_id, name in human_sas.items()

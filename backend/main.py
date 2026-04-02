@@ -67,7 +67,7 @@ async def auth_middleware(request: Request, call_next):
 
 from routers import (
     auth, admin, garages, command_center, ops, map as map_router,
-    dispatch_drill, dispatch_trends, dispatch_satisfaction,
+    dispatch_drill, dispatch_trends, dispatch_satisfaction, satisfaction_garage,
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, insights, sa_report, garages_scorecard,
 )
@@ -81,6 +81,7 @@ app.include_router(map_router.router)
 app.include_router(dispatch_drill.router)
 app.include_router(dispatch_trends.router)
 app.include_router(dispatch_satisfaction.router)
+app.include_router(satisfaction_garage.router)
 app.include_router(issues.router)
 app.include_router(pta.router)
 app.include_router(chatbot.router)

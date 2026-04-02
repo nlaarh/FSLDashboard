@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from utils import parse_dt as _parse_dt
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
-from dispatch import get_forecast
+from dispatch_decomposition import get_forecast
 import cache
 
 from routers.dispatch_shared import _ET, _today_start_utc, _fmt_et, _sa_row

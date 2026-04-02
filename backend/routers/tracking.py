@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_batch import batch_soql_query
 from utils import parse_dt as _parse_dt, to_eastern as _to_eastern, is_fleet_territory, haversine
 import cache
 
@@ -111,22 +112,19 @@ async def onroute_list():
         # 2. Batch-fetch AssignedResource for all SA IDs
         sa_ids = [sa['Id'] for sa in sas]
         ar_map = {}  # sa_id -> {resource_id, resource_name}
-        for i in range(0, len(sa_ids), 200):
-            batch = sa_ids[i:i+200]
-            id_list = ",".join(f"'{s}'" for s in batch)
-            ars = sf_query_all(f"""
+        ars = batch_soql_query("""
                 SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name
                 FROM AssignedResource
-                WHERE ServiceAppointmentId IN ({id_list})
-            """)
-            for ar in ars:
-                sa_ref = ar.get('ServiceAppointmentId')
-                sr = ar.get('ServiceResource') or {}
-                if sa_ref:
-                    ar_map[sa_ref] = {
-                        'resource_id': ar.get('ServiceResourceId'),
-                        'resource_name': sr.get('Name', '?'),
-                    }
+                WHERE ServiceAppointmentId IN ('{id_list}')
+            """, sa_ids, chunk_size=200)
+        for ar in ars:
+            sa_ref = ar.get('ServiceAppointmentId')
+            sr = ar.get('ServiceResource') or {}
+            if sa_ref:
+                ar_map[sa_ref] = {
+                    'resource_id': ar.get('ServiceResourceId'),
+                    'resource_name': sr.get('Name', '?'),
+                }
 
         # 3. Build response (exclude Tow Drop-Off — car already picked up)
         results = []

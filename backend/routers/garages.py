@@ -12,7 +12,7 @@ from utils import (
 from scheduler import generate_schedule
 from simulator import simulate_day
 from scorer import compute_score
-from dispatch import get_response_decomposition
+from dispatch_decomposition import get_response_decomposition
 import cache
 
 router = APIRouter()

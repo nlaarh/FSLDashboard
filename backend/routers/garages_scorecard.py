@@ -9,6 +9,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_batch import batch_soql_query
 from utils import parse_dt as _parse_dt, is_fleet_territory
 import cache
 
@@ -681,34 +682,30 @@ def api_garage_export(
                 original_names[sa_id] = nv
 
     # Get assigned driver for each SA
-    sa_ids_str = "','".join(sa['Id'] for sa in sa_detail[:500])
+    sa_id_list = [sa['Id'] for sa in sa_detail[:500]]
     assigned_drivers = {}
-    if sa_ids_str:
-        for chunk_start in range(0, len(sa_detail), 200):
-            chunk = sa_detail[chunk_start:chunk_start+200]
-            chunk_ids = "','".join(sa['Id'] for sa in chunk)
-            ar_rows = sf_query_all(f"""
+    if sa_id_list:
+        ar_rows = batch_soql_query("""
                 SELECT ServiceAppointmentId, ServiceResource.Name
                 FROM AssignedResource
-                WHERE ServiceAppointmentId IN ('{chunk_ids}')
-            """)
-            for ar in ar_rows:
-                assigned_drivers[ar['ServiceAppointmentId']] = (ar.get('ServiceResource') or {}).get('Name', '')
+                WHERE ServiceAppointmentId IN ('{id_list}')
+            """, sa_id_list, chunk_size=200)
+        for ar in ar_rows:
+            assigned_drivers[ar['ServiceAppointmentId']] = (ar.get('ServiceResource') or {}).get('Name', '')
 
     # Build survey lookup by WO Id for joining
     survey_by_wo = {}
     woli_ids = [sa.get('ParentRecordId') for sa in sa_detail if sa.get('ParentRecordId')]
     wo_to_sa_export = {}
     if woli_ids:
-        for i in range(0, len(woli_ids), 200):
-            chunk = woli_ids[i:i+200]
-            id_list = "','".join(chunk)
-            woli_rows = sf_query_all(f"SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE Id IN ('{id_list}')")
-            for r in woli_rows:
-                for sa in sa_detail:
-                    if sa.get('ParentRecordId') == r['Id']:
-                        wo_to_sa_export[r['WorkOrderId']] = sa['Id']
-                        break
+        woli_rows = batch_soql_query(
+            "SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE Id IN ('{id_list}')",
+            woli_ids, chunk_size=200)
+        for r in woli_rows:
+            for sa in sa_detail:
+                if sa.get('ParentRecordId') == r['Id']:
+                    wo_to_sa_export[r['WorkOrderId']] = sa['Id']
+                    break
     sa_to_wo = {v: k for k, v in wo_to_sa_export.items()}
 
     # Get all surveys for this garage/period

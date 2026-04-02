@@ -13,6 +13,7 @@ from utils import (
     haversine,
 )
 from sf_client import sf_query_all, sf_parallel, get_stats as sf_stats, sanitize_soql
+from sf_batch import batch_soql_query
 from dispatch_utils import fetch_gps_history, gps_at_time, parse_assign_events, classify_dispatch
 import cache
 
@@ -595,19 +596,14 @@ def scheduler_insights():
         #    Uses shared parse_assign_events + classify_dispatch (same logic as
         #    simulator.py, dispatch_drill.py, and misc.py _lookup_sa_impl).
         dispatched_by = {}
-        batch_size = 150
-        all_hist_rows = []
-        for i in range(0, len(sa_ids), batch_size):
-            batch = sa_ids[i:i + batch_size]
-            id_str = "','".join(batch)
-            all_hist_rows += sf_query_all(f"""
+        all_hist_rows = batch_soql_query("""
                 SELECT ServiceAppointmentId, NewValue,
                        CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId IN ('{id_str}')
+                WHERE ServiceAppointmentId IN ('{id_list}')
                   AND Field = 'ERS_Assigned_Resource__c'
                 ORDER BY CreatedDate ASC
-            """)
+            """, sa_ids, chunk_size=150)
         _assign_events = parse_assign_events(all_hist_rows, set(sa_ids))
         _dispatch_class = classify_dispatch(_assign_events)
         # Cross-check: unique SAs that have assignment history records
