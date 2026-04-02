@@ -42,7 +42,8 @@ def _get_schedule():
     from routers.command_center import command_center
     from routers.ops import ops_brief
     from routers.map import get_map_grids, get_map_drivers, get_map_weather
-    from routers.misc import gps_health, scheduler_insights
+    from routers.misc import gps_health
+    from routers.misc_diagnostics import scheduler_insights
     from routers.garages import list_garages
     from routers.pta import pta_advisor
 

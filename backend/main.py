@@ -66,10 +66,12 @@ async def auth_middleware(request: Request, call_next):
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (
-    auth, admin, garages, command_center, ops, map as map_router,
-    dispatch_drill, dispatch_trends, dispatch_satisfaction, satisfaction_garage,
+    auth, admin, garages, garages_performance, command_center, ops, map as map_router,
+    dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
+    dispatch_satisfaction, satisfaction_garage,
     issues, pta, chatbot, data_quality, matrix,
-    tracking, misc, insights, sa_report, garages_scorecard,
+    tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
+    garages_scorecard, garages_export,
 )
 
 app.include_router(auth.router)
@@ -79,6 +81,7 @@ app.include_router(command_center.router)
 app.include_router(ops.router)
 app.include_router(map_router.router)
 app.include_router(dispatch_drill.router)
+app.include_router(dispatch_drill_detail.router)
 app.include_router(dispatch_trends.router)
 app.include_router(dispatch_satisfaction.router)
 app.include_router(satisfaction_garage.router)
@@ -89,9 +92,14 @@ app.include_router(data_quality.router)
 app.include_router(matrix.router)
 app.include_router(tracking.router)
 app.include_router(misc.router)
+app.include_router(misc_diagnostics.router)
 app.include_router(sa_report.router)
 app.include_router(garages_scorecard.router)
+app.include_router(garages_export.router)
+app.include_router(garages_performance.router)
 app.include_router(insights.router)
+app.include_router(insights_health.router)
+app.include_router(dispatch_trends_monthly.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -144,7 +152,7 @@ def _nightly_trends_refresh():
                 log.info(f"Nightly: refreshing monthly trends for {current_month}...")
                 cache.disk_invalidate(cache_key)
                 cache.invalidate(cache_key)
-                dispatch_trends._generate_month_trends(current_month)
+                dispatch_trends_monthly._generate_month_trends(current_month)
                 log.info(f"Nightly: monthly trends complete for {current_month}.")
 
                 # Current month satisfaction overview (picks up new surveys)
