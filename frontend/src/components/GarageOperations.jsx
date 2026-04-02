@@ -1,0 +1,554 @@
+import { useState } from 'react'
+import {
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend, BarChart,
+} from 'recharts'
+import { clsx } from 'clsx'
+import {
+  CheckCircle2, XCircle, Clock, AlertTriangle, Target, Activity,
+  ArrowRight, Award, Truck, Loader2, Zap,
+} from 'lucide-react'
+import { pct } from '../utils/formatting'
+import { TT_STYLE } from '../constants/chartStyles'
+import { GradeRing, MetricCard, ProgressBar, BucketGrid, ReasonBars, buildInsights } from './GarageOperationsUtils'
+
+// ── Main Operations Tab ──────────────────────────────────────────────────────
+
+export default function GarageOperations({
+  perf, score, scorecard, decomp, loading,
+  error, decompError, scorecardError, scoreError,
+  startDate, endDate, activeDef, setActiveDef,
+}) {
+  const { insights, actions } = perf ? buildInsights(perf) : { insights: [], actions: [] }
+  const rd = decomp?.response_decomposition
+  const leaderboard = decomp?.driver_leaderboard || []
+  const missingTruckIdCount = decomp?.missing_truck_id_count || 0
+  const declines = decomp?.decline_analysis
+  const cancels = decomp?.cancel_analysis
+  const garageType = decomp?.garage_type || scorecard?.garage_type || 'fleet'
+  const isTowbook = garageType === 'towbook'
+  const isFleet = garageType === 'fleet'
+  const isContractor = garageType !== 'fleet'
+
+  const isFullLoading = loading.perf && !perf
+
+  return (<>
+    {/* Grade badge + dispatch type */}
+    <div className="glass rounded-xl p-4 flex items-center gap-4 flex-wrap">
+      {score && !score.error && (
+        <GradeRing grade={score.grade} composite={score.composite} />
+      )}
+      {perf?.dispatch_mix && (
+        <div className="flex flex-col items-center gap-1">
+          <div className={clsx('px-3 py-1.5 rounded-lg text-xs font-bold border',
+            isFleet
+              ? 'bg-blue-950/40 border-blue-700/40 text-blue-400'
+              : isTowbook
+                ? 'bg-amber-950/40 border-amber-700/40 text-amber-400'
+                : 'bg-purple-950/40 border-purple-700/40 text-purple-400')}>
+            {isFleet ? 'Fleet' : isTowbook ? 'Contractor · Towbook' : 'Contractor · On-Platform'}
+          </div>
+          <div className="text-[9px] text-slate-500 text-center leading-tight">
+            {isTowbook
+              ? `${perf.dispatch_mix.tb_pct}% Towbook`
+              : `${perf.dispatch_mix.fs_pct}% Field Services · ${perf.dispatch_mix.tb_pct}% Towbook`}
+          </div>
+        </div>
+      )}
+    </div>
+
+    {error && (
+      <div className="rounded-xl bg-red-950/30 border border-red-800/30 p-4 text-red-300 text-sm">{error}</div>
+    )}
+
+    {isFullLoading && (
+      <div className="space-y-4 animate-pulse">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="glass rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-700/50" />
+                <div className="h-3 w-20 rounded bg-slate-700/50" />
+              </div>
+              <div className="h-7 w-16 rounded bg-slate-700/50" />
+              <div className="h-2 w-24 rounded bg-slate-700/50" />
+            </div>
+          ))}
+        </div>
+        <div className="glass rounded-xl p-5 space-y-3">
+          <div className="h-4 w-40 rounded bg-slate-700/50" />
+          <div className="h-48 rounded bg-slate-700/30" />
+        </div>
+        <div className="flex items-center justify-center py-4 gap-3">
+          <Loader2 className="w-5 h-5 animate-spin text-brand-400" />
+          <span className="text-slate-400 text-sm">Loading garage data from Salesforce...</span>
+        </div>
+      </div>
+    )}
+
+    {perf && (
+      <>
+        {/* KPI STRIP */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <MetricCard label="1st Call Acceptance"
+            value={perf.first_call?.first_call_pct != null ? `${perf.first_call.first_call_pct}%` : 'N/A'} icon={Zap}
+            sub={perf.first_call?.first_call_total > 0 ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total} 1st calls` : 'No data'}
+            color={perf.first_call?.first_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.first_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.first_call_pct != null ? 'text-red-400' : 'text-slate-500'}
+            border={perf.first_call?.first_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            definition={perf.definitions?.first_call_acceptance} defId="first_call" activeDef={activeDef} setActiveDef={setActiveDef} />
+          <MetricCard label="2nd+ Call Acceptance"
+            value={perf.first_call?.second_call_pct != null ? `${perf.first_call.second_call_pct}%` : 'N/A'} icon={Zap}
+            sub={perf.first_call?.second_call_total > 0 ? `${perf.first_call.second_call_accepted} / ${perf.first_call.second_call_total} reassigned` : 'No reassigned calls'}
+            color={perf.first_call?.second_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.second_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.second_call_pct != null ? 'text-red-400' : 'text-slate-500'}
+            border={perf.first_call?.second_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            definition="When this garage was NOT the first territory assigned (SA was reassigned from another garage), what % did they accept? Lower numbers here are expected since these are overflow/backup calls." defId="second_call" activeDef={activeDef} setActiveDef={setActiveDef} />
+          <MetricCard label="Completion of Accepted" value={perf.first_call?.accepted_completion_pct != null ? `${perf.first_call.accepted_completion_pct}%` : 'N/A'} icon={CheckCircle2}
+            sub={perf.first_call?.accepted_total > 0 ? `${perf.first_call.accepted_completed} / ${perf.first_call.accepted_total} accepted` : ''}
+            color={perf.first_call?.accepted_completion_pct >= 95 ? 'text-emerald-400' : perf.first_call?.accepted_completion_pct >= 80 ? 'text-amber-400' : perf.first_call?.accepted_completion_pct != null ? 'text-red-400' : 'text-slate-500'}
+            border={perf.first_call?.accepted_completion_pct >= 95 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            definition={perf.definitions?.completion_of_accepted} defId="completion_accepted" activeDef={activeDef} setActiveDef={setActiveDef} />
+        </div>
+
+        {/* RESPONSE TIME + DECOMPOSITION */}
+        {perf.response_time.total === 0 ? (
+          <div className="glass rounded-xl p-6 text-center">
+            <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+            <div className="text-sm font-semibold text-slate-400">Response Time Data Unavailable</div>
+            <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+              No completed SAs with arrival timestamps found for this period.
+              Acceptance metrics are still available above.
+            </div>
+          </div>
+        ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          {/* Response Time Buckets */}
+          <div className="glass rounded-xl p-5 space-y-3">
+            <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
+              <Clock className="w-4 h-4 text-brand-400" /> {isTowbook ? 'PTA Breakdown (Towbook)' : 'Response Time Breakdown'}
+            </h3>
+            <BucketGrid buckets={[
+              { label: '< 45 min', count: perf.response_time.under_45, pct: perf.response_time.under_45_pct },
+              { label: '45-90 min', count: perf.response_time.b45_90, pct: perf.response_time.b45_90_pct },
+              { label: '90-120 min', count: perf.response_time.b90_120, pct: perf.response_time.b90_120_pct },
+              { label: '> 2 hours', count: perf.response_time.over_120, pct: perf.response_time.over_120_pct },
+            ]} />
+
+            {/* 45-min progress bar */}
+            <div className="pt-3 border-t border-slate-800/60">
+              <div className="flex justify-between text-[10px] text-slate-400 mb-1.5">
+                <span>Progress to 45-Min Goal</span>
+                <span className={perf.response_time.median && perf.response_time.median <= 45 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                  Median: {perf.response_time.median ?? '?'} min
+                </span>
+              </div>
+              <ProgressBar value={perf.response_time.under_45_pct}
+                color={perf.response_time.under_45_pct >= 80 ? 'bg-emerald-500' : perf.response_time.under_45_pct >= 50 ? 'bg-amber-500' : 'bg-red-500'}
+                height="h-2.5" />
+              <div className="flex justify-between text-[9px] text-slate-600 mt-1">
+                <span>0%</span>
+                <span className="text-brand-400">Target: 80%+ under 45 min</span>
+                <span>100%</span>
+              </div>
+            </div>
+
+            {/* PTA accuracy */}
+            {perf.pts_ata && perf.pts_ata.on_time_pct != null && (
+              <div className="pt-3 border-t border-slate-800/60">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Promise vs Actual</div>
+                <div className="flex gap-3">
+                  <div className="flex-1 text-center bg-emerald-950/20 border border-emerald-800/20 rounded-lg p-2">
+                    <div className="text-lg font-bold text-emerald-400">{perf.pts_ata.on_time_pct}%</div>
+                    <div className="text-[9px] text-slate-400">On Time</div>
+                  </div>
+                  <div className="flex-1 text-center bg-red-950/20 border border-red-800/20 rounded-lg p-2">
+                    <div className="text-lg font-bold text-red-400">{perf.pts_ata.late_pct}%</div>
+                    <div className="text-[9px] text-slate-400">Late</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Response Time Decomposition Waterfall */}
+          <div className="glass rounded-xl p-5 space-y-3">
+            <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
+              <Activity className="w-4 h-4 text-brand-400" /> Where Time Is Spent
+              {loading.decomp && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500 ml-1" />}
+            </h3>
+
+            {rd ? (
+              <>
+                {(() => {
+                  const waitAvg = (rd.avg_dispatch_min || 0) + (rd.avg_travel_min || 0)
+                  const waitMed = (rd.median_dispatch_min || 0) + (rd.median_travel_min || 0)
+                  const onsiteAvg = rd.avg_onsite_min || 0
+                  const onsiteMed = rd.median_onsite_min || 0
+                  const totalAvg = waitAvg + onsiteAvg
+                  const segments = [
+                    { label: 'Member Wait', sub: 'Created \u2192 Driver Arrives', value: waitAvg, median: waitMed, color: 'bg-red-500' },
+                    { label: 'On-Site Service', sub: 'Driver Arrives \u2192 Job Done', value: onsiteAvg, median: onsiteMed, color: 'bg-emerald-500' },
+                  ]
+                  const maxVal = Math.max(waitAvg, onsiteAvg, 1)
+                  return (
+                    <>
+                      <div className="flex items-end gap-4 h-36 px-8">
+                        {segments.map(seg => {
+                          const h = Math.max((seg.value / maxVal) * 100, 10)
+                          return (
+                            <div key={seg.label} className="flex-1 flex flex-col items-center">
+                              <div className="text-lg font-black text-white mb-1">{seg.value}<span className="text-[10px] font-normal text-slate-500"> min avg</span></div>
+                              <div className="text-[10px] text-slate-500 mb-1">median {seg.median} min</div>
+                              <div className={clsx('w-full rounded-t-lg transition-all', seg.color)}
+                                style={{ height: `${h}%` }} />
+                              <div className="text-[11px] text-slate-300 mt-2 font-medium text-center">{seg.label}</div>
+                              <div className="text-[9px] text-slate-500 text-center">{seg.sub}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3 flex items-center gap-3">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total Avg</span>
+                        <div className="flex-1 h-4 rounded-full overflow-hidden flex">
+                          <div className="bg-red-500 h-full" style={{ width: `${pct(waitAvg, totalAvg)}%` }} />
+                          <div className="bg-emerald-500 h-full" style={{ width: `${pct(onsiteAvg, totalAvg)}%` }} />
+                        </div>
+                        <span className="text-sm font-bold text-white">{totalAvg} min</span>
+                      </div>
+                      <div className="text-[10px] text-slate-600 text-center">
+                        Based on {rd.sample_size.toLocaleString()} completed calls (all dispatch methods)
+                      </div>
+                    </>
+                  )
+                })()}
+
+                {/* By work type mini table */}
+                {Object.keys(rd.by_work_type).length > 0 && (
+                  <div className="pt-3 border-t border-slate-800/60">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">By Work Type</div>
+                    <div className="space-y-1">
+                      {Object.entries(rd.by_work_type).sort((a, b) => b[1].count - a[1].count).map(([wt, d]) => {
+                        const wait = (d.dispatch || 0) + (d.travel || 0)
+                        return (
+                          <div key={wt} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-28 text-slate-300 font-medium truncate">{wt}</span>
+                            <div className="flex-1 flex h-3 rounded-full overflow-hidden">
+                              <div className="bg-red-500/80 rounded-l" style={{ width: `${pct(wait, d.total)}%` }} />
+                              <div className="bg-emerald-500/80 rounded-r" style={{ width: `${pct(d.onsite, d.total)}%` }} />
+                            </div>
+                            <span className="text-slate-400 w-16 text-right">{d.total} min</span>
+                            <span className="text-slate-600 w-10 text-right">({d.count})</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="flex gap-4 mt-2 text-[9px] text-slate-500">
+                      <span><span className="inline-block w-2 h-2 rounded-sm bg-red-500 mr-1" />Member Wait</span>
+                      <span><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500 mr-1" />On-Site</span>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : !loading.decomp ? (
+              <div className="text-sm py-8 text-center">
+                {decompError
+                  ? <span className="text-red-400">Decomposition unavailable: {decompError}</span>
+                  : <span className="text-slate-500">No decomposition data available</span>}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        )}
+
+        {/* TREND CHART + FLEET */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {perf.trend && perf.trend.length > 0 && (
+            <div className="glass rounded-xl p-5 lg:col-span-2">
+              <h3 className="font-semibold text-slate-200 mb-3 flex items-center gap-2 text-sm">
+                <Activity className="w-4 h-4 text-brand-400" />
+                Volume & Completion Trend
+                <span className="ml-auto text-[10px] text-slate-500 font-normal">
+                  {perf.period.single_day ? 'Hourly' : 'Daily'}
+                </span>
+              </h3>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={perf.trend} margin={{ left: -10, right: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="label" stroke="#475569" tick={{ fontSize: 10, fill: '#94a3b8' }}
+                      interval={perf.trend.length > 14 ? Math.floor(perf.trend.length / 10) : 0} />
+                    <YAxis yAxisId="vol" stroke="#475569" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                    <YAxis yAxisId="pct" orientation="right" domain={[0, 100]}
+                      stroke="#475569" tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={v => `${v}%`} />
+                    <Tooltip {...TT_STYLE} formatter={(val, name) => name === 'Completion %' ? `${val}%` : val} />
+                    <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+                    <Bar yAxisId="vol" dataKey="total" name="Total SAs" fill="#6366f1" radius={[3,3,0,0]} opacity={0.7} />
+                    <Bar yAxisId="vol" dataKey="completed" name="Completed" fill="#10b981" radius={[3,3,0,0]} opacity={0.8} />
+                    <Line yAxisId="pct" type="monotone" dataKey="completion_pct" name="Completion %"
+                      stroke="#f59e0b" strokeWidth={2} dot={{ fill: '#f59e0b', r: 2 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {!scorecard && scorecardError && !loading.scorecard && (
+            <div className="glass rounded-xl p-5 flex items-center justify-center">
+              <span className="text-sm text-red-400">Scorecard unavailable: {scorecardError}</span>
+            </div>
+          )}
+          {scorecard && (
+            <div className="glass rounded-xl p-5 space-y-4">
+              <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
+                <Truck className="w-4 h-4 text-brand-400" />
+                {isFleet ? 'Fleet & Volume' : 'Contractors & Volume'}
+                {isContractor && <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', isTowbook ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400')}>{isTowbook ? 'TOWBOOK' : 'ON-PLATFORM'}</span>}
+              </h3>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-white">{scorecard.fleet.total_trucks || 0}</div>
+                  <div className="text-[10px] text-slate-400">Trucks</div>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-slate-300">
+                    {isTowbook ? (scorecard.fleet.total_contractors || scorecard.fleet.total_trucks || 0) : scorecard.fleet.total_members}
+                  </div>
+                  <div className="text-[10px] text-slate-400">{isTowbook ? 'Contractors' : 'Drivers'}</div>
+                </div>
+                <div className="bg-red-950/20 rounded-lg p-2 text-center border border-red-800/20">
+                  <div className="text-lg font-bold text-red-400">{scorecard.fleet.tow_trucks || 0}</div>
+                  <div className="text-[9px] text-slate-400">Tow</div>
+                </div>
+                <div className="bg-blue-950/20 rounded-lg p-2 text-center border border-blue-800/20">
+                  <div className="text-lg font-bold text-blue-400">{scorecard.fleet.other_trucks || 0}</div>
+                  <div className="text-[9px] text-slate-400">Batt/Light</div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                {[
+                  { label: 'Tow', count: scorecard.volume.tow_sas, color: 'bg-red-500' },
+                  { label: 'Battery', count: scorecard.volume.battery_sas, color: 'bg-blue-500' },
+                  { label: 'Light', count: scorecard.volume.light_sas, color: 'bg-teal-500' },
+                ].map(t => {
+                  const p = scorecard.volume.total > 0 ? Math.round(100 * t.count / scorecard.volume.total) : 0
+                  return (
+                    <div key={t.label} className="flex items-center gap-2">
+                      <div className="w-14 text-[10px] text-slate-400 text-right">{t.label}</div>
+                      <div className="flex-1 h-3 bg-slate-900 rounded-full overflow-hidden">
+                        <div className={clsx('h-full rounded-full', t.color)} style={{ width: `${Math.max(p, 1)}%` }} />
+                      </div>
+                      <div className="w-16 text-[10px] text-slate-400">{t.count.toLocaleString()} ({p}%)</div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Avg Weekly Demand</div>
+                <div className="h-24">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => ({ day: d, count: scorecard.volume.by_dow?.[d] || 0 }))}>
+                      <XAxis dataKey="day" stroke="#475569" tick={{ fontSize: 9, fill: '#94a3b8' }} />
+                      <YAxis stroke="#475569" tick={{ fontSize: 9, fill: '#94a3b8' }} />
+                      <Tooltip {...TT_STYLE} />
+                      <Bar dataKey="count" fill="#6366f1" radius={[3,3,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* DRIVER LEADERBOARD + DECLINE/CANCEL */}
+        {(leaderboard.length > 0 || declines?.total_declines > 0 || cancels?.total_cancellations > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {leaderboard.length > 0 && (
+              <div className="glass rounded-xl p-5 lg:col-span-2">
+                <h3 className="font-semibold text-slate-200 flex items-center gap-2 text-sm mb-3">
+                  <Award className="w-4 h-4 text-amber-400" />
+                  {isFleet ? 'Driver Leaderboard' : 'Contractor Leaderboard'}
+                  {isContractor && <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', isTowbook ? 'bg-amber-600/20 text-amber-400' : 'bg-purple-600/20 text-purple-400')}>{isTowbook ? 'TOWBOOK' : 'ON-PLATFORM'}</span>}
+                  <span className="text-[10px] text-slate-500 font-normal ml-auto">
+                    {isTowbook ? 'Ranked by volume · Response = PTA (promised)' : 'Ranked by avg response time'}
+                  </span>
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-slate-500 border-b border-slate-800">
+                        <th className="text-left py-2 px-2 w-8">#</th>
+                        <th className="text-left py-2 px-2">{isTowbook ? 'Contractor' : 'Driver'}</th>
+                        <th className="text-right py-2 px-2">Calls</th>
+                        <th className="text-right py-2 px-2">Avg Response</th>
+                        <th className="text-right py-2 px-2">Median</th>
+                        <th className="text-right py-2 px-2">On-Site</th>
+                        <th className="text-right py-2 px-2">Declines</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leaderboard.slice(0, 15).map((d, i) => (
+                        <tr key={d.id} className={clsx('border-b border-slate-800/40 hover:bg-slate-800/30',
+                          i < 3 && 'bg-emerald-950/10')}>
+                          <td className="py-1.5 px-2">
+                            <span className={clsx('w-5 h-5 rounded-full inline-flex items-center justify-center text-[9px] font-bold',
+                              i === 0 ? 'bg-amber-500 text-black' : i === 1 ? 'bg-slate-400 text-black' : i === 2 ? 'bg-amber-700 text-white' : 'bg-slate-800 text-slate-500')}>
+                              {i + 1}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2 text-white font-medium">{d.name}</td>
+                          <td className="py-1.5 px-2 text-right text-slate-400">{d.total_calls}</td>
+                          <td className={clsx('py-1.5 px-2 text-right font-bold',
+                            d.avg_response_min && d.avg_response_min <= 45 ? 'text-emerald-400' :
+                            d.avg_response_min && d.avg_response_min <= 90 ? 'text-amber-400' : 'text-red-400')}>
+                            {d.avg_response_min ?? '\u2014'} min
+                          </td>
+                          <td className="py-1.5 px-2 text-right text-slate-300">{d.median_response_min ?? '\u2014'} min</td>
+                          <td className="py-1.5 px-2 text-right text-slate-400">{d.avg_onsite_min ?? '\u2014'} min</td>
+                          <td className={clsx('py-1.5 px-2 text-right', d.declines > 0 ? 'text-red-400' : 'text-slate-600')}>
+                            {d.declines} ({d.decline_rate}%)
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {isTowbook && missingTruckIdCount > 0 && (
+                    <p className="text-[10px] text-slate-500 mt-2 px-1">
+                      {missingTruckIdCount} call{missingTruckIdCount > 1 ? 's' : ''} missing driver info — not shown in leaderboard
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {declines && declines.total_declines > 0 && (
+                <div className="glass rounded-xl p-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+                    <XCircle className="w-3.5 h-3.5 text-red-400" />
+                    Facility Declines ({declines.total_declines})
+                    <span className="text-red-400 font-normal ml-auto">{declines.decline_rate}% rate</span>
+                  </h4>
+                  <ReasonBars items={declines.by_reason} color="bg-red-500" />
+                </div>
+              )}
+              {cancels && cancels.total_cancellations > 0 && (
+                <div className="glass rounded-xl p-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    Cancellations ({cancels.total_cancellations})
+                  </h4>
+                  <ReasonBars items={cancels.by_reason} color="bg-amber-500" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SUPERVISOR ANALYSIS */}
+        <div className="glass rounded-xl p-5">
+          <h3 className="font-bold text-slate-200 mb-4 flex items-center gap-2 text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-400" />
+            Supervisor Analysis
+            <span className="ml-auto text-[10px] font-normal text-slate-500">
+              {`${startDate} \u2013 ${endDate}`} · {perf.total_sas.toLocaleString()} SAs
+            </span>
+          </h3>
+
+          <div className="space-y-2 mb-5">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1">What the data shows</div>
+            {insights.map((ins, i) => (
+              <div key={i} className={clsx('flex items-start gap-2 rounded-lg p-2.5 text-xs',
+                ins.type === 'critical' ? 'bg-red-950/30 border border-red-800/30' :
+                ins.type === 'warn' ? 'bg-amber-950/30 border border-amber-800/30' :
+                ins.type === 'info' ? 'bg-brand-950/20 border border-brand-800/20' :
+                'bg-emerald-950/20 border border-emerald-800/20')}>
+                {ins.type === 'critical' ? <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" /> :
+                 ins.type === 'warn' ? <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" /> :
+                 ins.type === 'info' ? <AlertTriangle className="w-3.5 h-3.5 text-brand-400 mt-0.5 shrink-0" /> :
+                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />}
+                <span className={ins.type === 'critical' ? 'text-red-200' : ins.type === 'warn' ? 'text-amber-200' : ins.type === 'info' ? 'text-brand-200' : 'text-emerald-200'}>
+                  {ins.text}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1">Recommended Actions</div>
+            {actions.map((act, i) => (
+              <div key={i} className={clsx('flex items-start gap-2 rounded-lg p-2.5 text-xs border',
+                act.priority === 'HIGH' ? 'bg-red-950/20 border-red-800/30' :
+                act.priority === 'MED' ? 'bg-amber-950/20 border-amber-800/30' :
+                act.priority === 'GOAL' ? 'bg-brand-950/30 border-brand-700/40' :
+                'bg-slate-800/30 border-slate-700/30')}>
+                <ArrowRight className={clsx('w-3.5 h-3.5 mt-0.5 shrink-0',
+                  act.priority === 'HIGH' ? 'text-red-400' : act.priority === 'MED' ? 'text-amber-400' :
+                  act.priority === 'GOAL' ? 'text-brand-400' : 'text-slate-400')} />
+                <div>
+                  <span className={clsx('text-[9px] font-bold uppercase tracking-wider mr-1.5',
+                    act.priority === 'HIGH' ? 'text-red-500' : act.priority === 'MED' ? 'text-amber-500' :
+                    act.priority === 'GOAL' ? 'text-brand-400' : 'text-slate-500')}>
+                    {act.priority}
+                  </span>
+                  <span className="text-slate-300">{act.text}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* GOALS */}
+        {scorecard && (
+          <div className="glass rounded-xl p-5">
+            <h3 className="font-semibold text-slate-200 mb-3 flex items-center gap-2 text-sm">
+              <Target className="w-4 h-4 text-brand-400" /> How to Meet the 45-Minute Goal
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {[
+                {
+                  num: 1,
+                  title: isTowbook ? 'Maximize Contractor Coverage' : 'Deploy Full Fleet',
+                  desc: isTowbook
+                    ? `${scorecard.fleet.total_contractors || scorecard.fleet.total_trucks || 0} contractor trucks active. Monitor decline rates and PTA compliance.`
+                    : `${scorecard.fleet.total_members} drivers on the books (${scorecard.fleet.tow_drivers} tow, ${scorecard.fleet.battery_light_drivers} battery/light). Ensure all on the road at peak.`,
+                  impact: isTowbook ? 'Reduces decline-driven delays' : 'Eliminates queue wait',
+                },
+                {
+                  num: 2,
+                  title: 'Hit 45-Min PTA Target',
+                  desc: scorecard.sla.pta_compliance_45min >= 100
+                    ? 'All PTAs promised within 45 min \u2014 maintain this standard.'
+                    : `Only ${scorecard.sla.pta_compliance_45min}% of PTAs promised \u226445 min. ${scorecard.sla.median_pta_promised ? `Median PTA: ${scorecard.sla.median_pta_promised} min.` : ''} Tighten dispatch promises.`,
+                  impact: scorecard.sla.pta_compliance_45min >= 100 ? 'On target' : 'Reduces member wait expectations',
+                },
+                {
+                  num: 3,
+                  title: 'Close Response Gap',
+                  desc: scorecard.sla.actual_median_response && scorecard.sla.actual_median_response > 45
+                    ? `Median response is ${scorecard.sla.actual_median_response} min \u2014 ${scorecard.sla.gap_vs_target} min over target. Only ${scorecard.sla.actual_under_45min_pct}% under 45 min.`
+                    : scorecard.sla.actual_median_response
+                      ? `Median response ${scorecard.sla.actual_median_response} min \u2014 meeting 45-min target. ${scorecard.sla.actual_under_45min_pct}% under 45 min.`
+                      : 'Not enough completed calls to measure response time.',
+                  impact: scorecard.sla.actual_median_response && scorecard.sla.actual_median_response > 45
+                    ? `Closing the ${scorecard.sla.gap_vs_target}-min gap`
+                    : 'Maintain current performance',
+                },
+              ].map(l => (
+                <div key={l.num} className="bg-slate-800/40 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold flex items-center justify-center">{l.num}</span>
+                    <span className="font-semibold text-xs text-slate-200">{l.title}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">{l.desc}</p>
+                  <div className="mt-2 text-[10px] text-emerald-400 font-medium">{l.impact}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </>
+    )}
+  </>)
+}
