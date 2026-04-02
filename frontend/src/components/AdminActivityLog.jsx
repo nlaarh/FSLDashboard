@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Activity, Clock, User, Globe, RefreshCw, AlertTriangle } from 'lucide-react'
-import { adminGetActivityLog, adminGetActivityStats } from '../api'
+import { Activity, Clock, User, Globe, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react'
+import { adminGetActivityLog, adminGetActivityStats, adminClearActivityLog } from '../api'
 import { clsx } from 'clsx'
 
 export default function AdminActivityLog({ pin }) {
@@ -59,9 +59,17 @@ export default function AdminActivityLog({ pin }) {
             <option value={100}>Last 100</option>
             <option value={500}>Last 500</option>
           </select>
-          <button onClick={load} disabled={loading}
+          <button onClick={load} disabled={loading} title="Refresh"
             className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-white transition">
             <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} />
+          </button>
+          <button onClick={() => {
+            if (confirm('Clear all activity logs? This cannot be undone.')) {
+              adminClearActivityLog(pin).then(() => load())
+            }
+          }} title="Clear all logs"
+            className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition">
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

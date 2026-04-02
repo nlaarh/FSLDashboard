@@ -163,3 +163,4 @@ export const adminGetBonusTiers = (pin) => api.get('/admin/bonus-tiers', pinHead
 export const adminSetBonusTiers = (pin, tiers) => api.put('/admin/bonus-tiers', tiers, pinHeader(pin)).then(r => r.data)
 export const adminGetActivityLog = (pin, limit = 100) => api.get(`/admin/activity-log?limit=${limit}`, pinHeader(pin)).then(r => r.data)
 export const adminGetActivityStats = (pin) => api.get('/admin/activity-stats', pinHeader(pin)).then(r => r.data)
+export const adminClearActivityLog = (pin) => api.delete('/admin/activity-log', pinHeader(pin)).then(r => r.data)

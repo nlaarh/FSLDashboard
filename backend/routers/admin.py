@@ -241,6 +241,16 @@ def api_get_activity_log(request: Request, limit: int = 100, user: str = None, a
     return database.get_activity_log(limit=limit, user=user, action=action)
 
 
+@router.delete("/api/admin/activity-log")
+def api_clear_activity_log(request: Request):
+    """Clear all activity log entries."""
+    _check_pin(request)
+    import database
+    with database.get_db() as conn:
+        count = conn.execute("DELETE FROM activity_log").rowcount
+    return {"cleared": count}
+
+
 @router.get("/api/admin/activity-stats")
 def api_get_activity_stats(request: Request):
     """Get activity log summary stats."""
