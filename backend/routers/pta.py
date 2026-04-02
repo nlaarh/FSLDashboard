@@ -30,19 +30,17 @@ _PTA_TYPE_MAP = {
 }
 
 # Settings file for configurable refresh interval
-_SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
-
 def _load_settings():
     try:
-        with open(_SETTINGS_FILE) as f:
-            return _json.load(f)
+        import database
+        return database.get_all_settings()
     except Exception:
         return {}
 
 def _save_settings(settings: dict):
-    os.makedirs(os.path.dirname(_SETTINGS_FILE), exist_ok=True)
-    with open(_SETTINGS_FILE, 'w') as f:
-        _json.dump(settings, f, indent=2)
+    import database
+    for key, value in settings.items():
+        database.put_setting(key, value)
 
 def _pta_refresh_interval():
     return _load_settings().get('pta_refresh_interval', 900)

@@ -323,4 +323,4 @@ def compute_score(territory_id: str, weeks: int = 4) -> dict:
             },
         }
 
-    return cached_query_persistent(cache_key, _compute, ttl=1800)  # 30 min — historical data doesn't change fast
+    return cached_query_persistent(cache_key, _compute, max_stale_hours=26)

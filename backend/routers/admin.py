@@ -32,15 +32,15 @@ _DEFAULT_FEATURES = {
 
 def _load_settings():
     try:
-        with open(_SETTINGS_FILE) as f:
-            return _json.load(f)
+        import database
+        return database.get_all_settings()
     except Exception:
         return {}
 
 def _save_settings(settings: dict):
-    os.makedirs(os.path.dirname(_SETTINGS_FILE), exist_ok=True)
-    with open(_SETTINGS_FILE, 'w') as f:
-        _json.dump(settings, f, indent=2)
+    import database
+    for key, value in settings.items():
+        database.put_setting(key, value)
 
 
 # ── Startup time (imported from main at wire-up, but we need our own for status) ──
@@ -203,3 +203,25 @@ def admin_update_settings(request: Request, body: dict):
                 settings['features'][k] = bool(feat[k])
     _save_settings(settings)
     return settings
+
+
+# ── Bonus Tiers ──────────────────────────────────────────────────────────────
+
+@router.get("/api/admin/bonus-tiers")
+def api_get_bonus_tiers(request: Request):
+    """Get configurable bonus tiers for contractor garages."""
+    _check_pin(request)
+    import database
+    return database.get_bonus_tiers()
+
+
+@router.put("/api/admin/bonus-tiers")
+def api_set_bonus_tiers(request: Request, body: list):
+    """Replace bonus tiers. Body: [{min_pct, bonus_per_sa, label}, ...]"""
+    _check_pin(request)
+    import database
+    for t in body:
+        if 'min_pct' not in t or 'bonus_per_sa' not in t:
+            raise HTTPException(400, "Each tier needs min_pct and bonus_per_sa")
+    database.set_bonus_tiers(body)
+    return database.get_bonus_tiers()

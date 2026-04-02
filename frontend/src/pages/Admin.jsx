@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, Users, UserPlus, Edit3, Trash, Eye, Radio, Bot, Save, ToggleLeft, ToggleRight } from 'lucide-react'
-import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions, adminGetSettings, adminUpdateSettings, fetchChatbotModels, fetchFeatures } from '../api'
+import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions, adminGetSettings, adminUpdateSettings, adminGetBonusTiers, adminSetBonusTiers, fetchChatbotModels, fetchFeatures } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 
 const ROLES = ['admin', 'supervisor', 'viewer']
@@ -31,6 +31,11 @@ export default function Admin() {
   const [helpVideoUrl, setHelpVideoUrl] = useState('')
   const [videoSaving, setVideoSaving] = useState(false)
   const [videoSaved, setVideoSaved] = useState(false)
+
+  // Bonus tiers state
+  const [bonusTiers, setBonusTiers] = useState([])
+  const [tiersSaving, setTiersSaving] = useState(false)
+  const [tiersSaved, setTiersSaved] = useState(false)
 
   // AI Assistant config state
   const [aiProvider, setAiProvider] = useState('')
@@ -131,6 +136,7 @@ export default function Admin() {
       loadSessions()
       loadAiConfig()
       fetchFeatures().then(f => { setFeatures(f); setHelpVideoUrl(f.help_video_url || '') }).catch(() => {})
+      adminGetBonusTiers(pin).then(setBonusTiers).catch(() => {})
       const id = setInterval(() => { refresh(); loadSessions() }, 5000)
       return () => clearInterval(id)
     }
@@ -662,6 +668,51 @@ export default function Admin() {
             {videoSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
           </div>
           <p className="text-[10px] text-slate-600 mt-1">YouTube link shown in the Help &gt; How It Works section. Leave blank to hide.</p>
+        </div>
+
+        {/* ── Bonus Tiers ── */}
+        <div className="pt-4 border-t border-slate-800/50">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-sm font-semibold text-white">Contractor Bonus Tiers</span>
+            <span className="text-[10px] text-slate-500">Based on Technician "Totally Satisfied" %</span>
+          </div>
+          <div className="space-y-2">
+            {bonusTiers.map((t, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500 w-6">≥</span>
+                  <input type="number" value={t.min_pct} onChange={e => {
+                    const next = [...bonusTiers]; next[i] = { ...t, min_pct: parseFloat(e.target.value) || 0 }; setBonusTiers(next)
+                  }} className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+                  <span className="text-[10px] text-slate-500">%</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500">$</span>
+                  <input type="number" step="0.5" value={t.bonus_per_sa} onChange={e => {
+                    const next = [...bonusTiers]; next[i] = { ...t, bonus_per_sa: parseFloat(e.target.value) || 0 }; setBonusTiers(next)
+                  }} className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+                  <span className="text-[10px] text-slate-500">/SA</span>
+                </div>
+                <button onClick={() => setBonusTiers(bonusTiers.filter((_, j) => j !== i))}
+                  className="text-red-400 hover:text-red-300 text-xs"><Trash className="w-3 h-3" /></button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 pt-1">
+              <button onClick={() => setBonusTiers([...bonusTiers, { min_pct: 90, bonus_per_sa: 0, label: '≥90%' }])}
+                className="text-[10px] text-brand-400 hover:text-brand-300">+ Add Tier</button>
+              <button onClick={() => {
+                setTiersSaving(true); setTiersSaved(false)
+                adminSetBonusTiers(pin, bonusTiers).then(setBonusTiers).then(() => setTiersSaved(true))
+                  .catch(() => {}).finally(() => setTiersSaving(false))
+              }} disabled={tiersSaving}
+                className="flex items-center gap-1 px-3 py-1 bg-brand-600 hover:bg-brand-500 text-white text-[10px] font-medium rounded transition disabled:opacity-50">
+                {tiersSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                Save Tiers
+              </button>
+              {tiersSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-600 mt-2">Bonus paid to contractor garages only. Fleet (100/800) excluded. Tiers matched highest-first.</p>
         </div>
       </div>
 

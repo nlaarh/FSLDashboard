@@ -2,7 +2,7 @@
 
 Architecture:
 - L1: In-process memory dict (sub-microsecond, per-worker)
-- L2: Disk cache on shared filesystem (5-50ms, shared across all workers/instances)
+- L2: SQLite persistent cache (5-50ms, shared across all workers/instances)
 - Refresher: Background thread proactively refreshes all hot keys on a schedule
   → Users NEVER trigger Salesforce queries. Always served from L1 or L2.
 
@@ -10,10 +10,10 @@ Key behaviors:
 1. Non-blocking reads: cached_query() never calls SF. Returns from L1 → L2 → stale → None.
 2. Thundering herd: refresh_key() is called by ONE refresher process across the cluster.
 3. Graceful degradation: If SF is down, stale data is served. If refresher dies, another takes over.
-4. Persistent disk cache: Survives restarts and redeployments (Azure /home is durable storage).
+4. Persistent L2 cache: Survives restarts and redeployments (SQLite on Azure /home).
 """
 
-import time, logging, json, os, shutil
+import time, logging, os, json
 from threading import Lock, Event
 from pathlib import Path
 
@@ -27,23 +27,10 @@ _lock = Lock()
 _pending = {}  # key -> Event (prevents duplicate fetches)
 DEFAULT_TTL = 300  # 5 minutes
 
-# Persistent disk cache directory
-# On Azure App Service, /home is backed by Azure Storage and persists across
-# restarts AND redeployments. Locally, use ~/.fslapp/cache.
-_ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
-_BASE_DIR = Path('/home/fslapp/cache') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/cache'))
-_DISK_DIR = _BASE_DIR / CACHE_VERSION
-_DISK_DIR.mkdir(parents=True, exist_ok=True)
 
-# Clean up old version directories on startup
-for old_dir in _BASE_DIR.iterdir():
-    if old_dir.is_dir() and old_dir.name != CACHE_VERSION and old_dir.name.startswith('v'):
-        shutil.rmtree(old_dir, ignore_errors=True)
-        log.info(f"Purged old cache version: {old_dir.name}")
-# Also clean up old flat .json files from pre-versioned cache
-for old_file in _BASE_DIR.glob('*.json'):
-    old_file.unlink(missing_ok=True)
-    log.info(f"Purged pre-versioned cache file: {old_file.name}")
+def _vkey(key: str) -> str:
+    """Prefix cache key with version for auto-invalidation."""
+    return f"{CACHE_VERSION}:{key}"
 
 
 # ── L1: In-process memory cache ─────────────────────────────────────────────
@@ -71,19 +58,21 @@ def put(key: str, data, ttl: int = DEFAULT_TTL):
 
 
 def invalidate(prefix: str = ''):
+    """Clear L1 entries matching prefix. Also clears L2 (SQLite)."""
     with _lock:
         keys = [k for k in _store if k.startswith(prefix)]
         for k in keys:
             del _store[k]
+    # Also clear L2
+    try:
+        import database
+        database.cache_delete_prefix(_vkey(prefix))
+    except Exception:
+        pass
 
 
 def cleanup_expired(max_stale_sec: int = 3600):
-    """Remove entries that expired more than max_stale_sec ago.
-
-    Stale entries are kept briefly for stale-while-revalidate reads,
-    but entries expired over 1 hour ago are safe to purge. Prevents
-    unbounded memory growth from parameterized cache keys.
-    """
+    """Remove L1 entries that expired more than max_stale_sec ago."""
     with _lock:
         now = time.time()
         expired = [k for k, v in _store.items()
@@ -94,57 +83,49 @@ def cleanup_expired(max_stale_sec: int = 3600):
         log.info(f"L1 cleanup: purged {len(expired)} expired entries")
 
 
-# ── L2: Persistent disk cache ───────────────────────────────────────────────
-
-def _disk_path(key: str) -> Path:
-    safe = key.replace('/', '_').replace('\\', '_').replace(' ', '_')
-    return _DISK_DIR / f'{safe}.json'
-
+# ── L2: SQLite persistent cache ──────────────────────────────────────────────
 
 def disk_get(key: str, ttl: int = 86400):
-    """Read from disk cache. Returns data if fresh (within ttl seconds), else None."""
-    path = _disk_path(key)
-    if not path.exists():
-        return None
+    """Read from L2 SQLite cache. Returns data if fresh, else None."""
     try:
-        raw = json.loads(path.read_text())
-        if time.time() < raw.get('expires', 0):
-            return raw['data']
-        return None
+        import database
+        return database.cache_get(_vkey(key))
     except Exception:
         return None
 
 
 def disk_get_stale(key: str):
-    """Read from disk cache even if expired (fallback)."""
-    path = _disk_path(key)
-    if not path.exists():
-        return None
+    """Read from L2 even if expired (fallback)."""
     try:
-        raw = json.loads(path.read_text())
-        return raw.get('data')
+        import database
+        return database.cache_get_stale(_vkey(key))
     except Exception:
         return None
 
 
 def disk_put(key: str, data, ttl: int = 86400):
-    """Write to disk cache with TTL (default 24 hours)."""
-    path = _disk_path(key)
+    """Write to L2 SQLite cache."""
     try:
-        path.write_text(json.dumps({
-            'data': data,
-            'expires': time.time() + ttl,
-            'cached_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-        }))
+        import database
+        database.cache_put(_vkey(key), data, ttl)
     except Exception as e:
-        log.warning(f'Failed to write disk cache for {key}: {e}')
+        log.warning(f'Failed to write L2 cache for {key}: {e}')
+
+
+def disk_get_meta(key: str) -> dict:
+    """Get cache entry metadata (created_at). Returns {} if not found."""
+    try:
+        import database
+        return database.cache_get_meta(_vkey(key))
+    except Exception:
+        return {}
 
 
 def disk_invalidate(key: str):
-    """Remove a specific disk cache entry."""
-    path = _disk_path(key)
+    """Remove a specific L2 cache entry."""
     try:
-        path.unlink(missing_ok=True)
+        import database
+        database.cache_delete(_vkey(key))
     except Exception:
         pass
 
@@ -152,27 +133,20 @@ def disk_invalidate(key: str):
 # ── Multi-layer read (L1 → L2 → stale) ──────────────────────────────────────
 
 def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
-    """Try every cache layer. Returns data or None. Never calls SF.
-
-    Order: L1 fresh → L2 fresh → L1 stale → L2 stale → None
-    """
-    # L1 fresh
+    """Try every cache layer. Returns data or None. Never calls SF."""
     result = get(key)
     if result is not None:
         return result
-    # L2 fresh → promote to L1
     disk_result = disk_get(key, ttl)
     if disk_result is not None:
         put(key, disk_result, ttl)
         return disk_result
-    # L1 stale (expired but still in memory)
     stale = get_stale(key)
     if stale is not None:
         return stale
-    # L2 stale (expired but still on disk)
     disk_stale = disk_get_stale(key)
     if disk_stale is not None:
-        put(key, disk_stale, 60)  # keep stale briefly in L1
+        put(key, disk_stale, 60)
         return disk_stale
     return None
 
@@ -182,49 +156,33 @@ def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
 def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
     """Serve from cache with background re-fetch when expired.
 
-    Behavior:
-    - L1 fresh → return instantly (fast path)
-    - L2 fresh → promote to L1, return instantly
-    - L1/L2 expired → ONE thread re-fetches from SF, ALL others get stale data instantly
-    - No cache at all → ONE thread fetches, others wait briefly (cold start)
-
-    This is stale-while-revalidate: users NEVER see a blank screen.
-    The refresher proactively expires keys on schedule, and this function
-    handles the actual re-fetch with thundering-herd protection.
+    L1 fresh → L2 fresh → ONE thread re-fetches, others get stale → cold start wait.
     """
-    # Fast path: L1 fresh
     result = get(key)
     if result is not None:
         return result
 
-    # L2 fresh → promote to L1
     disk_result = disk_get(key, ttl)
     if disk_result is not None:
         put(key, disk_result, ttl)
         return disk_result
 
-    # Cache expired or missing — need to re-fetch.
-    # Check if another thread is already fetching this key.
     with _lock:
-        # Double-check after lock
         entry = _store.get(key)
         if entry and time.time() < entry['expires']:
             return entry['data']
 
         if key in _pending:
-            # Another thread is already fetching — serve stale data instantly
             stale_entry = _store.get(key)
             if stale_entry:
                 return stale_entry['data']
-            # No stale data at all — wait briefly (cold start)
             event = _pending[key]
         else:
             event = Event()
             _pending[key] = event
-            event = None  # WE are the fetcher
+            event = None
 
     if event is not None:
-        # Another thread is fetching — return stale if available, else wait
         stale = get_stale(key)
         if stale is not None:
             return stale
@@ -236,13 +194,11 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
         if stale2 is not None:
             return stale2
 
-    # We're the fetcher — query SF
     try:
         result = query_fn()
         put(key, result, ttl)
         return result
     except Exception as e:
-        # Graceful degradation: serve stale data if SF fails
         stale = get_stale(key)
         if stale is not None:
             log.warning(f"SF error for '{key}': {e}. Serving stale cached data.")
@@ -256,50 +212,80 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
             evt.set()
 
 
-def cached_query_persistent(key: str, query_fn, ttl: int = 86400):
-    """Like cached_query but also persists to disk. Survives server restarts.
+def cached_query_persistent(key: str, query_fn, ttl: int = 86400, max_stale_hours: int = 0):
+    """Like cached_query but persists to L2 SQLite. Survives restarts.
 
-    Flow: L1 → L2 → fetch (cold start only) → store in L1 + L2
+    If max_stale_hours > 0: auto-regenerates when data is older than that,
+    regardless of TTL. Used for data that should refresh nightly but never
+    expire (satisfaction, garage scorecards). Returns cached_at in result if
+    query_fn returns a dict.
     """
-    # Fast path: in-memory
+    NEVER_EXPIRE = 365 * 86400
+
     result = get(key)
-    if result is not None:
+    if result is not None and max_stale_hours == 0:
         return result
 
-    # Warm start: check disk
-    disk_result = disk_get(key, ttl)
-    if disk_result is not None:
+    disk_result = disk_get(key, NEVER_EXPIRE if max_stale_hours else ttl)
+
+    # Check staleness if max_stale_hours is set
+    if disk_result is not None and max_stale_hours > 0:
+        meta = disk_get_meta(key)
+        created_at = meta.get('created_at', '')
+        is_stale = True
+        if created_at:
+            try:
+                from datetime import datetime as _dt
+                ct = _dt.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                age_hours = (_dt.now() - ct).total_seconds() / 3600
+                is_stale = age_hours > max_stale_hours
+            except Exception:
+                is_stale = True
+        if not is_stale:
+            # Fresh enough — serve from cache
+            if result is None:
+                put(key, disk_result, NEVER_EXPIRE)
+            return disk_result
+        # Stale — fall through to regenerate
+        log.info(f"Cache '{key}' stale ({created_at}, >{max_stale_hours}h) — regenerating")
+    elif disk_result is not None:
         put(key, disk_result, ttl)
         return disk_result
 
-    # Stale fallbacks
-    stale = get_stale(key)
-    if stale is not None:
-        return stale
-    disk_stale = disk_get_stale(key)
-    if disk_stale is not None:
-        put(key, disk_stale, 300)
-        return disk_stale
+    # Stale fallbacks (serve old data while regenerating would block)
+    if max_stale_hours == 0:
+        stale = get_stale(key)
+        if stale is not None:
+            return stale
+        disk_stale = disk_get_stale(key)
+        if disk_stale is not None:
+            put(key, disk_stale, 300)
+            return disk_stale
 
-    # Cold start fetch
+    # Fetch fresh data
     try:
         result = query_fn()
-        put(key, result, ttl)
-        disk_put(key, result, ttl)
+        if isinstance(result, dict):
+            result['cached_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        effective_ttl = NEVER_EXPIRE if max_stale_hours else ttl
+        put(key, result, effective_ttl)
+        disk_put(key, result, effective_ttl)
         return result
     except Exception as e:
-        log.error(f"Cold start persistent fetch failed for '{key}': {e}")
+        # Graceful degradation — serve stale if available
+        stale = disk_result or get_stale(key) or disk_get_stale(key)
+        if stale is not None:
+            log.warning(f"Regen failed for '{key}': {e}. Serving stale data.")
+            put(key, stale, 300)
+            return stale
+        log.error(f"Persistent fetch failed for '{key}': {e}")
         raise
 
 
 # ── Refresher-only: proactive cache refresh ──────────────────────────────────
 
 def refresh_key(key: str, query_fn, ttl: int = DEFAULT_TTL, persist: bool = False):
-    """Called by the refresher thread to proactively update a cache key.
-
-    NOT called by user requests. This is the only function that intentionally
-    calls SF on a schedule.
-    """
+    """Called by the refresher thread to proactively update a cache key."""
     try:
         result = query_fn()
         put(key, result, ttl)
@@ -312,20 +298,21 @@ def refresh_key(key: str, query_fn, ttl: int = DEFAULT_TTL, persist: bool = Fals
 
 
 # ── Filesystem locks (cross-worker, cross-instance) ─────────────────────────
+# Keep filesystem-based locks — SQLite row-level locking isn't ideal for
+# long-running background tasks across multiple workers.
+
+_ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
+_LOCK_DIR = Path('/home/fslapp/locks') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/locks'))
+_LOCK_DIR.mkdir(parents=True, exist_ok=True)
 
 def fs_lock_acquire(name: str, max_age: int = 1800) -> bool:
-    """Acquire a filesystem-based lock. Returns True if acquired.
-
-    Used for background generation tasks that should run in only one worker.
-    Lock auto-expires after max_age seconds (default 30 min).
-    """
-    lock_path = _DISK_DIR / f'.lock_{name}'
+    """Acquire a filesystem-based lock. Returns True if acquired."""
+    lock_path = _LOCK_DIR / f'.lock_{name}'
     try:
         if lock_path.exists():
             age = time.time() - lock_path.stat().st_mtime
             if age < max_age:
-                return False  # Lock is held and fresh
-            # Stale lock — take over
+                return False
             log.info(f"Stale lock '{name}' ({age:.0f}s old) — taking over")
         lock_path.write_text(json.dumps({
             'pid': os.getpid(),
@@ -339,7 +326,7 @@ def fs_lock_acquire(name: str, max_age: int = 1800) -> bool:
 
 def fs_lock_release(name: str):
     """Release a filesystem lock."""
-    lock_path = _DISK_DIR / f'.lock_{name}'
+    lock_path = _LOCK_DIR / f'.lock_{name}'
     try:
         lock_path.unlink(missing_ok=True)
     except Exception:
@@ -356,11 +343,17 @@ def stats():
         alive = sum(1 for e in _store.values() if now < e['expires'])
         stale = total - alive
         pending = len(_pending)
-    disk_files = list(_DISK_DIR.glob('*.json'))
+    try:
+        import database
+        db_stats = database.cache_stats()
+    except Exception:
+        db_stats = {'total_keys': 0, 'alive': 0, 'stale': 0}
     return {
-        'total_keys': total,
-        'alive': alive,
-        'stale': stale,
-        'pending_fetches': pending,
-        'disk_cached': len(disk_files),
+        'l1_total': total,
+        'l1_alive': alive,
+        'l1_stale': stale,
+        'l1_pending': pending,
+        'l2_total': db_stats['total_keys'],
+        'l2_alive': db_stats['alive'],
+        'l2_stale': db_stats['stale'],
     }

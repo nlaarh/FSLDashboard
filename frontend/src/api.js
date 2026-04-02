@@ -159,3 +159,5 @@ export const adminCreateUser = (pin, data) => api.post('/admin/users', data, pin
 export const adminUpdateUser = (pin, username, data) => api.put(`/admin/users/${username}`, data, pinHeader(pin)).then(r => r.data)
 export const adminDeleteUser = (pin, username) => api.delete(`/admin/users/${username}`, pinHeader(pin)).then(r => r.data)
 export const adminListSessions = (pin) => api.get('/admin/sessions', pinHeader(pin)).then(r => r.data)
+export const adminGetBonusTiers = (pin) => api.get('/admin/bonus-tiers', pinHeader(pin)).then(r => r.data)
+export const adminSetBonusTiers = (pin, tiers) => api.put('/admin/bonus-tiers', tiers, pinHeader(pin)).then(r => r.data)

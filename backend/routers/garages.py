@@ -553,7 +553,7 @@ def get_performance(
     period_start = sanitize_soql(period_start)
     period_end = sanitize_soql(period_end)
     cache_key = f"perf_{territory_id}_{period_start}_{period_end}"
-    return cache.cached_query_persistent(cache_key, lambda: _compute_performance(territory_id, period_start, period_end), ttl=3600)
+    return cache.cached_query_persistent(cache_key, lambda: _compute_performance(territory_id, period_start, period_end), max_stale_hours=26)
 
 
 def _compute_performance(territory_id: str, period_start: str, period_end: str) -> dict:

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from routers.auth import _verify_cookie, _PUBLIC_PATHS
 import cache
 import refresher
+import database
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
@@ -165,6 +166,10 @@ def _nightly_trends_refresh():
 
 @app.on_event("startup")
 async def startup():
+    # Initialize SQLite database (settings, cache, bonus_tiers)
+    database.init_db()
+    database.migrate_settings_json()
+
     # Start proactive cache refresher (replaces _warmup_cache)
     # The refresher handles leader election — safe to call from all workers
     refresher.start()

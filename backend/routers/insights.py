@@ -23,8 +23,8 @@ _SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
 
 def _load_settings():
     try:
-        with open(_SETTINGS_FILE) as f:
-            return _json.load(f)
+        import database
+        return database.get_all_settings()
     except Exception:
         return {}
 

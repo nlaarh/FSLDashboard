@@ -260,46 +260,39 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
         raise HTTPException(400, "Cannot fetch future months")
 
     is_current = (year == today.year and mon == today.month)
+    is_previous = (today.replace(day=1) - timedelta(days=1)).month == mon and (today.replace(day=1) - timedelta(days=1)).year == year
+    is_recent = is_current or is_previous  # surveys still arriving
     cache_key = f'satisfaction_overview_{month}'
-    ttl = 43200 if is_current else 31536000  # 12h current, 1yr past
 
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
-    disk = cache.disk_get(cache_key, ttl=ttl)
-    if disk:
-        cache.put(cache_key, disk, ttl)
-        return disk
+    def _generate():
+        # Quick check: zero surveys → return empty immediately
+        last_day_num = calendar.monthrange(year, mon)[1]
+        end_day = _date(year, mon, last_day_num) + timedelta(days=1)
+        if is_current:
+            end_day = today
+        start_utc = f"{_date(year, mon, 1).isoformat()}T00:00:00Z"
+        end_utc = f"{end_day.isoformat()}T00:00:00Z"
+        survey_count = sf_query_all(f"""
+            SELECT COUNT(Id) cnt FROM Survey_Result__c
+            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc}
+              AND ERS_Work_Order__r.CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+        """)
+        total = (survey_count[0].get('cnt', 0) or 0) if survey_count else 0
+        if total == 0:
+            return {
+                'month': month, 'summary': {}, 'daily_trend': [],
+                'all_garages': [], 'executive_insight': None,
+                'zone_satisfaction': {}, 'generated': True,
+            }
+        return _generate_satisfaction_overview(month)
 
-    # Quick check: if month has zero surveys, return empty immediately
-    # instead of spawning a 60-90s background generation
-    last_day_num = calendar.monthrange(year, mon)[1]
-    end_day = _date(year, mon, last_day_num) + timedelta(days=1)
-    if is_current:
-        end_day = today
-    start_utc = f"{_date(year, mon, 1).isoformat()}T00:00:00Z"
-    end_utc = f"{end_day.isoformat()}T00:00:00Z"
-    survey_count = sf_query_all(f"""
-        SELECT COUNT(Id) cnt FROM Survey_Result__c
-        WHERE ERS_Work_Order__r.CreatedDate >= {start_utc}
-          AND ERS_Work_Order__r.CreatedDate < {end_utc}
-          AND ERS_Overall_Satisfaction__c != null
-    """)
-    total = (survey_count[0].get('cnt', 0) or 0) if survey_count else 0
-    if total == 0:
-        empty_result = {
-            'month': month, 'summary': {}, 'daily_trend': [],
-            'all_garages': [], 'executive_insight': None,
-            'zone_satisfaction': {}, 'generated': True,
-        }
-        cache.put(cache_key, empty_result, 300 if is_current else ttl)  # short TTL for current month
-        return empty_result
-
-    # Generate synchronously — all queries run in single parallel batch (~5-8s)
-    result = _generate_satisfaction_overview(month)
-    cache.put(cache_key, result, ttl)
-    cache.disk_put(cache_key, result, ttl)
-    return result
+    # Recent months: auto-regenerate if data >26h old (nightly job missed)
+    # Old months: never expire, serve from cache forever
+    return cache.cached_query_persistent(
+        cache_key, _generate,
+        max_stale_hours=26 if is_recent else 0,
+    )
 
 
 @router.get("/api/insights/satisfaction/refresh")

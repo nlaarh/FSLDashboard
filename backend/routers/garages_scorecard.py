@@ -17,23 +17,10 @@ log = logging.getLogger('garages_scorecard')
 
 _SETTINGS_FILE = os.path.expanduser('~/.fslapp/settings.json')
 
-# Bonus tiers based on Technician "Totally Satisfied" %
-BONUS_TIERS = [
-    (98, 4),   # ≥ 98% → $4/SA
-    (96, 3),   # 96-97.99% → $3/SA
-    (94, 2),   # 94-95.99% → $2/SA
-    (92, 1),   # 92-93.99% → $1/SA
-]
-
-
 def _bonus_for_pct(pct):
-    """Return (bonus_per_sa, tier_label) for a Technician Totally Satisfied %."""
-    if pct is None:
-        return 0, 'N/A'
-    for threshold, bonus in BONUS_TIERS:
-        if pct >= threshold:
-            return bonus, f'≥{threshold}%'
-    return 0, '<92%'
+    """Return (bonus_per_sa, tier_label) — reads configurable tiers from SQLite."""
+    import database
+    return database.bonus_for_pct(pct)
 
 
 def _totally_satisfied_pct(rows, field):
@@ -46,14 +33,13 @@ def _totally_satisfied_pct(rows, field):
 
 
 def _load_ai_settings():
-    # Env var takes priority (Azure App Settings), fall back to settings.json
+    # Env var takes priority (Azure App Settings), fall back to SQLite settings
     env_key = os.environ.get('OPENAI_API_KEY', '')
     if env_key:
         return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
     try:
-        with open(_SETTINGS_FILE) as f:
-            settings = _json.load(f)
-        cb = settings.get('chatbot', {})
+        import database
+        cb = database.get_setting('chatbot') or {}
         return cb.get('provider', ''), cb.get('api_key', ''), cb.get('primary_model', '')
     except Exception:
         return '', '', ''
@@ -106,7 +92,7 @@ def api_garage_performance_scorecard(
     def _compute():
         return _build_scorecard(territory_id, start_date, end_date)
 
-    return cache.cached_query_persistent(cache_key, _compute, ttl=3600)
+    return cache.cached_query_persistent(cache_key, _compute, max_stale_hours=26)
 
 
 def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
@@ -363,11 +349,13 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
     # Overall SA stats (all SAs combined)
     overall_sa_stats = _sa_stats(sas)
 
+    import database as _db
     result = {
         'territory_id': territory_id,
         'start_date': start_date,
         'end_date': end_date,
         'garage_type': 'fleet' if _is_fleet else 'contractor',
+        'bonus_tiers': _db.get_bonus_tiers(),
         'garage_summary': {
             'overall_pct': overall_pct,
             'response_time_pct': rt_pct,
