@@ -57,3 +57,11 @@
   animation: shimmer 1.5s infinite;
   border-radius: 8px;
 }
+
+/* AI executive summary HTML styling */
+.ai-summary h3 { font-size: 14px; font-weight: 700; color: #e2e8f0; margin: 16px 0 6px; }
+.ai-summary h3:first-child { margin-top: 0; }
+.ai-summary p { margin-bottom: 8px; }
+.ai-summary ul, .ai-summary ol { padding-left: 18px; margin-bottom: 8px; }
+.ai-summary li { margin-bottom: 4px; }
+.ai-summary strong { color: #f1f5f9; }

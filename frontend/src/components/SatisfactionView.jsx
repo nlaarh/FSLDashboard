@@ -9,7 +9,8 @@ import SALink from '../components/SALink'
 import { InfoTip, TrendChart, CHART_COLORS } from './CommandCenterUtils'
 import { getMapConfig } from '../mapStyles'
 import SatisfactionDayDetail from './SatisfactionDayDetail'
-import SatisfactionGarageDetail from './SatisfactionGarageDetail'
+import GarageSatisfactionTab from './GarageSatisfactionTab'
+import SatisfactionScorecard from './SatisfactionScorecard'
 
 export default function SatisfactionView() {
   const now = new Date()
@@ -72,7 +73,7 @@ export default function SatisfactionView() {
   }
 
   if (selectedGarage) {
-    return <SatisfactionGarageDetail garage={selectedGarage} month={month} onBack={() => setSelectedGarage(null)} />
+    return <GarageSatisfactionTab garageName={selectedGarage} onBack={() => setSelectedGarage(null)} initialMonth={month} />
   }
 
   if (loading) return (
@@ -280,6 +281,9 @@ export default function SatisfactionView() {
           <Line yAxisId="pct" dataKey={() => 82} name="Target (82%)" stroke="#475569" strokeDasharray="5 5" strokeWidth={1} dot={false} />
         </ComposedChart>
       </TrendChart>
+
+      {/* Satisfaction Scorecard — shows after monthly content, only if data available */}
+      <SatisfactionScorecard />
 
     </div>
   )

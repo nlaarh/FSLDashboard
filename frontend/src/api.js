@@ -98,7 +98,9 @@ export const fetchSatisfactionOverview = (month) => api.get(`/insights/satisfact
 export const refreshSatisfactionOverview = (month) => api.get(`/insights/satisfaction/refresh?month=${month}`).then(r => r.data)
 export const fetchSatisfactionGarage = (name, month) => api.get(`/insights/satisfaction/garage/${encodeURIComponent(name)}?month=${month}`).then(r => r.data)
 export const fetchSatisfactionDetail = (name, date) => api.get(`/insights/satisfaction/detail/${encodeURIComponent(name)}/${date}`).then(r => r.data)
+export const fetchSatisfactionDetailAI = (name, date) => api.get(`/insights/satisfaction/detail/${encodeURIComponent(name)}/${date}/ai-summary`).then(r => r.data)
 export const fetchSatisfactionDay = (date) => api.get(`/insights/satisfaction/day/${date}`).then(r => r.data)
+export const fetchSatisfactionScorecard = () => api.get('/insights/satisfaction/scorecard').then(r => r.data)
 
 // Daily Operations (correct PTA/ATA)
 export const fetchOpsTerritories = () => api.get('/ops/territories').then(r => r.data)
@@ -139,6 +141,13 @@ export const triageIssues = (pin) => api.post('/issues/triage', null, pinHeader(
 
 // Feature Flags
 export const fetchFeatures = () => api.get('/features').then(r => r.data)
+
+// Live Dispatch Board + SA Watchlist
+export const fetchLiveDispatch = () => api.get('/live-dispatch').then(r => r.data)
+export const fetchWatchlist = () => api.get('/watchlist').then(r => r.data)
+export const fetchWatchlistManual = () => api.get('/watchlist/manual').then(r => r.data)
+export const followSA = (sa_number, sa_id = '', added_by = '') => api.post('/watchlist/follow', { sa_number, sa_id, added_by }).then(r => r.data)
+export const unfollowSA = (sa_number) => api.delete(`/watchlist/follow/${sa_number}`).then(r => r.data)
 
 // On-Route Tracking
 export const fetchOnRoute = () => api.get('/onroute').then(r => r.data)

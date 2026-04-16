@@ -96,6 +96,13 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_log_timestamp ON activity_log(timestamp);
             CREATE INDEX IF NOT EXISTS idx_log_user ON activity_log(user);
 
+            CREATE TABLE IF NOT EXISTS watchlist_manual (
+                sa_number TEXT PRIMARY KEY,
+                sa_id TEXT,
+                added_by TEXT DEFAULT '',
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -319,6 +326,44 @@ def migrate_settings_json():
         log.info(f"Renamed settings.json → settings.json.bak")
     except Exception as e:
         log.warning(f"Could not rename settings.json: {e}")
+
+
+# ── Manual Watchlist ──────────────────────────────────────────────────────────
+
+def _ensure_watchlist_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist_manual (
+            sa_number TEXT PRIMARY KEY,
+            sa_id TEXT,
+            added_by TEXT DEFAULT '',
+            added_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+def watchlist_add(sa_number: str, sa_id: str = '', added_by: str = ''):
+    with get_db() as conn:
+        _ensure_watchlist_table(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO watchlist_manual (sa_number, sa_id, added_by) VALUES (?, ?, ?)",
+            (sa_number, sa_id, added_by),
+        )
+
+def watchlist_remove(sa_number: str):
+    with get_db() as conn:
+        _ensure_watchlist_table(conn)
+        conn.execute("DELETE FROM watchlist_manual WHERE sa_number = ?", (sa_number,))
+
+def watchlist_list() -> list:
+    with get_db() as conn:
+        _ensure_watchlist_table(conn)
+        rows = conn.execute("SELECT sa_number, sa_id, added_by, added_at FROM watchlist_manual ORDER BY added_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+def watchlist_has(sa_number: str) -> bool:
+    with get_db() as conn:
+        _ensure_watchlist_table(conn)
+        row = conn.execute("SELECT 1 FROM watchlist_manual WHERE sa_number = ?", (sa_number,)).fetchone()
+        return row is not None
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────

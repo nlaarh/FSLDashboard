@@ -598,3 +598,4 @@ def _build_day_insights(ts_pct, total_surveys, avg_ata, total_d, total_td,
             })
 
     return insights
+

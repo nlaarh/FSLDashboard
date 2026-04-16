@@ -5,10 +5,15 @@ from fastapi import APIRouter, HTTPException, Query
 
 from utils import parse_dt as _parse_dt
 from sf_client import sf_query_all, sf_parallel, sanitize_soql  # sf_parallel used in garage detail
+from sf_batch import batch_soql_parallel
 import cache
 
 from routers.dispatch_shared import _fmt_et, _is_real_garage
 from routers.satisfaction_utils import _satisfaction_insights, _build_day_result
+from routers.satisfaction_shared import (
+    _build_towbook_on_location_map, _process_sa_ata_pta,
+    _pct,
+)
 
 router = APIRouter()
 
@@ -59,7 +64,7 @@ def api_satisfaction_garage(name: str, month: str = Query(..., description="YYYY
 
 def _generate_satisfaction_garage(name: str, month: str):
     """Generate garage-level satisfaction detail with ATA correlation."""
-    import calendar, time as _time
+    import calendar
     from datetime import date as _date, timedelta as _td
 
     year, mon = int(month[:4]), int(month[5:7])
@@ -77,22 +82,23 @@ def _generate_satisfaction_garage(name: str, month: str):
 
     safe_name = name  # already sanitized by sanitize_soql at router level
 
-    # Query 1: Daily satisfaction for this garage
-    sat_rows = sf_query_all(f"""
-        SELECT DAY_ONLY(CreatedDate) d,
-               ERS_Overall_Satisfaction__c sat,
-               ERS_Response_Time_Satisfaction__c rt_sat,
-               COUNT(Id) cnt
-        FROM Survey_Result__c
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ERS_Overall_Satisfaction__c != null
-          AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
-        GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c, ERS_Response_Time_Satisfaction__c
-    """)
-    _time.sleep(0.5)
-
-    # Query 2 + 3: Completed SAs + Towbook on-location times (parallel)
+    # ALL queries in one parallel batch — single roundtrip to SF
     data = sf_parallel(
+        sat_rows=lambda: sf_query_all(f"""
+            SELECT DAY_ONLY(CreatedDate) d,
+                   ERS_Overall_Satisfaction__c sat,
+                   ERS_Response_Time_Satisfaction__c rt_sat,
+                   ERS_Technician_Satisfaction__c tech_sat,
+                   ERSSatisfaction_With_Being_Kept_Informed__c info_sat,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c,
+                     ERS_Response_Time_Satisfaction__c, ERS_Technician_Satisfaction__c,
+                     ERSSatisfaction_With_Being_Kept_Informed__c
+        """),
         sas=lambda: sf_query_all(f"""
             SELECT Id, CreatedDate, Status, ActualStartTime,
                    ERS_Dispatch_Method__c, ERS_PTA__c, WorkType.Name
@@ -102,104 +108,166 @@ def _generate_satisfaction_garage(name: str, month: str):
               AND ServiceTerritoryId != null
               AND Status = 'Completed'
         """),
-        tb_on_loc=lambda: sf_query_all(f"""
-            SELECT ServiceAppointmentId, CreatedDate, NewValue
-            FROM ServiceAppointmentHistory
-            WHERE Field = 'Status'
-              AND ServiceAppointment.CreatedDate >= {start_utc}
-              AND ServiceAppointment.CreatedDate < {end_utc}
-              AND ServiceAppointment.ServiceTerritory.Name = '{safe_name}'
-              AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
-              AND ServiceAppointment.Status = 'Completed'
+        drv_total=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did,
+                   ERS_Driver__r.Name dname,
+                   COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c != null
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c, ERS_Driver__r.Name
+        """),
+        drv_overall_ts=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Overall_Satisfaction__c = 'Totally Satisfied'
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_rt_n=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Response_Time_Satisfaction__c != null
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_rt_ts=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Response_Time_Satisfaction__c = 'Totally Satisfied'
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_tech_n=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Technician_Satisfaction__c != null
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_tech_ts=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERS_Technician_Satisfaction__c = 'Totally Satisfied'
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_info_n=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERSSatisfaction_With_Being_Kept_Informed__c != null
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
+        """),
+        drv_info_ts=lambda: sf_query_all(f"""
+            SELECT ERS_Driver__c did, COUNT(Id) cnt
+            FROM Survey_Result__c
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ERSSatisfaction_With_Being_Kept_Informed__c = 'Totally Satisfied'
+              AND ERS_Driver__c != null
+              AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
+            GROUP BY ERS_Driver__c
         """),
     )
+    sat_rows = data['sat_rows']
     sas = data['sas']
-
-    # Build Towbook on-location map from parallel query result
-    towbook_on_location = {}
-    for r in data['tb_on_loc']:
-        if r.get('NewValue') != 'On Location':
-            continue
+    towbook_ids = [
+        sa.get('Id') for sa in sas
+        if sa.get('Id') and (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
+    ]
+    sa_ids = [sa.get('Id') for sa in sas if sa.get('Id')]
+    ar_rows = batch_soql_parallel("""
+        SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name, CreatedDate
+        FROM AssignedResource
+        WHERE ServiceAppointmentId IN ('{id_list}')
+        ORDER BY ServiceAppointmentId, CreatedDate DESC
+    """, sa_ids, chunk_size=200) if sa_ids else []
+    assigned_by_sa = {}
+    for r in ar_rows:
         sa_id = r.get('ServiceAppointmentId')
-        ts = _parse_dt(r.get('CreatedDate'))
-        if ts and (sa_id not in towbook_on_location or ts < towbook_on_location[sa_id]):
-            towbook_on_location[sa_id] = ts
+        if not sa_id or sa_id in assigned_by_sa:
+            continue
+        assigned_by_sa[sa_id] = {
+            'driver_id': r.get('ServiceResourceId'),
+            'name': (r.get('ServiceResource') or {}).get('Name'),
+        }
 
-    # ── Build daily satisfaction buckets ──
-    day_sat = defaultdict(lambda: {'totally_satisfied': 0, 'total': 0, 'rt_ts': 0, 'rt_total': 0})
+    tb_rows = batch_soql_parallel("""
+        SELECT ServiceAppointmentId, CreatedDate, NewValue
+        FROM ServiceAppointmentHistory
+        WHERE Field = 'Status'
+          AND ServiceAppointmentId IN ('{id_list}')
+    """, towbook_ids, chunk_size=200) if towbook_ids else []
+    towbook_on_location = _build_towbook_on_location_map(tb_rows)
+
+    # ── Build daily satisfaction buckets (all 4 dimensions) ──
+    _empty_day = lambda: {'total': 0,
+                          'ts_overall': 0,
+                          'n_rt': 0, 'ts_rt': 0,
+                          'n_tech': 0, 'ts_tech': 0,
+                          'n_info': 0, 'ts_info': 0}
+    day_sat = defaultdict(_empty_day)
     for r in sat_rows:
         d = r.get('d', '')
         sat_val = (r.get('sat') or '').strip().lower()
-        rt_val = (r.get('rt_sat') or '').strip().lower()
         cnt = r.get('cnt', 0) or 0
-        if d and sat_val:
-            day_sat[d]['total'] += cnt
-            if sat_val == 'totally satisfied':
-                day_sat[d]['totally_satisfied'] += cnt
-            if rt_val:
-                day_sat[d]['rt_total'] += cnt
-                if rt_val == 'totally satisfied':
-                    day_sat[d]['rt_ts'] += cnt
-
-    # ── Build daily ATA/PTA buckets ──
-    day_ata = defaultdict(lambda: {'ata_sum': 0.0, 'ata_count': 0, 'pta_miss': 0, 'pta_eligible': 0})
-    for sa in sas:
-        wt = (sa.get('WorkType') or {}).get('Name', '') or ''
-        if 'drop' in wt.lower():
+        if not (d and sat_val):
             continue
-        date_str = (sa.get('CreatedDate') or '')[:10]
-        if not date_str:
-            continue
-        dm = sa.get('ERS_Dispatch_Method__c') or ''
-        d = day_ata[date_str]
+        ds = day_sat[d]
+        ds['total'] += cnt
+        if sat_val == 'totally satisfied':
+            ds['ts_overall'] += cnt
+        rt = (r.get('rt_sat') or '').strip().lower()
+        if rt:
+            ds['n_rt'] += cnt
+            if rt == 'totally satisfied':
+                ds['ts_rt'] += cnt
+        tech = (r.get('tech_sat') or '').strip().lower()
+        if tech:
+            ds['n_tech'] += cnt
+            if tech == 'totally satisfied':
+                ds['ts_tech'] += cnt
+        info = (r.get('info_sat') or '').strip().lower()
+        if info:
+            ds['n_info'] += cnt
+            if info == 'totally satisfied':
+                ds['ts_info'] += cnt
 
-        # ATA calculation
-        if dm == 'Field Services':
-            created = _parse_dt(sa.get('CreatedDate'))
-            actual = _parse_dt(sa.get('ActualStartTime'))
-            if created and actual:
-                diff = (actual - created).total_seconds() / 60
-                if 0 < diff < 480:
-                    d['ata_sum'] += diff
-                    d['ata_count'] += 1
-        elif dm == 'Towbook':
-            on_loc = towbook_on_location.get(sa.get('Id'))
-            if on_loc:
-                created = _parse_dt(sa.get('CreatedDate'))
-                if created:
-                    diff = (on_loc - created).total_seconds() / 60
-                    if 0 < diff < 480:
-                        d['ata_sum'] += diff
-                        d['ata_count'] += 1
-
-        # PTA miss: ERS_PTA__c is minutes promised, compare with actual ATA minutes
-        pta_raw = sa.get('ERS_PTA__c')
-        if pta_raw is not None:
-            pta_min = float(pta_raw)
-            if 0 < pta_min < 999:
-                created = _parse_dt(sa.get('CreatedDate'))
-                if dm == 'Towbook':
-                    arrived = towbook_on_location.get(sa.get('Id'))
-                else:
-                    arrived = _parse_dt(sa.get('ActualStartTime'))
-                if created and arrived:
-                    ata_min = (arrived - created).total_seconds() / 60
-                    if 0 < ata_min < 480:
-                        d['pta_eligible'] += 1
-                        if ata_min > pta_min:
-                            d['pta_miss'] += 1
+    # ── ATA/PTA + per-driver stats (shared logic) ──
+    day_ata, driver_stats = _process_sa_ata_pta(sas, towbook_on_location, assigned_by_sa=assigned_by_sa)
 
     # ── Merge and generate output ──
     all_dates = sorted(set(list(day_sat.keys()) + list(day_ata.keys())))
     daily = []
     for d in all_dates:
-        s = day_sat.get(d, {'totally_satisfied': 0, 'total': 0, 'rt_ts': 0, 'rt_total': 0})
+        s = day_sat.get(d, _empty_day())
         a = day_ata.get(d, {'ata_sum': 0, 'ata_count': 0, 'pta_miss': 0, 'pta_eligible': 0})
 
-        sat_pct = round(100 * s['totally_satisfied'] / s['total']) if s['total'] else None
-        rt_pct = round(100 * s['rt_ts'] / s['rt_total']) if s['rt_total'] else None
+        sat_pct = _pct(s['ts_overall'], s['total'])
+        rt_pct = _pct(s['ts_rt'], s['n_rt'])
+        tech_pct = _pct(s['ts_tech'], s['n_tech'])
+        info_pct = _pct(s['ts_info'], s['n_info'])
         avg_ata = round(a['ata_sum'] / a['ata_count']) if a['ata_count'] else None
-        pta_miss_pct = round(100 * a['pta_miss'] / a['pta_eligible']) if a['pta_eligible'] else None
+        pta_miss_pct = _pct(a['pta_miss'], a['pta_eligible'])
+
+        # SA count for that day
+        sa_count = sum(1 for sa in sas
+                       if (sa.get('CreatedDate') or '')[:10] == d
+                       and 'drop' not in ((sa.get('WorkType') or {}).get('Name', '') or '').lower())
 
         insights = _satisfaction_insights(sat_pct, avg_ata, pta_miss_pct, rt_pct, s['total'])
 
@@ -207,7 +275,10 @@ def _generate_satisfaction_garage(name: str, month: str):
             'date': d,
             'totally_satisfied_pct': sat_pct,
             'response_time_pct': rt_pct,
+            'technician_pct': tech_pct,
+            'kept_informed_pct': info_pct,
             'surveys': s['total'],
+            'sa_count': sa_count,
             'avg_ata': avg_ata,
             'pta_miss_pct': pta_miss_pct,
             'insights': insights,
@@ -215,17 +286,25 @@ def _generate_satisfaction_garage(name: str, month: str):
 
     # Summary
     total_surveys = sum(day_sat[d]['total'] for d in day_sat)
-    total_ts = sum(day_sat[d]['totally_satisfied'] for d in day_sat)
-    total_rt = sum(day_sat[d]['rt_total'] for d in day_sat)
-    total_rt_ts = sum(day_sat[d]['rt_ts'] for d in day_sat)
+    total_ts = sum(day_sat[d]['ts_overall'] for d in day_sat)
+    total_rt = sum(day_sat[d]['n_rt'] for d in day_sat)
+    total_rt_ts = sum(day_sat[d]['ts_rt'] for d in day_sat)
+    total_tech = sum(day_sat[d]['n_tech'] for d in day_sat)
+    total_tech_ts = sum(day_sat[d]['ts_tech'] for d in day_sat)
+    total_info = sum(day_sat[d]['n_info'] for d in day_sat)
+    total_info_ts = sum(day_sat[d]['ts_info'] for d in day_sat)
     total_ata_sum = sum(day_ata[d]['ata_sum'] for d in day_ata)
     total_ata_count = sum(day_ata[d]['ata_count'] for d in day_ata)
+    total_sa = sum(d.get('sa_count', 0) for d in daily)
 
     summary = {
-        'totally_satisfied_pct': round(100 * total_ts / total_surveys) if total_surveys else None,
-        'response_time_pct': round(100 * total_rt_ts / total_rt) if total_rt else None,
+        'totally_satisfied_pct': _pct(total_ts, total_surveys),
+        'response_time_pct': _pct(total_rt_ts, total_rt),
+        'technician_pct': _pct(total_tech_ts, total_tech),
+        'kept_informed_pct': _pct(total_info_ts, total_info),
         'avg_ata': round(total_ata_sum / total_ata_count) if total_ata_count else None,
         'total_surveys': total_surveys,
+        'total_sa': total_sa,
     }
 
     # Top-level insights for the garage
@@ -237,170 +316,66 @@ def _generate_satisfaction_garage(name: str, month: str):
         total_surveys,
     )
 
+    # ── Per-driver satisfaction (faster split aggregates) ──
+    _empty_drv = lambda: {'name': None, 'total': 0,
+                          'ts_overall': 0, 'ts_rt': 0, 'n_rt': 0,
+                          'ts_tech': 0, 'n_tech': 0, 'ts_info': 0, 'n_info': 0}
+    driver_sat = defaultdict(_empty_drv)
+
+    for r in data.get('drv_total', []):
+        did = r.get('did')
+        if not did:
+            continue
+        ds = driver_sat[did]
+        ds['name'] = r.get('dname') or ds['name']
+        ds['total'] = (r.get('cnt', 0) or 0)
+
+    metric_map = [
+        ('drv_overall_ts', 'ts_overall'),
+        ('drv_rt_n', 'n_rt'),
+        ('drv_rt_ts', 'ts_rt'),
+        ('drv_tech_n', 'n_tech'),
+        ('drv_tech_ts', 'ts_tech'),
+        ('drv_info_n', 'n_info'),
+        ('drv_info_ts', 'ts_info'),
+    ]
+    for key, field in metric_map:
+        for r in data.get(key, []):
+            did = r.get('did')
+            if not did:
+                continue
+            driver_sat[did][field] = (r.get('cnt', 0) or 0)
+
+    _empty_ops = lambda: {'name': None, 'sa_count': 0,
+                          'ata_sum': 0.0, 'ata_count': 0,
+                          'pta_miss': 0, 'pta_eligible': 0}
+    drivers = []
+    all_driver_ids = set(driver_sat.keys()) | set(driver_stats.keys())
+    for did in all_driver_ids:
+        sat = driver_sat.get(did, _empty_drv())
+        ops = driver_stats.get(did, _empty_ops())
+        dname = sat['name'] or ops['name']
+        if not dname:
+            continue
+        drivers.append({
+            'driver_id': did,
+            'name': dname,
+            'surveys': sat['total'],
+            'totally_satisfied_pct': _pct(sat['ts_overall'], sat['total']),
+            'response_time_pct': _pct(sat['ts_rt'], sat['n_rt']),
+            'technician_pct': _pct(sat['ts_tech'], sat['n_tech']),
+            'kept_informed_pct': _pct(sat['ts_info'], sat['n_info']),
+            'sa_count': ops['sa_count'],
+            'avg_ata': round(ops['ata_sum'] / ops['ata_count']) if ops['ata_count'] else None,
+            'pta_miss_pct': _pct(ops['pta_miss'], ops['pta_eligible']),
+        })
+    drivers.sort(key=lambda x: (x['surveys'], x['sa_count']), reverse=True)
+
     return {
         'garage': name,
         'month': month,
         'summary': summary,
         'daily': daily,
         'insights': garage_insights,
+        'drivers': drivers,
     }
-
-
-@router.get("/api/insights/satisfaction/detail/{name}/{date}")
-def api_satisfaction_detail(name: str, date: str):
-    """Individual survey cards for a garage on a specific date."""
-    import re
-
-    name = sanitize_soql(name)
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
-        raise HTTPException(400, "date must be YYYY-MM-DD format")
-
-    cache_key = f'satisfaction_detail_{name}_{date}'
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
-    disk = cache.disk_get(cache_key, ttl=3600)
-    if disk:
-        cache.put(cache_key, disk, 3600)
-        return disk
-
-    # Build date range for the day
-    from datetime import date as _date, timedelta as _td
-    d = _date.fromisoformat(date)
-    start_utc = f"{d.isoformat()}T00:00:00Z"
-    end_utc = f"{(d + _td(days=1)).isoformat()}T00:00:00Z"
-
-    safe_name = name  # already sanitized by sanitize_soql at router level
-
-    rows = sf_query_all(f"""
-        SELECT Id, CreatedDate,
-               ERS_Overall_Satisfaction__c,
-               ERS_Response_Time_Satisfaction__c,
-               ERS_Technician_Satisfaction__c,
-               ERS_Work_Order_Number__c,
-               ERS_Work_Order__r.WorkOrderNumber,
-               Customer_Comments__c
-        FROM Survey_Result__c
-        WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-          AND ERS_Work_Order__r.ServiceTerritory.Name = '{safe_name}'
-    """)
-
-    surveys = []
-    for r in rows:
-        surveys.append({
-            'id': r.get('Id', ''),
-            'created': _fmt_et(r.get('CreatedDate')),
-            'overall': r.get('ERS_Overall_Satisfaction__c') or '',
-            'response_time': r.get('ERS_Response_Time_Satisfaction__c') or '',
-            'technician': r.get('ERS_Technician_Satisfaction__c') or '',
-            'wo_number': r.get('ERS_Work_Order_Number__c') or '',
-            'comment': r.get('Customer_Comments__c') or '',
-        })
-
-    result = {'garage': name, 'date': date, 'surveys': surveys}
-    cache.put(cache_key, result, 3600)
-    cache.disk_put(cache_key, result, 3600)
-    return result
-
-
-@router.get("/api/insights/satisfaction/day/{date}")
-def api_satisfaction_day(date: str):
-    """Full day analysis: what drove the satisfaction score on this date.
-
-    Pulls surveys by garage, SA performance (ATA, cancelled, completed),
-    and individual problem surveys with comments. Synchronous — data is small
-    (single day).
-    """
-    import re, time as _time
-    from datetime import date as _date, timedelta as _td
-
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
-        raise HTTPException(400, "date must be YYYY-MM-DD format")
-
-    cache_key = f'satisfaction_day_{date}'
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
-    disk = cache.disk_get(cache_key, ttl=7200)
-    if disk:
-        cache.put(cache_key, disk, 7200)
-        return disk
-
-    d = _date.fromisoformat(date)
-    start_utc = f"{d.isoformat()}T00:00:00Z"
-    end_utc = f"{(d + _td(days=1)).isoformat()}T00:00:00Z"
-
-    # ── All queries in parallel — no sequential batches ──
-    data = sf_parallel(
-        surveys=lambda: sf_query_all(f"""
-            SELECT Id, CreatedDate,
-                   ERS_Overall_Satisfaction__c,
-                   ERS_Response_Time_Satisfaction__c,
-                   ERS_Technician_Satisfaction__c,
-                   ERS_Work_Order_Number__c,
-                   ERS_Work_Order__r.Id,
-                   ERS_Work_Order__r.ServiceTerritory.Name,
-                   Customer_Comments__c
-            FROM Survey_Result__c
-            WHERE ERS_Work_Order__r.CreatedDate >= {start_utc} AND ERS_Work_Order__r.CreatedDate < {end_utc}
-              AND ERS_Overall_Satisfaction__c != null
-        """),
-        sas=lambda: sf_query_all(f"""
-            SELECT Id, CreatedDate, Status, ActualStartTime,
-                   ERS_Dispatch_Method__c, ERS_PTA__c,
-                   ServiceTerritory.Name, WorkType.Name,
-                   ERS_Cancellation_Reason__c,
-                   AppointmentNumber, ParentRecordId
-            FROM ServiceAppointment
-            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
-              AND ServiceTerritoryId != null
-              AND RecordType.Name = 'ERS Service Appointment'
-        """),
-        # WOLI mapping — single cross-object query (no chunking)
-        woli=lambda: sf_query_all(f"""
-            SELECT Id, WorkOrderId
-            FROM WorkOrderLineItem
-            WHERE WorkOrder.CreatedDate >= {start_utc} AND WorkOrder.CreatedDate < {end_utc}
-              AND WorkOrder.ServiceTerritoryId != null
-        """),
-        # Towbook on-location — single cross-object query
-        tb_on_loc=lambda: sf_query_all(f"""
-            SELECT ServiceAppointmentId, CreatedDate, NewValue
-            FROM ServiceAppointmentHistory
-            WHERE Field = 'Status'
-              AND ServiceAppointment.CreatedDate >= {start_utc}
-              AND ServiceAppointment.CreatedDate < {end_utc}
-              AND ServiceAppointment.ERS_Dispatch_Method__c = 'Towbook'
-              AND ServiceAppointment.Status = 'Completed'
-              AND ServiceAppointment.ServiceTerritoryId != null
-              AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
-        """),
-    )
-    surveys = data['surveys']
-    sas = data['sas']
-
-    # Build WOLI -> WO mapping, then WO -> SA
-    woli_to_wo = {r['Id']: r.get('WorkOrderId') for r in data['woli']}
-    wo_to_sa = {}
-    for sa in sas:
-        woli_id = sa.get('ParentRecordId')
-        wo_id = woli_to_wo.get(woli_id)
-        if wo_id and wo_id not in wo_to_sa:
-            wo_to_sa[wo_id] = {
-                'sa_number': sa.get('AppointmentNumber', ''),
-                'call_date': (sa.get('CreatedDate') or '')[:10],
-                'status': sa.get('Status', ''),
-                'driver': '',  # enriched below if needed
-            }
-
-    # Build Towbook on-location map
-    towbook_on_loc = {}
-    for r in data.get('tb_on_loc', []):
-        if r.get('NewValue') != 'On Location':
-            continue
-        sa_id = r.get('ServiceAppointmentId')
-        ts = _parse_dt(r.get('CreatedDate'))
-        if ts and (sa_id not in towbook_on_loc or ts < towbook_on_loc[sa_id]):
-            towbook_on_loc[sa_id] = ts
-
-    return _build_day_result(date, cache_key, surveys, sas, wo_to_sa, towbook_on_loc)

@@ -29,7 +29,8 @@ from datetime import timedelta
 from collections import defaultdict
 
 from utils import parse_dt as _parse_dt, to_eastern as _to_eastern, haversine
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all
+from sf_batch import batch_soql_parallel
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -135,50 +136,30 @@ def fetch_gps_history(driver_ids: list, start_iso: str, end_iso: str) -> tuple:
     if not driver_ids:
         return lat_hist, lon_hist
 
-    for i in range(0, len(driver_ids), 200):
-        batch = driver_ids[i:i + 200]
-        id_list = ','.join(f"'{d}'" for d in batch)
+    rows = batch_soql_parallel(f"""
+        SELECT ServiceResourceId, Field, NewValue, CreatedDate
+        FROM ServiceResourceHistory
+        WHERE Field IN ('LastKnownLatitude', 'LastKnownLongitude')
+          AND ServiceResourceId IN ('{{id_list}}')
+          AND CreatedDate >= {start_iso}
+          AND CreatedDate <= {end_iso}
+        ORDER BY CreatedDate ASC
+    """, driver_ids, chunk_size=200)
 
-        hist = sf_parallel(
-            lat=lambda il=id_list: sf_query_all(f"""
-                SELECT ServiceResourceId, NewValue, CreatedDate
-                FROM ServiceResourceHistory
-                WHERE Field = 'LastKnownLatitude'
-                  AND ServiceResourceId IN ({il})
-                  AND CreatedDate >= {start_iso}
-                  AND CreatedDate <= {end_iso}
-                ORDER BY CreatedDate ASC
-            """),
-            lon=lambda il=id_list: sf_query_all(f"""
-                SELECT ServiceResourceId, NewValue, CreatedDate
-                FROM ServiceResourceHistory
-                WHERE Field = 'LastKnownLongitude'
-                  AND ServiceResourceId IN ({il})
-                  AND CreatedDate >= {start_iso}
-                  AND CreatedDate <= {end_iso}
-                ORDER BY CreatedDate ASC
-            """),
-        )
-
-        for row in hist['lat']:
-            d_id = row.get('ServiceResourceId')
-            ts = _parse_dt(row.get('CreatedDate'))
-            if not d_id or not ts:
-                continue
-            try:
-                lat_hist[d_id].append((ts, float(row['NewValue'])))
-            except (TypeError, ValueError):
-                pass
-
-        for row in hist['lon']:
-            d_id = row.get('ServiceResourceId')
-            ts = _parse_dt(row.get('CreatedDate'))
-            if not d_id or not ts:
-                continue
-            try:
-                lon_hist[d_id].append((ts, float(row['NewValue'])))
-            except (TypeError, ValueError):
-                pass
+    for row in rows:
+        d_id = row.get('ServiceResourceId')
+        ts = _parse_dt(row.get('CreatedDate'))
+        if not d_id or not ts:
+            continue
+        try:
+            val = float(row['NewValue'])
+        except (TypeError, ValueError):
+            continue
+        field = row.get('Field')
+        if field == 'LastKnownLatitude':
+            lat_hist[d_id].append((ts, val))
+        elif field == 'LastKnownLongitude':
+            lon_hist[d_id].append((ts, val))
 
     # Ensure ascending order (ORDER BY handles single-batch; guards multi-batch merges)
     for d_id in lat_hist:
@@ -400,7 +381,8 @@ def fetch_sa_timeline(sa_ids: list) -> dict:
 def build_assign_steps(events: list, members: list, driver_skills: dict,
                        required_skills: set, sa_lat: float, sa_lon: float,
                        lat_hist: dict, lon_hist: dict,
-                       truck_login_hist: dict | None = None) -> list:
+                       truck_login_hist: dict | None = None,
+                       max_step_drivers: int | None = None) -> list:
     """For each assignment event, snapshot where on-truck Fleet drivers were.
 
     A driver is included only if they pass all three gates at time T:
@@ -499,6 +481,19 @@ def build_assign_steps(events: list, members: list, driver_skills: dict,
             d['assigned_closest'] = d['is_assigned'] and d['is_closest']
 
         step_drivers.sort(key=lambda d: d['distance'] if d['distance'] is not None else 9999)
+        if max_step_drivers and len(step_drivers) > max_step_drivers:
+            assigned_ids = {d['driver_id'] for d in step_drivers if d.get('is_assigned')}
+            closest_ids = {d['driver_id'] for d in step_drivers if d.get('is_closest')}
+            keep_ids = assigned_ids | closest_ids
+            limited = [d for d in step_drivers if d['driver_id'] in keep_ids]
+            if len(limited) < max_step_drivers:
+                for d in step_drivers:
+                    if d['driver_id'] in keep_ids:
+                        continue
+                    limited.append(d)
+                    if len(limited) >= max_step_drivers:
+                        break
+            step_drivers = limited
 
         steps.append({
             'time': ev['time'],

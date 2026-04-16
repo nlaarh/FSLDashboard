@@ -110,10 +110,10 @@ async def activity_log_middleware(request: Request, call_next):
 from routers import (
     auth, admin, garages, garages_performance, command_center, ops, map as map_router,
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
-    dispatch_satisfaction, satisfaction_garage,
+    dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
-    garages_scorecard, garages_export,
+    garages_scorecard, garages_export, live_dispatch, watchlist,
 )
 
 app.include_router(auth.router)
@@ -127,6 +127,7 @@ app.include_router(dispatch_drill_detail.router)
 app.include_router(dispatch_trends.router)
 app.include_router(dispatch_satisfaction.router)
 app.include_router(satisfaction_garage.router)
+app.include_router(satisfaction_day.router)
 app.include_router(issues.router)
 app.include_router(pta.router)
 app.include_router(chatbot.router)
@@ -142,6 +143,9 @@ app.include_router(garages_performance.router)
 app.include_router(insights.router)
 app.include_router(insights_health.router)
 app.include_router(dispatch_trends_monthly.router)
+app.include_router(satisfaction_scorecard.router)
+app.include_router(live_dispatch.router)
+app.include_router(watchlist.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -206,6 +210,15 @@ def _nightly_trends_refresh():
                 cache.put(sat_key, result, 43200)
                 cache.disk_put(sat_key, result, 43200)
                 log.info(f"Nightly: satisfaction overview complete for {current_month}.")
+
+                # Satisfaction scorecard (reads from cached overviews — zero SF queries)
+                log.info("Nightly: refreshing satisfaction scorecard...")
+                cache.invalidate(satisfaction_scorecard.CACHE_KEY)
+                cache.disk_invalidate(satisfaction_scorecard.CACHE_KEY)
+                result = satisfaction_scorecard.generate_scorecard()
+                cache.put(satisfaction_scorecard.CACHE_KEY, result, 86400)
+                cache.disk_put(satisfaction_scorecard.CACHE_KEY, result, 86400)
+                log.info("Nightly: satisfaction scorecard complete.")
             finally:
                 cache.fs_lock_release('nightly_trends')
 

@@ -4,12 +4,14 @@ import { fetchSchedule, fetchSimulation } from '../api'
 import ScheduleGrid from '../components/ScheduleGrid'
 import MapView from '../components/MapView'
 import GarageDashboard from '../components/GarageDashboard'
-import { ArrowLeft, Calendar, BarChart3, Map, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import GarageSatisfactionTab from '../components/GarageSatisfactionTab'
+import { ArrowLeft, Calendar, BarChart3, Map, Star, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const TABS = [
-  { key: 'schedule',  label: 'Schedule',    icon: Calendar },
-  { key: 'dashboard', label: 'Dashboard',   icon: BarChart3 },
-  { key: 'dispatch',  label: 'Dispatch Map', icon: Map },
+  { key: 'schedule',     label: 'Schedule',          icon: Calendar },
+  { key: 'dashboard',    label: 'Dashboard',         icon: BarChart3 },
+  { key: 'dispatch',     label: 'Dispatch Map',      icon: Map },
+  { key: 'satisfaction', label: 'Satisfaction Score', icon: Star },
 ]
 
 import { getWeek as getWeekDates } from '../utils/dateHelpers'
@@ -138,6 +140,11 @@ export default function GarageDetail() {
           {error.simulation && <ErrorState msg={error.simulation} />}
           {simulation && <MapView data={simulation} />}
         </div>
+      )}
+
+      {/* Satisfaction Score tab */}
+      {tab === 'satisfaction' && (
+        <GarageSatisfactionTab garageName={garageName} />
       )}
     </div>
   )

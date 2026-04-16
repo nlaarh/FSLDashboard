@@ -11,6 +11,7 @@ import { fetchHumanIntervention, fetchGpsDetail, fetchReassignmentDetail, fetchD
 import { InfoTip, DrillDown, MiniDonut, fmtMin } from './CommandCenterUtils'
 import TrendsView, { MonthTrendsView } from './TrendsView'
 import SatisfactionView from './SatisfactionView'
+import SatisfactionScorecard from './SatisfactionScorecard'
 import { SADetailRow, BounceDetailRow, ClosestDriverDetailRow } from './DispatchDrillDowns'
 import { DispatchSplitCard, TodayCalls, GpsDriverRow, InsightStat, SuggestionCard } from './DispatchInsightCards'
 
