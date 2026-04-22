@@ -56,6 +56,7 @@ def _call_openai(api_key, model, prompt):
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
         log.warning('OpenAI call failed: %s', e)
+        return f"[AI Error: {e}]"
         return None
 
 
