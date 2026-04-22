@@ -23,16 +23,20 @@ def _bonus_for_pct(pct):
 
 
 def _load_ai_settings():
-    # Env var takes priority (Azure App Settings), fall back to SQLite settings
-    env_key = os.environ.get('OPENAI_API_KEY', '')
-    if env_key:
-        return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
+    # Database settings take priority (user-configured via Admin panel)
     try:
         import database
         cb = database.get_setting('chatbot') or {}
-        return cb.get('provider', ''), cb.get('api_key', ''), cb.get('primary_model', '')
+        db_key = cb.get('api_key', '')
+        if db_key:
+            return cb.get('provider', 'openai'), db_key, cb.get('primary_model', '')
     except Exception:
-        return '', '', ''
+        pass
+    # Fall back to env var
+    env_key = os.environ.get('OPENAI_API_KEY', '')
+    if env_key:
+        return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
+    return '', '', ''
 
 
 def _call_openai(api_key, model, prompt):
