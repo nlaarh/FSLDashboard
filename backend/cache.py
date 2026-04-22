@@ -14,13 +14,13 @@ Key behaviors:
 """
 
 import time, logging, os, json
-from threading import Lock, Event
+from threading import Lock, Event, Thread
 from pathlib import Path
 
 log = logging.getLogger('cache')
 
 # ── Cache version — bump this when response shapes change to auto-invalidate ──
-CACHE_VERSION = 'v5'
+CACHE_VERSION = 'v9'
 
 _store = {}
 _lock = Lock()
@@ -151,6 +151,91 @@ def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
     return None
 
 
+# ── Stale-while-revalidate: serve instantly, refresh in background ──────────
+
+def stale_while_revalidate(key: str, compute_fn, ttl: int = 3600, stale_ttl: int = 86400):
+    """Always serve cached data immediately. Refresh in background if stale.
+
+    - If fresh data exists (within ttl): return it
+    - If stale data exists (within stale_ttl): return it AND trigger background refresh
+    - If no data at all: compute synchronously (first load only)
+
+    This ensures users NEVER wait for Salesforce — stale data is served
+    instantly while a background thread fetches the latest.
+    """
+    # 1. Check L1 (fresh) — sub-microsecond
+    result = get(key)
+    if result is not None:
+        return result
+
+    # 2. Check L2 (even expired data) — 5-50ms
+    disk_data = disk_get_stale(key)
+    if disk_data is not None:
+        # Put in L1 for fast subsequent reads within this worker
+        put(key, disk_data, ttl)
+
+        # Check if it's past the fresh TTL and needs a background refresh
+        meta = disk_get_meta(key)
+        created_at = meta.get('created_at', '')
+        needs_refresh = True
+        if created_at:
+            try:
+                from datetime import datetime as _dt
+                ct = _dt.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                age_sec = (_dt.now() - ct).total_seconds()
+                needs_refresh = age_sec > ttl
+                # If data is older than stale_ttl, don't serve it — force fresh fetch
+                if age_sec > stale_ttl:
+                    log.info(f"SWR '{key}': data too old ({age_sec:.0f}s > {stale_ttl}s) — forcing fresh fetch")
+                    disk_data = None  # fall through to synchronous compute below
+            except Exception:
+                needs_refresh = True
+
+        if disk_data is not None:
+            if needs_refresh:
+                # Spawn background refresh — user gets stale data instantly
+                _background_refresh(key, compute_fn, ttl)
+            return disk_data
+
+    # 3. No cached data at all — first load, must compute synchronously
+    log.info(f"SWR '{key}': cold start — computing synchronously")
+    try:
+        result = compute_fn()
+        if isinstance(result, dict):
+            result['cached_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        put(key, result, ttl)
+        disk_put(key, result, stale_ttl)
+        return result
+    except Exception as e:
+        log.error(f"SWR '{key}': cold start failed: {e}")
+        raise
+
+
+def _background_refresh(key: str, compute_fn, ttl: int):
+    """Spawn a daemon thread to refresh a cache key. Uses fs_lock to prevent duplicates."""
+    lock_name = f"swr_{key.replace(':', '_').replace('/', '_')}"
+
+    if not fs_lock_acquire(lock_name, max_age=300):
+        log.debug(f"SWR '{key}': background refresh already in progress")
+        return
+
+    def _do_refresh():
+        try:
+            log.info(f"SWR '{key}': background refresh started")
+            result = compute_fn()
+            if isinstance(result, dict):
+                result['cached_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            put(key, result, ttl)
+            disk_put(key, result, 86400)
+            log.info(f"SWR '{key}': background refresh complete")
+        except Exception as e:
+            log.warning(f"SWR '{key}': background refresh failed: {e}")
+        finally:
+            fs_lock_release(lock_name)
+
+    Thread(target=_do_refresh, daemon=True).start()
+
+
 # ── User-facing cache query (stale-while-revalidate) ────────────────────────
 
 def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
@@ -186,7 +271,7 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
         stale = get_stale(key)
         if stale is not None:
             return stale
-        event.wait(timeout=15)
+        event.wait(timeout=8)
         result = get(key)
         if result is not None:
             return result

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { clsx } from 'clsx'
-import { Loader2, AlertTriangle, Clock, ArrowLeft, ArrowRight, ChevronRight } from 'lucide-react'
+import { Loader2, AlertTriangle, Clock, ArrowLeft, ArrowRight, ChevronRight, TrendingDown, TrendingUp } from 'lucide-react'
 import { fetchSatisfactionDay } from '../api'
 import SALink from '../components/SALink'
 import { SatisfactionGarageMap } from './SatisfactionView'
@@ -155,6 +155,9 @@ export default function SatisfactionDayDetail({ date, onBack, onGarage }) {
         )}
       </div>
 
+      {/* Garage Leaders vs Laggards — two-column executive view */}
+      {garagesWithSurveys.length >= 2 && <GarageLeaderboard garages={garagesWithSurveys} onGarage={onGarage} />}
+
       {/* Customer Voice — dissatisfied comments first */}
       {problems.length > 0 && (
         <div className="glass rounded-xl border border-red-800/20 p-5">
@@ -230,6 +233,79 @@ export default function SatisfactionDayDetail({ date, onBack, onGarage }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Two-column: Worst (left) vs Best (right) garages ────────────────────────
+function GarageLeaderboard({ garages, onGarage }) {
+  // Bottom: lowest sat %, must have ≥2 surveys to be meaningful
+  const qualified = garages.filter(g => g.totally_satisfied_pct != null && g.surveys >= 2)
+  const bottom = qualified
+    .filter(g => g.totally_satisfied_pct < 82)
+    .sort((a, b) => a.totally_satisfied_pct - b.totally_satisfied_pct)
+    .slice(0, 5)
+  const top = qualified
+    .filter(g => g.totally_satisfied_pct >= 82)
+    .sort((a, b) => b.totally_satisfied_pct - a.totally_satisfied_pct)
+    .slice(0, 5)
+
+  if (!bottom.length && !top.length) return null
+
+  const shortName = (n) => n.includes(' - ') ? n.split(' - ').slice(1).join(' - ').trim() : n
+
+  const StatRow = ({ g, isBottom }) => (
+    <button onClick={() => onGarage?.(g.name)}
+      className={clsx('w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition group',
+        isBottom ? 'hover:bg-red-950/20' : 'hover:bg-emerald-950/20'
+      )}>
+      <div className={clsx('text-lg font-black w-12 text-right',
+        isBottom ? 'text-red-400' : 'text-emerald-400'
+      )}>{g.totally_satisfied_pct}%</div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] font-semibold text-white truncate group-hover:underline">{shortName(g.name)}</div>
+        <div className="flex items-center gap-3 text-[9px] text-slate-500 mt-0.5">
+          <span>{g.sa_completed ?? g.sa_total ?? 0} SAs</span>
+          <span className={clsx(g.avg_ata != null && g.avg_ata > 45 ? 'text-amber-400' : '')}>{g.avg_ata != null ? `${g.avg_ata}m ATA` : ''}</span>
+          {(g.sa_declined ?? 0) > 0 && <span className="text-red-400">{g.sa_declined} declined</span>}
+          {(g.sa_cancelled ?? 0) > 0 && <span className="text-red-400/60">{g.sa_cancelled} cancelled</span>}
+          <span>{g.surveys} surveys</span>
+        </div>
+      </div>
+      <ChevronRight className="w-3.5 h-3.5 text-slate-700 group-hover:text-slate-400 flex-shrink-0" />
+    </button>
+  )
+
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      {/* LEFT — Worst performing */}
+      <div className="glass rounded-xl border border-red-800/20 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <TrendingDown className="w-4 h-4 text-red-400" />
+          <span className="text-xs font-bold text-red-400 uppercase tracking-wide">Dragging Score Down</span>
+        </div>
+        {bottom.length === 0 ? (
+          <div className="text-xs text-slate-600 text-center py-4">All garages met target</div>
+        ) : (
+          <div className="space-y-0.5">
+            {bottom.map(g => <StatRow key={g.name} g={g} isBottom />)}
+          </div>
+        )}
+      </div>
+      {/* RIGHT — Top performing */}
+      <div className="glass rounded-xl border border-emerald-800/20 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <TrendingUp className="w-4 h-4 text-emerald-400" />
+          <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide">Driving Score Up</span>
+        </div>
+        {top.length === 0 ? (
+          <div className="text-xs text-slate-600 text-center py-4">No garages above target</div>
+        ) : (
+          <div className="space-y-0.5">
+            {top.map(g => <StatRow key={g.name} g={g} isBottom={false} />)}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

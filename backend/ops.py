@@ -192,6 +192,28 @@ def get_ops_territories():
         matrix = _get_priority_matrix()
         rank_lookup = matrix['rank_lookup']
 
+        # Fetch SA territory assignment history for primary/secondary classification
+        # Same logic as garages_performance.py: first territory assigned = primary
+        all_sa_ids = [sa['Id'] for sa in sas if sa.get('Id')]
+        from sf_batch import batch_soql_parallel
+        sa_hist_rows = batch_soql_parallel("""
+            SELECT ServiceAppointmentId, NewValue, CreatedDate
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'ServiceTerritory'
+              AND ServiceAppointmentId IN ('{id_list}')
+            ORDER BY ServiceAppointmentId, CreatedDate ASC
+        """, all_sa_ids, chunk_size=200) if all_sa_ids else []
+
+        # Build first-territory map: sa_id -> first territory ID assigned
+        sa_first_territory = {}
+        for h in sa_hist_rows:
+            sa_id = h.get('ServiceAppointmentId')
+            if sa_id in sa_first_territory:
+                continue
+            nv = h.get('NewValue', '') or ''
+            if nv.startswith('0Hh'):
+                sa_first_territory[sa_id] = nv
+
         territories = []
         for tid, sa_list_raw in by_territory.items():
             st = sa_list_raw[0]
@@ -263,39 +285,27 @@ def get_ops_territories():
             resp_time = avg_ata if avg_ata is not None else avg_pta
             resp_source = 'ata' if avg_ata is not None else ('pta' if avg_pta is not None else None)
 
-            # Priority-based stats: primary (rank 1) vs secondary (rank 2+)
+            # Primary/secondary: based on actual SA assignment history
+            # Primary = this garage was the FIRST territory assigned (1st call)
+            # Secondary = SA was originally assigned elsewhere, then cascaded here
             primary_total = 0
             primary_completed = 0
             secondary_total = 0
             secondary_completed = 0
-            unranked_total = 0
-            unranked_completed = 0
             for s in sa_list:
                 wt = (s.get('WorkType') or {}).get('Name', '')
                 if 'drop' in wt.lower():
-                    continue  # Exclude Tow Drop-Off (paired SAs)
-                parent_id = s.get('ERS_Parent_Territory__c')
-                rank = rank_lookup.get((parent_id, tid)) if parent_id else None
-                if rank == 1:
-                    primary_total += 1
-                    if s.get('Status') == 'Completed':
-                        primary_completed += 1
-                elif rank and rank >= 2:
+                    continue
+                first_tid = sa_first_territory.get(s.get('Id'))
+                is_secondary = first_tid is not None and first_tid != tid
+                if is_secondary:
                     secondary_total += 1
                     if s.get('Status') == 'Completed':
                         secondary_completed += 1
                 else:
-                    unranked_total += 1
+                    primary_total += 1
                     if s.get('Status') == 'Completed':
-                        unranked_completed += 1
-
-            # If no rank-1 (primary) SAs, fold unranked into primary so every
-            # garage with volume gets a "1st Call %" on the dashboard.
-            # Only 58/128 garages appear in the priority matrix, and many are
-            # never rank 1 for any zone — without this fallback they show "—".
-            if primary_total == 0 and unranked_total > 0:
-                primary_total = unranked_total
-                primary_completed = unranked_completed
+                        primary_completed += 1
 
             pct_primary_completion = round(100 * primary_completed / primary_total) if primary_total else None
             pct_secondary_completion = round(100 * secondary_completed / secondary_total) if secondary_total else None

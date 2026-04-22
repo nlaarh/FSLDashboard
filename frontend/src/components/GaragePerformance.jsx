@@ -6,10 +6,11 @@
  */
 
 import { useState, useEffect, useContext } from 'react'
-import { Loader2, ChevronDown, ChevronUp, DollarSign, Star, AlertTriangle, Sparkles, Download, Mail, FileText } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronUp, DollarSign, Star, AlertTriangle, Sparkles, Download, Mail, FileText, Eye, EyeOff } from 'lucide-react'
 import { clsx } from 'clsx'
-import { fetchGarageScorecard, fetchGarageAiSummary, exportGarageScorecard, emailGarageReport } from '../api'
+import { fetchGarageScorecard, fetchGarageAiSummary, exportGarageScorecard, emailGarageReport, fetchDriverSAs } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
+import SALink from './SALink'
 
 // Score card colors
 const scoreColor = (pct) =>
@@ -40,8 +41,44 @@ function ScoreCard({ label, pct, subtitle }) {
   )
 }
 
-function DriverRow({ driver, onToggle, expanded }) {
+function LazyDrillDown({ garageId, driverName, type, startDate, endDate }) {
+  const [items, setItems] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    fetchDriverSAs(garageId, driverName, type, startDate, endDate)
+      .then(r => setItems(r?.items || []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
+  }, [garageId, driverName, type, startDate, endDate])
+
+  if (loading) return <div className="flex items-center gap-2 py-3 justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-500" /><span className="text-xs text-slate-500">Loading SAs...</span></div>
+  if (!items?.length) return <div className="text-xs text-slate-600 text-center py-3">No {type} SAs</div>
+  return (
+    <div className="space-y-0.5">
+      <div className="flex text-[9px] text-slate-600 uppercase tracking-wide gap-3 px-2 pb-1 border-b border-slate-800/50">
+        <span className="w-24">SA #</span><span className="w-20">Date</span>
+        <span className="w-32">Work Type</span><span className="w-20">Status</span>
+        {type === 'declined' && <span className="flex-1">Decline Reason</span>}
+      </div>
+      {items.map((sa, i) => (
+        <div key={i} className={clsx('flex text-[10px] gap-3 px-2 py-1 rounded items-center',
+          type === 'declined' ? 'bg-red-950/10 text-red-300/80' : 'bg-slate-800/20 text-slate-400'
+        )}>
+          <span className="w-24">{sa.sa_number ? <SALink number={sa.sa_number} style={{ fontFamily: 'monospace', fontSize: 10 }} /> : '—'}</span>
+          <span className="w-20">{sa.date || '—'}</span>
+          <span className="w-32 truncate">{sa.work_type || '—'}</span>
+          <span className="w-20">{sa.status || '—'}</span>
+          {type === 'declined' && <span className="flex-1 text-red-400/70">{sa.decline_reason || '—'}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DriverRow({ driver, onToggle, expanded, garageId, startDate, endDate }) {
   const saCtx = useContext(SAReportContext)
+  const [showCompleted, setShowCompleted] = useState(false)
+  const [showDeclined, setShowDeclined] = useState(false)
   return (
     <div className="border-b border-slate-800/50 last:border-0">
       <div
@@ -54,6 +91,18 @@ function DriverRow({ driver, onToggle, expanded }) {
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold text-white truncate">{driver.name}</div>
           <div className="text-[9px] text-slate-500">{driver.survey_count} surveys</div>
+        </div>
+        <div className="text-center w-14" onClick={e => { e.stopPropagation(); if ((driver.completed ?? 0) > 0) setShowCompleted(!showCompleted) }}>
+          <div className={clsx('text-xs font-bold', (driver.completed ?? 0) > 0 ? 'text-blue-400 hover:underline cursor-pointer' : 'text-slate-200')}>{driver.completed ?? 0}</div>
+          <div className="text-[8px] text-slate-600">Completed</div>
+        </div>
+        <div className="text-center w-14" onClick={e => { e.stopPropagation(); if ((driver.declined ?? 0) > 0) setShowDeclined(!showDeclined) }}>
+          <div className={clsx('text-xs font-bold', (driver.declined ?? 0) > 0 ? 'text-red-400 hover:underline cursor-pointer' : 'text-slate-500')}>{driver.declined ?? 0}</div>
+          <div className="text-[8px] text-slate-600">Declined</div>
+        </div>
+        <div className="text-center w-14">
+          <div className={clsx('text-xs font-bold', driver.avg_ata != null && driver.avg_ata <= 45 ? 'text-cyan-400' : driver.avg_ata != null ? 'text-amber-400' : 'text-slate-500')}>{driver.avg_ata != null ? `${driver.avg_ata}m` : '—'}</div>
+          <div className="text-[8px] text-slate-600">Avg ATA</div>
         </div>
         <div className="text-center w-14">
           <div className={clsx('text-xs font-bold', scoreColor(driver.overall_pct))}>{driver.overall_pct ?? '—'}%</div>
@@ -72,7 +121,11 @@ function DriverRow({ driver, onToggle, expanded }) {
           <div className="text-[8px] text-slate-600">Informed</div>
         </div>
       </div>
-      {/* Drill-down: individual surveys */}
+      {/* SA drill-down: completed SAs (lazy-fetched) */}
+      {showCompleted && <div className="bg-slate-900/40 px-4 py-2"><LazyDrillDown garageId={garageId} driverName={driver.name} type="completed" startDate={startDate} endDate={endDate} /></div>}
+      {/* SA drill-down: declined SAs (lazy-fetched) */}
+      {showDeclined && <div className="bg-red-950/20 px-4 py-2"><LazyDrillDown garageId={garageId} driverName={driver.name} type="declined" startDate={startDate} endDate={endDate} /></div>}
+      {/* Survey drill-down: satisfaction details */}
       {expanded && driver.surveys && (
         <div className="bg-slate-900/40 px-4 py-2 space-y-1.5">
           <div className="grid grid-cols-[100px_70px_60px_60px_60px_60px_1fr] gap-2 text-[8px] text-slate-600 uppercase tracking-wider pb-1 border-b border-slate-800/40">
@@ -171,16 +224,21 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
   const buildReportHtml = () => {
     const ov = ps.overall || {}
     const sc = (pct) => pct == null ? '#999' : pct >= 92 ? '#34d399' : pct >= 82 ? '#60a5fa' : pct >= 70 ? '#fbbf24' : '#f87171'
-    const driverTableRows = sorted.map(d =>
-      `<tr>
+    const driverTableRows = sorted.map(d => {
+      const ataColor = d.avg_ata != null && d.avg_ata <= 45 ? '#10b981' : d.avg_ata != null ? '#ef4444' : '#999'
+      const decColor = (d.declined ?? 0) > 0 ? '#ef4444' : '#64748b'
+      return `<tr>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${d.name}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${d.completed ?? 0}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${decColor};font-weight:700">${d.declined ?? 0}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${ataColor};font-weight:700">${d.avg_ata != null ? d.avg_ata + 'm' : '—'}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${d.survey_count}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${sc(d.overall_pct)};font-weight:700">${d.overall_pct ?? '—'}%</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${sc(d.response_time_pct)};font-weight:700">${d.response_time_pct ?? '—'}%</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${sc(d.technician_pct)};font-weight:700">${d.technician_pct ?? '—'}%</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:${sc(d.kept_informed_pct)};font-weight:700">${d.kept_informed_pct ?? '—'}%</td>
       </tr>`
-    ).join('')
+    }).join('')
     const bonusColor = (gs.bonus_per_sa ?? 0) > 0 ? '#34d399' : '#999'
     const bonusHtml = isContractor ? `
         <div style="background:${(gs.bonus_per_sa ?? 0) > 0 ? '#ecfdf5' : '#f8fafc'};border:1px solid ${(gs.bonus_per_sa ?? 0) > 0 ? '#a7f3d0' : '#e2e8f0'};border-radius:8px;padding:12px;margin-bottom:16px">
@@ -234,6 +292,9 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
           <tr style="background:#1e293b;color:#fff">
             <th style="padding:8px 10px;text-align:left">Driver</th>
+            <th style="padding:8px 10px;text-align:center">Completed</th>
+            <th style="padding:8px 10px;text-align:center">Declined</th>
+            <th style="padding:8px 10px;text-align:center">Avg ATA</th>
             <th style="padding:8px 10px;text-align:center">Surveys</th>
             <th style="padding:8px 10px;text-align:center">Overall</th>
             <th style="padding:8px 10px;text-align:center">Resp Time</th>
@@ -496,7 +557,7 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
           <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-900/60 text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-800/40">
             <div className="w-4" />
             <div className="flex-1">Driver</div>
-            {[['overall_pct', 'Overall', 'w-14'], ['response_time_pct', 'Resp', 'w-14'], ['technician_pct', 'Tech', 'w-14'], ['kept_informed_pct', 'Informed', 'w-14']].map(([field, label, w]) => (
+            {[['completed', 'Compl', 'w-14'], ['declined', 'Decl', 'w-14'], ['avg_ata', 'ATA', 'w-14'], ['overall_pct', 'Overall', 'w-14'], ['response_time_pct', 'Resp', 'w-14'], ['technician_pct', 'Tech', 'w-14'], ['kept_informed_pct', 'Informed', 'w-14']].map(([field, label, w]) => (
               <button key={field} className={clsx('text-center cursor-pointer hover:text-white transition', w, sortBy === field && 'text-blue-400')}
                 onClick={() => toggleSort(field)}>
                 {label} {sortBy === field && (sortDir === 'desc' ? '↓' : '↑')}
@@ -507,7 +568,8 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
             {sorted.map((d, i) => (
               <DriverRow key={i} driver={d}
                 expanded={expandedDriver === d.name}
-                onToggle={() => setExpandedDriver(expandedDriver === d.name ? null : d.name)} />
+                onToggle={() => setExpandedDriver(expandedDriver === d.name ? null : d.name)}
+                garageId={garageId} startDate={startDate} endDate={endDate} />
             ))}
           </div>
         </div>

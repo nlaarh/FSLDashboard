@@ -276,8 +276,8 @@ def _build_day_result(date, cache_key, surveys, sas, wo_to_sa, towbook_on_loc):
             })
 
     # ── Aggregate SAs by garage ──
-    garage_ops = defaultdict(lambda: {'total': 0, 'completed': 0, 'cancelled': 0, 'ata_sum': 0.0,
-                                      'ata_count': 0, 'sla_hits': 0, 'sla_eligible': 0,
+    garage_ops = defaultdict(lambda: {'total': 0, 'completed': 0, 'cancelled': 0, 'declined': 0,
+                                      'ata_sum': 0.0, 'ata_count': 0, 'sla_hits': 0, 'sla_eligible': 0,
                                       'ata_under_30': 0, 'ata_30_45': 0, 'ata_45_60': 0, 'ata_over_60': 0})
     cancel_reasons = defaultdict(int)
     long_ata_sas = []  # SAs with ATA > 60min
@@ -297,6 +297,8 @@ def _build_day_result(date, cache_key, surveys, sas, wo_to_sa, towbook_on_loc):
             g['cancelled'] += 1
             reason = sa.get('ERS_Cancellation_Reason__c') or 'Unknown'
             cancel_reasons[reason] += 1
+        if sa.get('ERS_Facility_Decline_Reason__c'):
+            g['declined'] += 1
 
         # ATA calculation
         if status == 'Completed':
@@ -351,7 +353,7 @@ def _build_day_result(date, cache_key, surveys, sas, wo_to_sa, towbook_on_loc):
         if not _is_real_garage(name):
             continue
         sv = garage_surveys.get(name, {'totally_satisfied': 0, 'total': 0})
-        ops = garage_ops.get(name, {'total': 0, 'completed': 0, 'cancelled': 0, 'ata_sum': 0, 'ata_count': 0, 'sla_hits': 0, 'sla_eligible': 0})
+        ops = garage_ops.get(name, {'total': 0, 'completed': 0, 'cancelled': 0, 'declined': 0, 'ata_sum': 0, 'ata_count': 0, 'sla_hits': 0, 'sla_eligible': 0})
         ts_pct = round(100 * sv['totally_satisfied'] / sv['total']) if sv['total'] else None
         avg_ata = round(ops['ata_sum'] / ops['ata_count']) if ops['ata_count'] else None
         sla = round(100 * ops['sla_hits'] / ops['sla_eligible']) if ops['sla_eligible'] else None
@@ -366,6 +368,7 @@ def _build_day_result(date, cache_key, surveys, sas, wo_to_sa, towbook_on_loc):
             'sa_total': ops['total'],
             'sa_completed': ops['completed'],
             'sa_cancelled': ops['cancelled'],
+            'sa_declined': ops['declined'],
             'avg_ata': avg_ata,
             'sla_pct': sla,
             'tier': tier,
@@ -586,16 +589,8 @@ def _build_day_insights(ts_pct, total_surveys, avg_ata, total_d, total_td,
                             f"Address these to build margin above the 82% target.",
                 })
         elif ts_pct and ts_pct >= 90:
-            insights.append({
-                'type': 'success',
-                'text': f"Strong day — {ts_pct}% across {total_surveys} surveys with {avg_ata}m average response. "
-                        f"Both speed and driver quality performing well across the network.",
-            })
+            insights.append({'type': 'success', 'text': f"Strong day — {ts_pct}% across {total_surveys} surveys with {avg_ata}m average response. Both speed and driver quality performing well."})
         else:
-            insights.append({
-                'type': 'success',
-                'text': f"Steady performance at {ts_pct}%. No major issues identified.",
-            })
+            insights.append({'type': 'success', 'text': f"Steady performance at {ts_pct}%. No major issues identified."})
 
     return insights
-

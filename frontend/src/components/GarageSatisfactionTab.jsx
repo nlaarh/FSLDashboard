@@ -8,10 +8,11 @@
  */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { clsx } from 'clsx'
-import { Loader2, AlertTriangle, ArrowLeft, ChevronRight, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
+import { Loader2, AlertTriangle, ArrowLeft, ChevronRight, MessageSquare, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Legend } from 'recharts'
-import { fetchSatisfactionGarage, fetchSatisfactionDetail, fetchSatisfactionDetailAI } from '../api'
+import { fetchSatisfactionGarage, fetchSatisfactionDetail, fetchSatisfactionDetailAI, fetchGarageDriverSAs } from '../api'
 import { TrendChart } from './CommandCenterUtils'
+import SALink from './SALink'
 
 const satColor = (pct) => pct == null ? 'text-slate-400'
   : pct >= 82 ? 'text-emerald-400'
@@ -230,7 +231,7 @@ export default function GarageSatisfactionTab({ garageName, onBack, initialMonth
       </TrendChart>
 
       {/* Driver performance section — sortable table */}
-      {drivers.length > 0 && <DriverTable drivers={drivers} />}
+      {drivers.length > 0 && <DriverTable drivers={drivers} garageName={garageName} month={month} />}
 
       {/* Daily rows */}
       <div className="glass rounded-xl border border-slate-700/30 p-4">
@@ -275,20 +276,66 @@ export default function GarageSatisfactionTab({ garageName, onBack, initialMonth
   )
 }
 
-// ── Sortable driver table with 4 sat dimensions ────────────────────────────
+// ── Sortable driver table with drill-down ───────────────────────────────────
 const DRIVER_COLS = [
-  { key: 'name',                 label: 'Driver',          align: 'left',  fmt: v => v || '—' },
-  { key: 'sa_count',             label: 'SAs',             align: 'right', fmt: v => v || '—' },
-  { key: 'surveys',              label: 'Surveys',         align: 'right', fmt: v => v || '—' },
-  { key: 'totally_satisfied_pct', label: 'Overall %',      align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
-  { key: 'technician_pct',       label: 'Technician %',    align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
-  { key: 'response_time_pct',    label: 'Response Time %', align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
-  { key: 'kept_informed_pct',    label: 'Kept Informed %', align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
+  { key: 'name',                  label: 'Driver',          align: 'left',  fmt: v => v || '—' },
+  { key: 'completed',             label: 'Completed',       align: 'right', fmt: v => v ?? '—', drillKey: 'completed_list' },
+  { key: 'declined',              label: 'Declined',        align: 'right', fmt: v => v ?? '—', drillKey: 'declined_list' },
+  { key: 'avg_ata',               label: 'Avg ATA',         align: 'right', fmt: v => v != null ? `${v}m` : '—',
+    color: v => v != null && v <= 45 ? 'text-cyan-400' : v != null ? 'text-amber-400' : 'text-slate-400' },
+  { key: 'surveys',               label: 'Surveys',         align: 'right', fmt: v => v || '—' },
+  { key: 'totally_satisfied_pct', label: 'Overall %',       align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
+  { key: 'technician_pct',        label: 'Technician %',    align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
+  { key: 'response_time_pct',     label: 'Response Time %', align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
+  { key: 'kept_informed_pct',     label: 'Kept Informed %', align: 'right', fmt: v => v != null ? `${v}%` : '—', color: satColor },
 ]
 
-function DriverTable({ drivers }) {
+function LazySADrillDown({ garageName, month, driverName, type }) {
+  const [items, setItems] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    fetchGarageDriverSAs(garageName, month, driverName, type)
+      .then(r => setItems(r?.items || []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
+  }, [garageName, month, driverName, type])
+
+  if (loading) return (
+    <td colSpan={DRIVER_COLS.length} className="px-4 py-3 text-center">
+      <Loader2 className="w-4 h-4 animate-spin text-slate-500 inline mr-2" /><span className="text-xs text-slate-500">Loading SAs...</span>
+    </td>
+  )
+  if (!items?.length) return (
+    <td colSpan={DRIVER_COLS.length} className="px-4 py-3 text-xs text-slate-600 text-center">No {type} SAs</td>
+  )
+  return (
+    <td colSpan={DRIVER_COLS.length} className="p-0">
+      <div className="px-4 py-2 space-y-1">
+        <div className="flex text-[9px] text-slate-600 uppercase tracking-wide gap-3 px-2 pb-1 border-b border-slate-800/50">
+          <span className="w-24">SA #</span><span className="w-20">Date</span>
+          <span className="w-32">Work Type</span><span className="w-20">Status</span>
+          {type === 'declined' && <span className="flex-1">Decline Reason</span>}
+        </div>
+        {items.map((sa, i) => (
+          <div key={i} className={clsx('flex text-[10px] gap-3 px-2 py-1 rounded items-center',
+            type === 'declined' ? 'bg-red-950/10 text-red-300/80' : 'bg-slate-800/20 text-slate-400'
+          )}>
+            <span className="w-24">{sa.sa_number ? <SALink number={sa.sa_number} style={{ fontFamily: 'monospace', fontSize: 10 }} /> : '—'}</span>
+            <span className="w-20">{sa.date || '—'}</span>
+            <span className="w-32 truncate">{sa.work_type || '—'}</span>
+            <span className="w-20">{sa.status || '—'}</span>
+            {type === 'declined' && <span className="flex-1 text-red-400/70">{sa.decline_reason || '—'}</span>}
+          </div>
+        ))}
+      </div>
+    </td>
+  )
+}
+
+function DriverTable({ drivers, garageName, month }) {
   const [sortKey, setSortKey] = useState('totally_satisfied_pct')
   const [sortAsc, setSortAsc] = useState(false)
+  const [expanded, setExpanded] = useState({}) // { "driverId:completed": true }
 
   const sorted = useMemo(() => {
     return [...drivers].sort((a, b) => {
@@ -304,6 +351,11 @@ function DriverTable({ drivers }) {
   const handleSort = (key) => {
     if (sortKey === key) setSortAsc(!sortAsc)
     else { setSortKey(key); setSortAsc(false) }
+  }
+
+  const toggleDrill = (driverId, listKey) => {
+    const k = `${driverId}:${listKey}`
+    setExpanded(prev => ({ ...prev, [k]: !prev[k] }))
   }
 
   const SortIcon = ({ col }) => {
@@ -334,30 +386,57 @@ function DriverTable({ drivers }) {
           <tbody>
             {sorted.map(d => {
               const flagged = d.totally_satisfied_pct != null && d.totally_satisfied_pct < 82
+              const completedOpen = expanded[`${d.driver_id}:completed_list`]
+              const declinedOpen = expanded[`${d.driver_id}:declined_list`]
               return (
-                <tr key={d.driver_id} className={clsx(
-                  'border-b border-slate-800/40 hover:bg-slate-800/40 transition',
-                  flagged && 'bg-red-950/10'
-                )}>
-                  {DRIVER_COLS.map(c => {
-                    const val = d[c.key]
-                    const colorCls = c.color ? c.color(val) : (c.key === 'name' ? 'text-slate-200' : 'text-slate-400')
-                    return (
-                      <td key={c.key} className={clsx('py-2 px-2 whitespace-nowrap',
-                        c.align === 'right' && 'text-right',
-                        c.key.endsWith('_pct') && 'font-bold',
-                        colorCls)}>
-                        {c.fmt(val)}
-                      </td>
-                    )
-                  })}
-                </tr>
+                <React.Fragment key={d.driver_id}>
+                  <tr className={clsx(
+                    'border-b border-slate-800/40 hover:bg-slate-800/40 transition',
+                    flagged && 'bg-red-950/10'
+                  )}>
+                    {DRIVER_COLS.map(c => {
+                      const val = d[c.key]
+                      const colorCls = c.color ? c.color(val) : (c.key === 'name' ? 'text-slate-200' : 'text-slate-400')
+                      // Drillable cells: completed / declined
+                      if (c.drillKey && val > 0) {
+                        const isOpen = expanded[`${d.driver_id}:${c.drillKey}`]
+                        return (
+                          <td key={c.key} className="py-2 px-2 text-right whitespace-nowrap">
+                            <button onClick={() => toggleDrill(d.driver_id, c.drillKey)}
+                              className={clsx('inline-flex items-center gap-1 hover:underline transition',
+                                c.key === 'declined' ? 'text-red-400' : 'text-blue-400'
+                              )}>
+                              {c.fmt(val)}
+                              {isOpen
+                                ? <EyeOff className="w-3 h-3 opacity-50" />
+                                : <Eye className="w-3 h-3 opacity-50" />}
+                            </button>
+                          </td>
+                        )
+                      }
+                      return (
+                        <td key={c.key} className={clsx('py-2 px-2 whitespace-nowrap',
+                          c.align === 'right' && 'text-right',
+                          c.key.endsWith('_pct') && 'font-bold',
+                          colorCls)}>
+                          {c.fmt(val)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                  {completedOpen && (
+                    <tr className="bg-slate-900/40"><LazySADrillDown garageName={garageName} month={month} driverName={d.name} type="completed" /></tr>
+                  )}
+                  {declinedOpen && (
+                    <tr className="bg-red-950/20"><LazySADrillDown garageName={garageName} month={month} driverName={d.name} type="declined" /></tr>
+                  )}
+                </React.Fragment>
               )
             })}
           </tbody>
         </table>
       </div>
-      <div className="text-[9px] text-slate-600 mt-2">Click any column header to sort. Red rows = overall sat below 82%.</div>
+      <div className="text-[9px] text-slate-600 mt-2">Click column headers to sort. Click Completed/Declined counts to drill down. Red rows = overall sat below 82%.</div>
     </div>
   )
 }
@@ -463,7 +542,7 @@ function GarageDayDetail({ garage, date, onBack }) {
       )}
 
       {/* Per-driver on this day — same sortable table as monthly view */}
-      {drivers.length > 0 && <DriverTable drivers={drivers} />}
+      {drivers.length > 0 && <DriverTable drivers={drivers} garageName={garage} month={date?.slice(0, 7)} />}
 
       {/* Customer feedback */}
       <div className="glass rounded-xl border border-slate-700/30 p-4">

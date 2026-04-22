@@ -198,7 +198,7 @@ def refresh_auth() -> tuple[str, str]:
 
 # ── Query ───────────────────────────────────────────────────────────────────
 
-def sf_query(soql: str, _retries: int = 3) -> dict:
+def sf_query(soql: str, _retries: int = 2) -> dict:
     # Gate 1: circuit breaker
     _breaker_check()
     # Gate 2: rate limiter
@@ -212,8 +212,12 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
 
     for attempt in range(_retries):
         try:
+            _t0 = _time.time()
             r = _session.get(f'{instance}/services/data/v60.0/query',
-                             headers=headers, params={'q': soql}, timeout=(10, 120))
+                             headers=headers, params={'q': soql}, timeout=(10, 45))
+            _elapsed = _time.time() - _t0
+            if _elapsed > 5:
+                log.warning(f"Slow SOQL ({_elapsed:.1f}s): {soql[:120]}")
         except requests.exceptions.Timeout:
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
@@ -245,7 +249,7 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
             headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
             _rate_limit_check()
             r = _session.get(f'{instance}/services/data/v60.0/query',
-                             headers=headers, params={'q': soql}, timeout=(10, 120))
+                             headers=headers, params={'q': soql}, timeout=(10, 45))
         break
 
     result = r.json()
@@ -260,7 +264,7 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
         headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
         _rate_limit_check()
         r = _session.get(f'{instance}/services/data/v60.0/query',
-                         headers=headers, params={'q': soql}, timeout=(10, 120))
+                         headers=headers, params={'q': soql}, timeout=(10, 45))
         result = r.json()
     if isinstance(result, list):
         _breaker_failure()
@@ -279,9 +283,13 @@ def sf_query(soql: str, _retries: int = 3) -> dict:
 def sf_parallel(**fns) -> dict:
     """Run multiple functions in parallel. Returns {name: result}."""
     import concurrent.futures
+    _t0 = _time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
         futures = {name: pool.submit(fn) for name, fn in fns.items()}
-        return {name: fut.result() for name, fut in futures.items()}
+        results = {name: fut.result() for name, fut in futures.items()}
+    _elapsed = _time.time() - _t0
+    log.info(f"sf_parallel({', '.join(fns.keys())}) completed in {_elapsed:.1f}s")
+    return results
 
 
 def sf_query_all(soql: str) -> list[dict]:
@@ -295,15 +303,19 @@ def sf_query_all(soql: str) -> list[dict]:
     while not result.get('done', True) and result.get('nextRecordsUrl'):
         page += 1
         _rate_limit_check()  # Each page counts against rate limit
-        for attempt in range(3):
+        for attempt in range(2):
             try:
+                _t0 = _time.time()
                 resp = _session.get(f'{instance}{result["nextRecordsUrl"]}',
-                                    headers=headers, timeout=(10, 60))
+                                    headers=headers, timeout=(10, 45))
+                _elapsed = _time.time() - _t0
+                if _elapsed > 5:
+                    log.warning(f"Slow SOQL pagination p{page} ({_elapsed:.1f}s): {soql[:120]}")
                 result = resp.json()
                 _breaker_success()
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                if attempt < 2:
+                if attempt < 1:
                     _time.sleep(2 ** attempt)
                     token, instance = refresh_auth()
                     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}

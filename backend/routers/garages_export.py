@@ -111,25 +111,29 @@ def api_garage_export(
 
     # ── Sheet 2: Driver Breakdown ──
     ws2 = wb.create_sheet('Drivers')
-    headers = ['Driver', 'Surveys', 'Overall %', 'Response Time %', 'Technician %',
-               'Kept Informed %']
+    headers = ['Driver', 'Completed', 'Declined', 'Avg ATA (min)', 'Surveys',
+               'Overall %', 'Response Time %', 'Technician %', 'Kept Informed %']
     ws2.append(headers)
     _style_header(ws2, 1, len(headers))
 
     for d in drivers:
         row = [
-            d['name'], d['survey_count'],
+            d['name'], d.get('completed', 0), d.get('declined', 0),
+            d.get('avg_ata'), d['survey_count'],
             d.get('overall_pct'), d.get('response_time_pct'),
             d.get('technician_pct'), d.get('kept_informed_pct'),
         ]
         ws2.append(row)
         row_num = ws2.max_row
         # Color code scores
-        for col_idx, val in [(3, d.get('overall_pct')), (4, d.get('response_time_pct')),
-                              (5, d.get('technician_pct')), (6, d.get('kept_informed_pct'))]:
+        for col_idx, val in [(6, d.get('overall_pct')), (7, d.get('response_time_pct')),
+                              (8, d.get('technician_pct')), (9, d.get('kept_informed_pct'))]:
             fill = _score_fill(val)
             if fill:
                 ws2.cell(row=row_num, column=col_idx).fill = fill
+        # Highlight declined > 0 in red
+        if (d.get('declined') or 0) > 0:
+            ws2.cell(row=row_num, column=3).fill = red_fill
         # Border all cells
         for col in range(1, len(headers) + 1):
             ws2.cell(row=row_num, column=col).border = thin_border
@@ -388,8 +392,15 @@ def _build_report_html(garage_name: str, start_date: str, end_date: str, gs: dic
 
     driver_rows = ''
     for d in sorted(drivers, key=lambda x: x.get('survey_count', 0), reverse=True):
+        declined_val = d.get('declined', 0)
+        declined_color = '#ef4444' if declined_val else '#64748b'
+        ata_val = d.get('avg_ata')
+        ata_color = '#10b981' if ata_val is not None and ata_val <= 45 else '#ef4444' if ata_val is not None else '#999'
         driver_rows += f"""<tr>
             <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">{d['name']}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">{d.get('completed', 0)}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{declined_color};font-weight:700">{declined_val}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{ata_color};font-weight:700">{str(ata_val) + 'm' if ata_val is not None else '—'}</td>
             <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">{d.get('survey_count', 0)}</td>
             <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('overall_pct'))};font-weight:700">{d.get('overall_pct', '—')}%</td>
             <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:{sc(d.get('response_time_pct'))};font-weight:700">{d.get('response_time_pct', '—')}%</td>
@@ -437,6 +448,9 @@ def _build_report_html(garage_name: str, start_date: str, end_date: str, gs: dic
         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
             <tr style="background:#1e293b;color:#fff">
                 <th style="padding:8px 10px;text-align:left">Driver</th>
+                <th style="padding:8px 10px;text-align:center">Completed</th>
+                <th style="padding:8px 10px;text-align:center">Declined</th>
+                <th style="padding:8px 10px;text-align:center">Avg ATA</th>
                 <th style="padding:8px 10px;text-align:center">Surveys</th>
                 <th style="padding:8px 10px;text-align:center">Overall</th>
                 <th style="padding:8px 10px;text-align:center">Resp Time</th>

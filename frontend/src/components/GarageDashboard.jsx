@@ -40,38 +40,53 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [activeTab, setActiveTab] = useState('performance')  // performance | operations
   const [refreshKey, setRefreshKey] = useState(0)  // bump to force all data refresh
 
-  // ── Load performance (period-dependent)
+  // ── Load performance + decomposition in parallel (period-dependent)
   useEffect(() => {
     let ignore = false
-    setLoading(p => ({ ...p, perf: true }))
+    setLoading(p => ({ ...p, perf: true, decomp: true }))
     setError(null)
+    setDecompError(null)
     setPerf(null)
-    fetchPerformance(garageId, start, end)
-      .then(d => { if (!ignore) setPerf(d) })
-      .catch(e => { if (!ignore) setError(e.response?.data?.detail || e.message) })
-      .finally(() => { if (!ignore) setLoading(p => ({ ...p, perf: false })) })
+    setDecomp(null)
+    const load = async () => {
+      const [perfResult, decompResult] = await Promise.allSettled([
+        fetchPerformance(garageId, start, end),
+        fetchDecomposition(garageId, start, end),
+      ])
+      if (ignore) return
+      if (perfResult.status === 'fulfilled') setPerf(perfResult.value)
+      else setError(perfResult.reason?.response?.data?.detail || perfResult.reason?.message || 'Failed to load')
+      if (decompResult.status === 'fulfilled') setDecomp(decompResult.value)
+      else { console.error('Decomposition fetch failed:', decompResult.reason); setDecompError(decompResult.reason?.response?.data?.detail || decompResult.reason?.message || 'Failed to load') }
+      setLoading(p => ({ ...p, perf: false, decomp: false }))
+    }
+    load()
     return () => { ignore = true }
   }, [garageId, start, end, refreshKey])
 
-  // ── Load decomposition (period-dependent)
+  // ── Load scorecard + score in parallel (not period-dependent)
   useEffect(() => {
     let ignore = false
-    setLoading(p => ({ ...p, decomp: true }))
-    setDecomp(null)
-    setDecompError(null)
-    fetchDecomposition(garageId, start, end)
-      .then(d => { if (!ignore) setDecomp(d) })
-      .catch(e => { if (!ignore) { console.error('Decomposition fetch failed:', e); setDecompError(e.response?.data?.detail || e.message || 'Failed to load') } })
-      .finally(() => { if (!ignore) setLoading(p => ({ ...p, decomp: false })) })
-    return () => { ignore = true }
-  }, [garageId, start, end, refreshKey])
-
-  // ── Load scorecard + score (once, not period-dependent)
-  useEffect(() => {
     setLoading(p => ({ ...p, scorecard: true, score: true }))
-    fetchScorecard(garageId).then(setScorecard).catch(e => { console.error('Scorecard fetch failed:', e); setScorecardError(e.response?.data?.detail || e.message || 'Failed to load') }).finally(() => setLoading(p => ({ ...p, scorecard: false })))
-    fetchScore(garageId).then(setScore).catch(e => { console.error('Score fetch failed:', e); setScoreError(e.response?.data?.detail || e.message || 'Failed to load') }).finally(() => setLoading(p => ({ ...p, score: false })))
-  }, [garageId])
+    setScorecardError(null)
+    setScoreError(null)
+    setScorecard(null)
+    setScore(null)
+    const load = async () => {
+      const [scorecardResult, scoreResult] = await Promise.allSettled([
+        fetchScorecard(garageId),
+        fetchScore(garageId),
+      ])
+      if (ignore) return
+      if (scorecardResult.status === 'fulfilled') setScorecard(scorecardResult.value)
+      else { console.error('Scorecard fetch failed:', scorecardResult.reason); setScorecardError(scorecardResult.reason?.response?.data?.detail || scorecardResult.reason?.message || 'Failed to load') }
+      if (scoreResult.status === 'fulfilled') setScore(scoreResult.value)
+      else { console.error('Score fetch failed:', scoreResult.reason); setScoreError(scoreResult.reason?.response?.data?.detail || scoreResult.reason?.message || 'Failed to load') }
+      setLoading(p => ({ ...p, scorecard: false, score: false }))
+    }
+    load()
+    return () => { ignore = true }
+  }, [garageId, refreshKey])
 
   return (
     <div className="space-y-5">

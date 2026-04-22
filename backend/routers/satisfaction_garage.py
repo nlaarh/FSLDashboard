@@ -34,19 +34,22 @@ def api_satisfaction_garage(name: str, month: str = Query(..., description="YYYY
 
     is_current = (year == today.year and mon == today.month)
     cache_key = f'satisfaction_garage_{name}_{month}'
-    ttl = 7200 if is_current else 31536000  # 2h current, 1yr past
+    ttl = 14400 if is_current else 31536000  # 4h current, 1yr past
+
+    def _strip(d):
+        return {k: v for k, v in d.items() if not k.startswith('_')} if isinstance(d, dict) else d
 
     cached = cache.get(cache_key)
     if cached:
-        return cached
+        return _strip(cached)
     disk = cache.disk_get(cache_key, ttl=ttl)
     if disk:
         cache.put(cache_key, disk, ttl)
-        return disk
+        return _strip(disk)
 
     _log = logging.getLogger('satisfaction')
     gen_lock = f'gen_sat_garage_{name}_{month}'
-    if cache.fs_lock_acquire(gen_lock, max_age=1800):
+    if cache.fs_lock_acquire(gen_lock, max_age=600):
         def _bg():
             try:
                 result = _generate_satisfaction_garage(name, month)
@@ -107,6 +110,17 @@ def _generate_satisfaction_garage(name: str, month: str):
               AND ServiceTerritory.Name = '{safe_name}'
               AND ServiceTerritoryId != null
               AND Status = 'Completed'
+            LIMIT 15000
+        """),
+        all_sas=lambda: sf_query_all(f"""
+            SELECT Id, AppointmentNumber, CreatedDate, Status,
+                   WorkType.Name, ERS_Facility_Decline_Reason__c
+            FROM ServiceAppointment
+            WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}
+              AND ServiceTerritory.Name = '{safe_name}'
+              AND ServiceTerritoryId != null
+              AND RecordType.Name = 'ERS Service Appointment'
+            LIMIT 15000
         """),
         drv_total=lambda: sf_query_all(f"""
             SELECT ERS_Driver__c did,
@@ -213,6 +227,50 @@ def _generate_satisfaction_garage(name: str, month: str):
           AND ServiceAppointmentId IN ('{id_list}')
     """, towbook_ids, chunk_size=200) if towbook_ids else []
     towbook_on_location = _build_towbook_on_location_map(tb_rows)
+
+    # ── Map ALL SAs (incl. declined) to drivers for drill-down ──
+    all_sas = data.get('all_sas', [])
+    all_sa_ids = [sa.get('Id') for sa in all_sas if sa.get('Id')]
+    all_ar_rows = batch_soql_parallel("""
+        SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name, CreatedDate
+        FROM AssignedResource
+        WHERE ServiceAppointmentId IN ('{id_list}')
+        ORDER BY ServiceAppointmentId, CreatedDate DESC
+    """, all_sa_ids, chunk_size=200) if all_sa_ids else []
+    all_assigned_by_sa = {}
+    for r in all_ar_rows:
+        sa_id = r.get('ServiceAppointmentId')
+        if not sa_id or sa_id in all_assigned_by_sa:
+            continue
+        all_assigned_by_sa[sa_id] = {
+            'driver_id': r.get('ServiceResourceId'),
+            'name': (r.get('ServiceResource') or {}).get('Name'),
+        }
+
+    # Per-driver: completed list, declined list
+    driver_sa_details = defaultdict(lambda: {'completed': [], 'declined': []})
+    for sa in all_sas:
+        wt = ((sa.get('WorkType') or {}).get('Name', '') or '')
+        if 'drop' in wt.lower():
+            continue
+        sa_id = sa.get('Id')
+        mapped = all_assigned_by_sa.get(sa_id) or {}
+        did = mapped.get('driver_id')
+        if not did:
+            continue
+        status = sa.get('Status') or ''
+        decline_reason = sa.get('ERS_Facility_Decline_Reason__c')
+        sa_row = {
+            'sa_number': sa.get('AppointmentNumber') or '',
+            'date': (sa.get('CreatedDate') or '')[:10],
+            'work_type': wt,
+            'status': status,
+        }
+        if status == 'Completed':
+            driver_sa_details[did]['completed'].append(sa_row)
+        if decline_reason:
+            sa_row = {**sa_row, 'decline_reason': decline_reason}
+            driver_sa_details[did]['declined'].append(sa_row)
 
     # ── Build daily satisfaction buckets (all 4 dimensions) ──
     _empty_day = lambda: {'total': 0,
@@ -350,11 +408,18 @@ def _generate_satisfaction_garage(name: str, month: str):
                           'ata_sum': 0.0, 'ata_count': 0,
                           'pta_miss': 0, 'pta_eligible': 0}
     drivers = []
-    all_driver_ids = set(driver_sat.keys()) | set(driver_stats.keys())
+    all_driver_ids = set(driver_sat.keys()) | set(driver_stats.keys()) | set(driver_sa_details.keys())
     for did in all_driver_ids:
         sat = driver_sat.get(did, _empty_drv())
         ops = driver_stats.get(did, _empty_ops())
+        sa_det = driver_sa_details.get(did, {'completed': [], 'declined': []})
         dname = sat['name'] or ops['name']
+        # Fallback: try to get name from AR mapping
+        if not dname:
+            for sa_info in all_assigned_by_sa.values():
+                if sa_info.get('driver_id') == did and sa_info.get('name'):
+                    dname = sa_info['name']
+                    break
         if not dname:
             continue
         drivers.append({
@@ -365,11 +430,24 @@ def _generate_satisfaction_garage(name: str, month: str):
             'response_time_pct': _pct(sat['ts_rt'], sat['n_rt']),
             'technician_pct': _pct(sat['ts_tech'], sat['n_tech']),
             'kept_informed_pct': _pct(sat['ts_info'], sat['n_info']),
+            'completed': len(sa_det['completed']),
+            'declined': len(sa_det['declined']),
             'sa_count': ops['sa_count'],
             'avg_ata': round(ops['ata_sum'] / ops['ata_count']) if ops['ata_count'] else None,
             'pta_miss_pct': _pct(ops['pta_miss'], ops['pta_eligible']),
         })
     drivers.sort(key=lambda x: (x['surveys'], x['sa_count']), reverse=True)
+
+    # Build driver ID→name map for the drill-down endpoint
+    _driver_sa_map = {}
+    for did, sa_det in driver_sa_details.items():
+        dname = None
+        for d in drivers:
+            if d.get('driver_id') == did:
+                dname = d['name']
+                break
+        if dname:
+            _driver_sa_map[dname] = sa_det
 
     return {
         'garage': name,
@@ -378,4 +456,19 @@ def _generate_satisfaction_garage(name: str, month: str):
         'daily': daily,
         'insights': garage_insights,
         'drivers': drivers,
+        '_driver_sa_map': _driver_sa_map,
     }
+
+
+@router.get("/api/insights/satisfaction/garage/{name}/driver-sas")
+def api_garage_driver_sas(name: str, month: str = Query(...), driver: str = Query(...),
+                          sa_type: str = Query('completed')):
+    """Lazy-fetch SA list for a driver drill-down. Reads from cached data — no SF query."""
+    name = sanitize_soql(name)
+    cache_key = f'satisfaction_garage_{name}_{month}'
+    data = cache.get(cache_key) or cache.disk_get(cache_key, ttl=31536000)
+    if not data or not isinstance(data, dict):
+        raise HTTPException(404, "Garage data not cached. Load the garage page first.")
+    sa_map = data.get('_driver_sa_map', {})
+    driver_data = sa_map.get(driver, {'completed': [], 'declined': []})
+    return {'driver': driver, 'type': sa_type, 'items': driver_data.get(sa_type, [])}

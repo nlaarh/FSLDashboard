@@ -380,7 +380,7 @@ def api_satisfaction_day(date: str):
             SELECT Id, CreatedDate, Status, ActualStartTime,
                    ERS_Dispatch_Method__c, ERS_PTA__c,
                    ServiceTerritory.Name, WorkType.Name,
-                   ERS_Cancellation_Reason__c,
+                   ERS_Cancellation_Reason__c, ERS_Facility_Decline_Reason__c,
                    AppointmentNumber, ParentRecordId
             FROM ServiceAppointment
             WHERE CreatedDate >= {start_utc} AND CreatedDate < {end_utc}

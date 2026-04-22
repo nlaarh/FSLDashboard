@@ -63,6 +63,10 @@ export const fetchGarageScorecard = (id, startDate, endDate) =>
   api.get(`/garages/${id}/performance-scorecard?start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
 export const fetchGarageAiSummary = (id, startDate, endDate) =>
   api.get(`/garages/${id}/performance-scorecard/ai-summary?start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
+export const fetchDriverSAs = (id, driverName, saType = 'completed', startDate, endDate) =>
+  api.get(`/garages/${id}/driver-sas?driver_name=${encodeURIComponent(driverName)}&sa_type=${saType}&start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
+export const fetchGarageDriverSAs = (garageName, month, driverName, saType = 'completed') =>
+  api.get(`/insights/satisfaction/garage/${encodeURIComponent(garageName)}/driver-sas?month=${month}&driver=${encodeURIComponent(driverName)}&sa_type=${saType}`).then(r => r.data)
 
 export const exportGarageScorecard = (id, startDate, endDate) => {
   const url = `/api/garages/${id}/performance-scorecard/export?start_date=${startDate}&end_date=${endDate}`

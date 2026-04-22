@@ -176,6 +176,68 @@ def _run_nightly_jobs():
         log.error(f'Nightly satisfaction failed: {e}')
 
 
+# ── Per-garage refresh (scorecard + satisfaction) ────────────────────────────
+
+_garage_last_refresh: float = 0.0  # epoch — track interval independently
+
+
+def _refresh_per_garage_data():
+    """Pre-warm garage scorecard and satisfaction cache for every active garage.
+
+    Runs every 3600s.  Each garage is wrapped in try/except so one failure
+    doesn't block the rest.  0.5s sleep between garages to avoid SF burst.
+    """
+    global _garage_last_refresh
+
+    now = time.time()
+    if now - _garage_last_refresh < 3600:
+        return
+    _garage_last_refresh = now
+
+    # Get the garage list from cache (already kept warm by the schedule)
+    garages = cache.get('garages_list')
+    if not garages:
+        garages = cache.disk_get('garages_list', ttl=600)
+    if not garages:
+        log.warning("Per-garage refresh skipped — garages_list not in cache")
+        return
+
+    from routers.garages_scorecard import api_garage_performance_scorecard
+    from routers.satisfaction_garage import api_satisfaction_garage
+
+    now_et = datetime.now(_ET)
+    month_str = f'{now_et.year}-{now_et.month:02d}'
+
+    ok, fail = 0, 0
+    for g in garages:
+        tid = g.get('id')
+        name = g.get('name', '?')
+        if not tid:
+            continue
+
+        # ── Scorecard (current month, defaults handled by endpoint) ──
+        try:
+            log.info(f"Refreshing garage scorecard for {name}")
+            api_garage_performance_scorecard(tid)
+            ok += 1
+        except Exception as e:
+            log.warning(f"Garage scorecard refresh failed for {name}: {e}")
+            fail += 1
+        time.sleep(0.5)
+
+        # ── Satisfaction ──
+        try:
+            log.info(f"Refreshing satisfaction for {name} ({month_str})")
+            api_satisfaction_garage(name, month_str)
+            ok += 1
+        except Exception as e:
+            log.warning(f"Satisfaction refresh failed for {name}: {e}")
+            fail += 1
+        time.sleep(0.5)
+
+    log.info(f"Per-garage refresh done: {ok} ok, {fail} failed, {len(garages)} garages")
+
+
 # ── Refresh loop ─────────────────────────────────────────────────────────────
 
 def _refresh_loop():
@@ -219,6 +281,9 @@ def _refresh_loop():
 
             # ── Nightly 3 AM ET: pre-generate current month satisfaction ──
             _run_nightly_jobs()
+
+            # ── Per-garage scorecard + satisfaction (every 3600s) ──
+            _refresh_per_garage_data()
 
             if cycle % 30 == 0:
                 log.info(f"Refresher cycle {cycle}: {len(refreshed)} keys refreshed")
