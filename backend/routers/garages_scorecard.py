@@ -71,10 +71,11 @@ def api_garage_performance_scorecard(
     territory_id = sanitize_soql(territory_id)
 
     # Default date range: current month
+    # Guard: when called internally (not via FastAPI), Query defaults aren't resolved
     today = _date.today()
-    if not start_date:
+    if not isinstance(start_date, str) or not start_date:
         start_date = today.replace(day=1).isoformat()
-    if not end_date:
+    if not isinstance(end_date, str) or not end_date:
         end_date = today.isoformat()
 
     cache_key = f'garage_perf_scorecard_{territory_id}_{start_date}_{end_date}'
