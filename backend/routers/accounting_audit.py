@@ -153,7 +153,9 @@ def _build_woa_audit(woa_id: str) -> dict:
     if woli_ids:
         sa_check = batch_soql_parallel("""
             SELECT Id, AppointmentNumber, Status, SchedStartTime,
-                   ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId
+                   ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
+                   ERS_En_Route_Geolocation__Latitude__s,
+                   ERS_En_Route_Geolocation__Longitude__s
             FROM ServiceAppointment
             WHERE ParentRecordId IN ('{id_list}')
               AND Status = 'Completed'
@@ -233,7 +235,19 @@ def _build_woa_audit(woa_id: str) -> dict:
     driver_name = (ar_rows[0].get('ServiceResource') or {}).get('Name', '') if ar_rows else ''
     truck_prev = None
 
-    if driver_resource_id and sa.get('SchedStartTime'):
+    # Priority 1: En Route GPS from THIS SA (driver's actual position when they started driving)
+    er_lat = _safe_float(sa.get('ERS_En_Route_Geolocation__Latitude__s'))
+    er_lon = _safe_float(sa.get('ERS_En_Route_Geolocation__Longitude__s'))
+    call_lat_check = _safe_float(wo.get('Latitude'))
+    if er_lat and er_lon:
+        # Verify it's not the same as call location (driver forgot to tap En Route until arriving)
+        import math
+        dist_check = math.sqrt(((er_lat - (call_lat_check or 0)) * 69) ** 2 + (((er_lon or 0) - _safe_float(wo.get('Longitude') or 0)) * 69 * math.cos(math.radians(er_lat))) ** 2) if call_lat_check else 999
+        if dist_check > 0.1:  # Real GPS — more than 500ft from call
+            truck_prev = {'lat': er_lat, 'lon': er_lon, 'city': '', 'state': '', 'source': 'driver_gps_enroute'}
+
+    # Priority 2: Previous completed SA call location (best estimate for Towbook)
+    if not truck_prev and driver_resource_id and sa.get('SchedStartTime'):
         prev_rows = sf_query_all(f"""
             SELECT ServiceAppointment.Latitude, ServiceAppointment.Longitude,
                    ServiceAppointment.City, ServiceAppointment.State
@@ -249,11 +263,10 @@ def _build_woa_audit(woa_id: str) -> dict:
             truck_prev = {'lat': _safe_float(p.get('Latitude')), 'lon': _safe_float(p.get('Longitude')),
                           'city': p.get('City') or '', 'state': p.get('State') or '', 'source': 'previous_job'}
 
-    # Fallback: use garage location if no previous SA found
+    # Priority 3: Garage location (last resort)
     if not truck_prev and territory_id:
         t = wo.get('ServiceTerritory') or {}
         t_name = t.get('Name', '')
-        # Fetch garage GPS if not in the WO query
         t_lat, t_lon = _safe_float(t.get('Latitude')), _safe_float(t.get('Longitude'))
         if not t_lat:
             t_rows = sf_query_all(f"SELECT Latitude, Longitude FROM ServiceTerritory WHERE Id = '{territory_id}' LIMIT 1")

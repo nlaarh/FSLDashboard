@@ -149,8 +149,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
               <div className="min-w-0 flex-1">
                 <span className="text-slate-600">From:</span>{' '}
                 <span className="text-slate-200 font-medium">{originCity || 'Unknown'}</span>
-                {origin?.source === 'garage_location' && <span className="text-slate-600"> (garage)</span>}
-                {origin?.source === 'previous_job' && <span className="text-slate-600"> (prev job)</span>}
+                {origin?.source === 'driver_gps_enroute' && <span className="text-emerald-500"> (driver GPS at En Route)</span>}
+                {origin?.source === 'previous_job' && <span className="text-slate-600"> (estimated — last known job)</span>}
+                {origin?.source === 'garage_location' && <span className="text-slate-600"> (garage location)</span>}
                 {origin?.source === 'home_address' && <span className="text-slate-600"> (home)</span>}
                 {originLat ? <span className="text-slate-600 font-mono ml-1">({originLat.toFixed(4)}, {originLon.toFixed(4)})</span>
                   : <span className="text-amber-500 ml-1">no GPS</span>}
