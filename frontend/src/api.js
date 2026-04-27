@@ -146,6 +146,20 @@ export const triageIssues = (pin) => api.post('/issues/triage', null, pinHeader(
 // Feature Flags
 export const fetchFeatures = () => api.get('/features').then(r => r.data)
 
+// Accounting — Work Order Adjustments
+export const fetchWOAdjustments = (status = 'open', page = 0, pageSize = 50, product = '', rec = '', q = '', sortCol = 'created_date', sortDir = 'desc', startDate = '', endDate = '') =>
+  api.get(`/accounting/wo-adjustments?status=${status}&page=${page}&page_size=${pageSize}&product_filter=${product}&rec_filter=${rec}&q=${encodeURIComponent(q)}&sort_col=${sortCol}&sort_dir=${sortDir}&start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
+export const fetchWOAAudit = (woaId) =>
+  api.get(`/accounting/wo-adjustments/${woaId}/audit`).then(r => r.data)
+export const fetchWOARecommendations = (ids) =>
+  api.get(`/accounting/wo-adjustments/recommendations?ids=${ids.join(',')}`).then(r => r.data)
+export const recalculateWOAAudit = (woaId) =>
+  api.post(`/accounting/wo-adjustments/${woaId}/recalculate`).then(r => r.data)
+export const fetchWOAReviewStatuses = (ids) =>
+  api.get(`/accounting/wo-adjustments/review-statuses?ids=${ids.join(',')}`).then(r => r.data)
+export const setWOAReview = (woaId, status, note = '', reviewer = '') =>
+  api.post(`/accounting/wo-adjustments/${woaId}/review`, { status, note, reviewer }).then(r => r.data)
+
 // Live Dispatch Board + SA Watchlist
 export const fetchLiveDispatch = () => api.get('/live-dispatch').then(r => r.data)
 export const fetchWatchlist = () => api.get('/watchlist').then(r => r.data)

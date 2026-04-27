@@ -114,6 +114,14 @@ def init_db():
                 active INTEGER DEFAULT 1,
                 created_at REAL
             );
+
+            CREATE TABLE IF NOT EXISTS woa_reviews (
+                woa_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'pending',
+                note TEXT DEFAULT '',
+                reviewer TEXT DEFAULT '',
+                reviewed_at TEXT DEFAULT (datetime('now'))
+            );
         """)
 
         # Seed default bonus tiers if empty
@@ -408,3 +416,36 @@ def get_activity_stats() -> dict:
         users = conn.execute("SELECT COUNT(DISTINCT user) cnt FROM activity_log WHERE user IS NOT NULL").fetchone()['cnt']
         slow = conn.execute("SELECT COUNT(*) cnt FROM activity_log WHERE duration_ms > 5000").fetchone()['cnt']
         return {'total_entries': total, 'last_24h': today, 'unique_users': users, 'slow_queries': slow}
+
+
+# ── WOA Review Decisions ──────────────────────────────────────────────────────
+
+def get_woa_review(woa_id: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT woa_id, status, note, reviewer, reviewed_at FROM woa_reviews WHERE woa_id = ?",
+            (woa_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_woa_review(woa_id: str, status: str, note: str = '', reviewer: str = '') -> dict:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO woa_reviews (woa_id, status, note, reviewer, reviewed_at)
+               VALUES (?, ?, ?, ?, datetime('now'))""",
+            (woa_id, status, note or '', reviewer or ''),
+        )
+    return {'woa_id': woa_id, 'status': status, 'note': note, 'reviewer': reviewer}
+
+
+def get_woa_reviews_batch(woa_ids: list) -> dict:
+    if not woa_ids:
+        return {}
+    placeholders = ','.join('?' * len(woa_ids))
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT woa_id, status, note, reviewer, reviewed_at FROM woa_reviews WHERE woa_id IN ({placeholders})",
+            woa_ids,
+        ).fetchall()
+    return {row['woa_id']: dict(row) for row in rows}

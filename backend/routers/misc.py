@@ -445,7 +445,8 @@ _DEFAULT_FEATURES = {
     'pta_advisor': True,
     'onroute': True,
     'matrix': True,
-    'chat': True,
+    'chat': False,
+    'accounting': True,
 }
 
 def _load_settings():

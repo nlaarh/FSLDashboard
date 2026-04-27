@@ -25,7 +25,8 @@ _DEFAULT_FEATURES = {
     'pta_advisor': True,
     'onroute': True,
     'matrix': True,
-    'chat': True,
+    'chat': False,
+    'accounting': True,
 }
 
 
@@ -199,6 +200,16 @@ def admin_update_settings(request: Request, body: dict):
         }
     if 'help_video_url' in body:
         settings['help_video_url'] = (body['help_video_url'] or '').strip()
+    if 'google_maps' in body:
+        gm = body['google_maps']
+        settings['google_maps'] = {
+            'api_key': gm.get('api_key', ''),
+        }
+    if 'accounting' in body:
+        acct = body['accounting']
+        settings['accounting'] = {
+            'audit_prompt': acct.get('audit_prompt', ''),
+        }
     if 'features' in body:
         feat = body['features']
         settings.setdefault('features', _DEFAULT_FEATURES.copy())

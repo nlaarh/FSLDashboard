@@ -94,6 +94,50 @@ def totally_satisfied_pct(rows, field):
     return round(100 * ts / total)
 
 
+def load_ai_settings():
+    """Load AI provider/key/model from database, fall back to OPENAI_API_KEY env var.
+    Returns (provider, api_key, model). api_key is empty string if unconfigured.
+    """
+    import os
+    try:
+        import database
+        cb = database.get_setting('chatbot') or {}
+        db_key = cb.get('api_key', '')
+        if db_key:
+            return cb.get('provider', 'openai'), db_key, cb.get('primary_model', '')
+    except Exception:
+        pass
+    env_key = os.environ.get('OPENAI_API_KEY', '')
+    if env_key:
+        return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
+    return '', '', ''
+
+
+def call_openai_simple(api_key, model, system_prompt, user_prompt, max_tokens=1024, temperature=0.2):
+    """Single-turn OpenAI chat completion. Returns raw text or None on failure."""
+    import logging, requests as _req
+    try:
+        resp = _req.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model or "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            },
+            timeout=45,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.getLogger('ai').warning('OpenAI call failed: %s', e)
+        return None
+
+
 def soql_date_range(start_date: str, end_date: str = None):
     """Return (start_utc, end_utc) for SOQL WHERE clauses.
 

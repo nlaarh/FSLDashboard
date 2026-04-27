@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
@@ -76,11 +76,13 @@ export default function Layout() {
   const { pathname } = useLocation()
   const [features, setFeatures] = useState({})
 
-  const loadFeatures = () => fetchFeatures().then(setFeatures).catch(() => {})
   useEffect(() => {
-    loadFeatures()
-    // Re-fetch when admin toggles features
-    const handler = () => loadFeatures()
+    fetchFeatures().then(setFeatures).catch(() => {})
+    const handler = (e) => {
+      // Admin passes features directly via CustomEvent — no API roundtrip needed
+      if (e.detail) setFeatures(e.detail)
+      else fetchFeatures().then(setFeatures).catch(() => {})
+    }
     window.addEventListener('featuresChanged', handler)
     return () => window.removeEventListener('featuresChanged', handler)
   }, [])
@@ -149,6 +151,14 @@ export default function Layout() {
                 }`}>
                 <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />Insights
               </Link>
+            )}
+            {features.accounting !== false && (
+            <Link to="/accounting"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/accounting' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}>
+              <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />Accounting
+            </Link>
             )}
           </div>
           <div className="ml-auto flex items-center gap-1">

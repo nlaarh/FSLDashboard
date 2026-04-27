@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, ToggleRight, Save, Trash } from 'lucide-react'
-import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminUpdateSettings, adminGetBonusTiers, adminSetBonusTiers, fetchFeatures } from '../api'
+import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, ToggleRight, Save, Trash, MapPin } from 'lucide-react'
+import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminUpdateSettings, adminGetSettings, adminGetBonusTiers, adminSetBonusTiers, fetchFeatures } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 import AdminAI from '../components/AdminAI'
 import AdminUsers from '../components/AdminUsers'
@@ -29,6 +29,11 @@ export default function Admin() {
   const [tiersSaving, setTiersSaving] = useState(false)
   const [tiersSaved, setTiersSaved] = useState(false)
 
+  // Google Maps state
+  const [gmapsApiKey, setGmapsApiKey] = useState('')
+  const [gmapsSaving, setGmapsSaving] = useState(false)
+  const [gmapsSaved, setGmapsSaved] = useState(false)
+
   const verify = async () => {
     setAuthError('')
     try {
@@ -54,6 +59,7 @@ export default function Admin() {
       refresh()
       fetchFeatures().then(f => { setFeatures(f); setHelpVideoUrl(f.help_video_url || '') }).catch(() => {})
       adminGetBonusTiers(pin).then(setBonusTiers).catch(() => {})
+      adminGetSettings(pin).then(s => setGmapsApiKey(s?.google_maps?.api_key || '')).catch(() => {})
       const id = setInterval(() => { refresh() }, 5000)
       return () => clearInterval(id)
     }
@@ -193,6 +199,42 @@ export default function Admin() {
       {/* AI Assistant Config (extracted component) */}
       <AdminAI pin={pin} />
 
+      {/* ── Google Maps ── */}
+      <div className="glass rounded-xl overflow-hidden">
+        <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-brand-400" />
+          <h2 className="text-sm font-semibold text-white">Google Maps</h2>
+          {gmapsSaved && <span className="text-[10px] text-emerald-400 ml-auto flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>}
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-[11px] text-slate-500">Google Maps API key used for distance calculations in the Accounting audit module.</p>
+          <div>
+            <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">API Key</label>
+            <div className="flex items-center gap-2">
+              <input value={gmapsApiKey} onChange={e => setGmapsApiKey(e.target.value)}
+                type="password" placeholder="Enter your Google Maps API key..."
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5
+                           placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 font-mono" />
+              <button disabled={gmapsSaving}
+                onClick={async () => {
+                  setGmapsSaving(true); setGmapsSaved(false)
+                  try {
+                    await adminUpdateSettings(pin, { google_maps: { api_key: gmapsApiKey } })
+                    setGmapsSaved(true)
+                    setTimeout(() => setGmapsSaved(false), 2000)
+                  } catch { /* ignore */ }
+                  finally { setGmapsSaving(false) }
+                }}
+                className="px-3 py-2.5 bg-brand-600 hover:bg-brand-500 disabled:opacity-40 rounded-lg text-xs font-semibold text-white transition-colors flex items-center gap-1.5">
+                {gmapsSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                Save
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1">Get your key at console.cloud.google.com/apis/credentials. Requires Distance Matrix API enabled.</p>
+          </div>
+        </div>
+      </div>
+
       {/* ── Feature Modules ── */}
       <div className="glass rounded-xl overflow-hidden">
         <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
@@ -207,6 +249,7 @@ export default function Admin() {
             { key: 'onroute', label: 'Route Tracker', desc: 'En-route drivers & live tracking links' },
             { key: 'matrix', label: 'Insights', desc: 'Priority matrix advisor' },
             { key: 'chat', label: 'AI Chat', desc: 'Floating chatbot assistant' },
+            { key: 'accounting', label: 'Accounting', desc: 'WO Adjustment audit & recommendations' },
           ].map(m => {
             const on = features[m.key] !== false
             return (
@@ -225,7 +268,7 @@ export default function Admin() {
                     setFeatureSaving(true)
                     try {
                       await adminUpdateSettings(pin, { features: next })
-                      window.dispatchEvent(new Event('featuresChanged'))
+                      window.dispatchEvent(new CustomEvent('featuresChanged', { detail: next }))
                       setFeatureSaved(true)
                       setTimeout(() => setFeatureSaved(false), 2000)
                     } catch { /* ignore */ }

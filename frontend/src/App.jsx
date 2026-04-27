@@ -12,6 +12,7 @@ import MatrixAdvisor from './pages/MatrixAdvisor'
 import Help from './pages/Help'
 import Issues from './pages/Issues'
 import OnRoute from './pages/OnRoute'
+import Accounting from './pages/Accounting'
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/forecast" element={<Forecast />} />
         <Route path="/onroute" element={<OnRoute />} />
         <Route path="/matrix" element={<MatrixAdvisor />} />
+        <Route path="/accounting" element={<Accounting />} />
         <Route path="/data" element={<Navigate to="/help" replace />} />
         <Route path="/issues" element={<Issues />} />
         <Route path="/help" element={<Help />} />

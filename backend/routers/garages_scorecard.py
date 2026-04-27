@@ -1,15 +1,13 @@
 """Garage Performance Scorecard — satisfaction scores, bonus calculation, driver breakdown."""
 
-import os
 import logging
-import requests as _requests
 from datetime import date as _date
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
-from utils import parse_dt as _parse_dt, is_fleet_territory, totally_satisfied_pct as _totally_satisfied_pct, soql_date_range
+from utils import parse_dt as _parse_dt, is_fleet_territory, totally_satisfied_pct as _totally_satisfied_pct, soql_date_range, load_ai_settings as _load_ai_settings, call_openai_simple as _call_openai_simple
 import cache
 
 router = APIRouter()
@@ -22,46 +20,14 @@ def _bonus_for_pct(pct):
     return database.bonus_for_pct(pct)
 
 
-def _load_ai_settings():
-    # Database settings take priority (user-configured via Admin panel)
-    try:
-        import database
-        cb = database.get_setting('chatbot') or {}
-        db_key = cb.get('api_key', '')
-        if db_key:
-            return cb.get('provider', 'openai'), db_key, cb.get('primary_model', '')
-    except Exception:
-        pass
-    # Fall back to env var
-    env_key = os.environ.get('OPENAI_API_KEY', '')
-    if env_key:
-        return 'openai', env_key, os.environ.get('OPENAI_MODEL', '')
-    return '', '', ''
-
-
-def _call_openai(api_key, model, prompt):
-    """Call OpenAI for executive summary."""
-    try:
-        resp = _requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model or "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "You are a fleet operations analyst for AAA roadside assistance. Write concise, actionable executive summaries. Use plain English. Be specific about which drivers and metrics. CRITICAL: Bonuses are per-driver based on individual TECHNICIAN satisfaction score (not overall). A driver with ≥92% tech score earns a bonus even if the garage average is below 92%. Never contradict the bonus data provided. Keep it under 200 words."},
-                    {"role": "user", "content": prompt},
-                ],
-                "max_tokens": 512,
-                "temperature": 0.3,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        log.warning('OpenAI call failed: %s', e)
-        return f"[AI Error: {e}]"
-        return None
+_SCORECARD_SYSTEM = (
+    "You are a fleet operations analyst for AAA roadside assistance. "
+    "Write concise, actionable executive summaries. Use plain English. "
+    "Be specific about which drivers and metrics. "
+    "CRITICAL: Bonuses are per-driver based on individual TECHNICIAN satisfaction score (not overall). "
+    "A driver with ≥92% tech score earns a bonus even if the garage average is below 92%. "
+    "Never contradict the bonus data provided. Keep it under 200 words."
+)
 
 
 @router.get("/api/garages/{territory_id}/performance-scorecard")
@@ -534,11 +500,11 @@ Write a 3-4 paragraph executive summary:
 3. Bonus analysis — state the garage-level bonus calculation. Which drivers have the highest/lowest tech scores and are dragging the average?
 4. Specific action items — focus on the weakest areas (high ATA, high declines, low satisfaction categories)."""
 
-    provider, api_key, model = _load_ai_settings()
+    _provider, api_key, model = _load_ai_settings()
     if not api_key:
         return {'summary': 'AI not configured. Go to Admin → AI Assistant to set up.'}
 
-    summary = _call_openai(api_key, model, prompt)
+    summary = _call_openai_simple(api_key, model, _SCORECARD_SYSTEM, prompt, max_tokens=512, temperature=0.3)
     result = {'summary': summary or 'Failed to generate summary.'}
     cache.put(cache_key, result, ttl=7200)
     return result

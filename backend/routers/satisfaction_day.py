@@ -19,7 +19,10 @@ import cache
 from routers.dispatch_shared import _fmt_et
 from routers.satisfaction_utils import _satisfaction_insights, _build_day_result
 from routers.satisfaction_shared import _build_towbook_on_location_map, _process_sa_ata_pta, _pct
-from routers.garages_scorecard import _load_ai_settings, _call_openai
+from utils import load_ai_settings as _load_ai_settings, call_openai_simple as _call_openai_simple
+
+def _call_openai(api_key, model, prompt):
+    return _call_openai_simple(api_key, model, "You are a fleet operations analyst.", prompt, max_tokens=512, temperature=0.3)
 
 router = APIRouter()
 

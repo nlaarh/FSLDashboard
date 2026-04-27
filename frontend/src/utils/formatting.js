@@ -14,3 +14,19 @@ export function round(n, decimals = 1) {
 export function formatNumber(n) {
   return (n ?? 0).toLocaleString()
 }
+
+// ── WOA / Accounting helpers ─────────────────────────────────────────────────
+
+export function productCode(product) {
+  if (!product) return ''
+  return (product.split(/[\s\-]/)[0] || product).toUpperCase()
+}
+
+export function formatQty(qty, product) {
+  if (qty == null || qty === '') return '--'
+  const code = productCode(product)
+  const n = Number(qty)
+  if (['ER', 'TW'].includes(code)) return `${n % 1 === 0 ? n : n.toFixed(2)} mi`
+  if (['E1', 'E2'].includes(code)) return `${n} min`
+  return `$${n.toFixed(2)}`
+}

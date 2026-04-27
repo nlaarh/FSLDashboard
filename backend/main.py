@@ -26,7 +26,7 @@ import database
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="FSL App", version="1.1.0")
+app = FastAPI(title="FSL App", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,8 +71,8 @@ async def activity_log_middleware(request: Request, call_next):
     # Only log API calls, not static assets
     if not path.startswith("/api/"):
         return await call_next(request)
-    # Skip noisy endpoints
-    if path in ("/api/admin/status", "/api/admin/sessions", "/api/ops/brief"):
+    # Skip noisy endpoints and binary downloads (middleware corrupts binary responses)
+    if path in ("/api/admin/status", "/api/admin/sessions", "/api/ops/brief") or '/export' in path:
         return await call_next(request)
 
     start = _time.time()
@@ -113,7 +113,8 @@ from routers import (
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
-    garages_scorecard, garages_export, live_dispatch, watchlist,
+    garages_scorecard, garages_export, live_dispatch, watchlist, accounting,
+    accounting_reviews,
 )
 
 app.include_router(auth.router)
@@ -146,6 +147,8 @@ app.include_router(dispatch_trends_monthly.router)
 app.include_router(satisfaction_scorecard.router)
 app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
+app.include_router(accounting.router)
+app.include_router(accounting_reviews.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -269,4 +272,5 @@ if _static_dir.is_dir():
         file_path = _static_dir / full_path
         if file_path.is_file():
             return FileResponse(file_path)
-        return FileResponse(_static_dir / "index.html")
+        return FileResponse(_static_dir / "index.html",
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
