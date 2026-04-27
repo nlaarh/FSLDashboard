@@ -6,127 +6,12 @@ import {
 } from 'lucide-react'
 import { fetchWOAAudit, recalculateWOAAudit } from '../api'
 import { productCode } from '../utils/formatting'
+import { PRODUCT_NAMES, TOW_CODES, TIME_CODES, FLAT_CODES, UNITS, headerSummary, buildLocalSummary } from '../utils/accountingAudit'
 
 const REC_BADGE = {
   PAY:    'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
   REVIEW: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   DENY:   'bg-red-500/15 text-red-400 border border-red-500/30',
-}
-
-const PRODUCT_NAMES = {
-  ER: 'Enroute Miles', TW: 'Tow Miles', TB: 'Tow Miles Basic',
-  TT: 'Tow Miles Plus (5-30mi)', TU: 'Tow Miles Plus (30-100mi)',
-  TM: 'Tow Miles Premier', EM: 'Extra Tow Mileage',
-  E1: 'Extrication (1st Truck)', E2: 'Extrication (2nd Truck)', Z8: 'RAP Extrication',
-  MH: 'Medium/Heavy Duty', TL: 'Tolls & Parking', MI: 'Misc / Wait Time',
-  BA: 'Base Rate', BC: 'Basic Cost', PC: 'Plus Cost', HO: 'Holiday Bonus',
-  PG: 'Plus/Premier Fuel', Z5: 'RAP Fuel Delivery', Z7: 'RAP Lockout',
-  TJ: 'TireJect', Z0: 'RAP Gone on Arrival', Z1: 'RAP Flat Tire', Z3: 'RAP Battery Boost',
-}
-const TOW_CODES = new Set(['TW', 'TB', 'TT', 'TU', 'TM', 'EM'])
-const TIME_CODES = new Set(['E1', 'E2', 'Z8', 'MI'])
-const FLAT_CODES = new Set(['BA', 'BC', 'PC', 'HO', 'PG', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'])
-const UNITS = { ER: 'mi', TW: 'mi', TB: 'mi', TT: 'mi', TU: 'mi', TM: 'mi', EM: 'mi',
-  E1: 'min', E2: 'min', Z8: 'min', MI: 'min', TL: '$' }
-
-/** One-line verdict for the header bar */
-function headerSummary(ev, code) {
-  const req = ev.requested
-  const google = ev.google_distance_miles
-  const sfEst = ev.sf_estimated_miles
-  const paid = ev.currently_paid
-  const unit = UNITS[code] || 'units'
-  const product = PRODUCT_NAMES[code] || ev.product || ''
-
-  // Build the comparison — our Google calc (prev job) > SF estimate > SF recorded
-  const sfRec = ev.sf_enroute_miles
-  const baseline = google ?? (sfEst > 0 ? sfEst : sfRec > 0 ? sfRec : null)
-  if (req != null && baseline != null && baseline > 0 && (code === 'ER' || TOW_CODES.has(code))) {
-    const pct = (req / baseline * 100).toFixed(0)
-    const src = google != null ? 'Google' : sfEst > 0 ? 'SF est' : 'SF rec'
-    return `${req} ${unit} claimed — ${src}: ${baseline} ${unit} (${pct}%)`
-  }
-  if (req != null && ev.on_location_minutes != null && ['E1', 'E2', 'MI'].includes(code)) {
-    const pct = (req / ev.on_location_minutes * 100).toFixed(0)
-    return `${req} min claimed — on-scene: ${ev.on_location_minutes} min (${pct}%)`
-  }
-  if (code === 'TL') return `$${req} claimed — tolls always need receipts`
-  if (req != null && paid != null && paid > 0) {
-    return `${req} ${unit} claimed for ${product} — currently billed: ${paid} ${unit}`
-  }
-  if (req != null) return `${req} ${unit} claimed for ${product}`
-  return product || 'No data'
-}
-
-/** Auditor narrative — explains what happened in plain English */
-function buildLocalSummary(ev, woliItems) {
-  const lines = []
-  const req = ev.requested
-  const google = ev.google_distance_miles
-  const sf = ev.sf_enroute_miles
-  const sfEst = ev.sf_estimated_miles
-  const onLoc = ev.on_location_minutes
-  const paid = ev.currently_paid
-  const product = ev.product || ''
-  const status = ev.status_quality || ''
-  const vehicle = [ev.vehicle_make, ev.vehicle_model].filter(Boolean).join(' ')
-  const code = product.split(' - ')[0]?.trim() || ''
-  const unit = UNITS[code] || 'units'
-  const productName = PRODUCT_NAMES[code] || product || 'unknown product'
-  const wolis = woliItems || []
-
-  // WO context — what's already on this Work Order
-  if (wolis.length > 0) {
-    const woliDesc = wolis.map(w => `${w.code}=${w.quantity ?? '—'}`).join(', ')
-    lines.push(`This Work Order currently has: ${woliDesc}. The garage is requesting an adjustment for ${productName}.`)
-  }
-
-  if (req != null && paid != null && paid > 0) {
-    if (Math.abs(req - paid) < 0.5)
-      lines.push(`The garage is requesting ${req} ${unit} for ${productName} — which is exactly what's already billed. This looks like a duplicate submission.`)
-    else if (req > paid)
-      lines.push(`The garage is requesting ${req} ${unit} for ${productName}, but SF only billed ${paid} ${unit}. They want ${(req - paid).toFixed(2)} ${unit} more than what the system calculated.`)
-    else
-      lines.push(`The garage is requesting ${req} ${unit} for ${productName}, which is less than the ${paid} ${unit} already billed.`)
-  } else if (req != null && (!paid || paid === 0)) {
-    lines.push(`The garage is requesting ${req} ${unit} for ${productName}. This product is not currently billed on the WO — this is a new charge.`)
-  }
-
-  if (sf != null && google != null) {
-    if (sf > google * 2)
-      lines.push(`RED FLAG: SF recorded ${sf} mi but Google shows ${google} mi (${(sf / google).toFixed(1)}x). Status issue or significantly longer route.`)
-    else if (sf < google * 0.5 && sf < 1)
-      lines.push(`SF only recorded ${sf} mi but Google shows ${google} mi — driver likely forgot "En Route". Garage claim may be legitimate.`)
-  } else if (!google) {
-    const bestSf = sfEst > 0 ? sfEst : sf
-    if (!bestSf) lines.push(`No distance data available — verify mileage manually in SF.`)
-  }
-  if (status && status.startsWith('BAD'))
-    lines.push(`DRIVER STATUS ISSUE: ${status}. SF distance unreliable — garage claim may be valid.`)
-  if (req != null && google != null && google > 0) {
-    const ratio = req / google
-    if (ratio <= 1.0) lines.push(`Claimed ${req} mi ≤ Google's ${google} mi — reasonable.`)
-    else if (ratio <= 1.3) lines.push(`Claimed ${req} mi is ${((ratio - 1) * 100).toFixed(0)}% above Google's ${google} mi — within normal range.`)
-    else if (ratio <= 2.0) lines.push(`Claimed ${req} mi vs Google ${google} mi (${ratio.toFixed(1)}x). Ask garage about extra mileage.`)
-    else lines.push(`SIGNIFICANT: Claimed ${req} mi vs Google ${google} mi (${ratio.toFixed(1)}x). Request route documentation.`)
-  }
-
-  if (onLoc != null && onLoc < 3) lines.push(`Only ${onLoc} min on scene — very short. Job was quick or statuses were wrong.`)
-  if (onLoc != null && onLoc > 60) lines.push(`${onLoc} min on scene — extended time may justify additional charges.`)
-  if (vehicle && product.includes('MH')) lines.push(`Vehicle: ${vehicle}. For MH claims, verify weight > 10,000 lbs.`)
-
-  // TL-specific: check if tow exists on WO
-  if (code === 'TL' && wolis.length > 0) {
-    const hasTow = wolis.some(w => TOW_CODES.has(w.code))
-    if (hasTow)
-      lines.push(`This WO includes a tow — tolls are plausible if the tow route crossed a toll road (e.g., NY Thruway). No receipts available in SF — request receipt from garage to verify $${req}.`)
-    else
-      lines.push(`No tow on this WO — tolls are less common without towing (unless airport parking or special access). No receipts in SF — request receipt from garage.`)
-    if (req > 30)
-      lines.push(`$${req} is higher than typical NY toll range ($5-15 per plaza). Verify this isn't a duplicate or combined charge.`)
-  }
-
-  return lines.join('\n\n') || null
 }
 
 export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
@@ -458,23 +343,43 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
         <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-3">
           <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">WO Context</div>
 
-          {/* Line Items */}
+          {/* Work Order Line Items + WO Pricing */}
           {audit.woli_items?.length > 0 && (
             <div>
-              <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">Line Items on WO</div>
-              <div className="space-y-0.5">
-                {audit.woli_items.map((wl, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[10px] py-0.5">
-                    <span className="font-mono font-bold text-brand-400 w-8 shrink-0">{wl.code || '—'}</span>
-                    <span className="text-slate-300 flex-1 truncate">{wl.product}</span>
-                    <span className="text-slate-400 font-mono shrink-0">
-                      {wl.quantity != null ? wl.quantity : '—'}
-                    </span>
-                    <span className="text-slate-500 font-mono shrink-0 w-16 text-right">
-                      {wl.total_price != null ? `$${Number(wl.total_price).toFixed(2)}` : ''}
-                    </span>
-                  </div>
-                ))}
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[9px] text-slate-600 uppercase tracking-wider">Work Order Line Items ({audit.woli_items.length})</span>
+                {urls.wo && <a href={urls.wo} target="_blank" rel="noopener noreferrer" className="text-[9px] text-brand-400 hover:underline">View in SF ↗</a>}
+              </div>
+              <div className="text-[9px] text-slate-600 grid grid-cols-[60px_1fr_50px_55px_65px] gap-1 pb-1 border-b border-slate-800/50">
+                <span>Name</span><span>Product</span><span className="text-right">Quantity</span><span className="text-right">Tax Amt</span><span className="text-right">Grand Total</span>
+              </div>
+              {audit.woli_items.map((wl, i) => (
+                <div key={i} className="grid grid-cols-[60px_1fr_50px_55px_65px] gap-1 text-[10px] py-0.5 items-center">
+                  {wl.id ? (
+                    <a href={`https://aaawcny.lightning.force.com/${wl.id}`} target="_blank" rel="noopener noreferrer"
+                      className="font-mono text-brand-400 hover:text-brand-300 hover:underline">{wl.name || '—'}</a>
+                  ) : (
+                    <span className="font-mono text-slate-500">{wl.name || '—'}</span>
+                  )}
+                  <span className="text-slate-300 truncate">{wl.product || <span className="text-slate-600 italic">dispatch</span>}</span>
+                  <span className="text-right font-mono text-slate-300">{wl.quantity != null ? wl.quantity : ''}</span>
+                  <span className="text-right font-mono text-slate-400">{wl.tax != null ? `$${wl.tax.toFixed(2)}` : wl.grand_total != null ? '$0' : ''}</span>
+                  <span className="text-right font-mono font-semibold text-slate-200">{wl.grand_total != null ? `$${wl.grand_total.toFixed(2)}` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* WO Pricing (from WorkOrder, not WOLI) */}
+          {audit.wo_pricing && (audit.wo_pricing.basic_cost > 0 || audit.wo_pricing.total_invoiced > 0) && (
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">WO Pricing</div>
+              <div className="space-y-0.5 text-[10px]">
+                {audit.wo_pricing.basic_cost > 0 && <div className="flex justify-between"><span className="text-slate-400">Basic Cost</span><span className="font-mono text-slate-200">${audit.wo_pricing.basic_cost.toFixed(2)}</span></div>}
+                {audit.wo_pricing.plus_cost > 0 && <div className="flex justify-between"><span className="text-slate-400">Plus Cost</span><span className="font-mono text-slate-200">${audit.wo_pricing.plus_cost.toFixed(2)}</span></div>}
+                {audit.wo_pricing.other_cost > 0 && <div className="flex justify-between"><span className="text-slate-400">Other Cost</span><span className="font-mono text-slate-200">${audit.wo_pricing.other_cost.toFixed(2)}</span></div>}
+                {audit.wo_pricing.tax > 0 && <div className="flex justify-between"><span className="text-slate-400">Tax</span><span className="font-mono text-slate-200">${audit.wo_pricing.tax.toFixed(2)}</span></div>}
+                {audit.wo_pricing.grand_total > 0 && <div className="flex justify-between border-t border-slate-700/30 pt-0.5"><span className="text-slate-300 font-bold">Grand Total</span><span className="font-mono font-bold text-white">${audit.wo_pricing.grand_total.toFixed(2)}</span></div>}
+                {audit.wo_pricing.total_invoiced > 0 && <div className="flex justify-between"><span className="text-slate-400">Total Invoiced</span><span className="font-mono text-emerald-400">${audit.wo_pricing.total_invoiced.toFixed(2)}</span></div>}
               </div>
             </div>
           )}
@@ -525,29 +430,28 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
       </div>
 
       {/* ── What to verify (REVIEW only) ── */}
-      {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
-        <div className="px-4 py-3 rounded-xl bg-amber-500/5 border border-amber-700/30">
-          <div className="text-[10px] text-amber-400 uppercase tracking-wider font-bold mb-1.5">What to Verify</div>
-          <ul className="space-y-1">
-            {audit.ask_garage.map((item, i) => (
-              <li key={i} className="text-[10px] text-slate-300 flex items-start gap-2">
-                <span className="text-amber-400 mt-0.5">-</span>{item}
-              </li>
-            ))}
-          </ul>
+      {/* ── Auditor Summary — narrative + action items combined ── */}
+      {(localSummary || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
+        <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
+          <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold mb-2">Auditor Summary</div>
+          {localSummary && (
+            <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
+              {localSummary.split('\n\n').map((para, i) => (
+                <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
+              ))}
+            </div>
+          )}
+          {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-700/30">
+              <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
+              {audit.ask_garage.map((item, i) => (
+                <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2">
+                  <span className="text-amber-400">-</span>{item}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      {/* ── Collapsible sections ── */}
-      {localSummary && (
-        <details className="glass rounded-xl border border-slate-700/20">
-          <summary className="px-4 py-2.5 text-[10px] text-slate-400 uppercase tracking-wider font-bold cursor-pointer hover:bg-slate-800/30">Auditor Analysis</summary>
-          <div className="px-4 pb-3 text-[11px] text-slate-300 leading-relaxed space-y-2">
-            {localSummary.split('\n\n').map((para, i) => (
-              <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
-            ))}
-          </div>
-        </details>
       )}
       {showAi && (
         <details className="glass rounded-xl border border-blue-800/20">

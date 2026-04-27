@@ -320,6 +320,8 @@ def _build_woa_list(status_filter: str) -> dict:
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
+               Work_Order__r.Facility_Name__c, Work_Order__r.Facility_ID__c,
+               Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
                Work_Order__r.City, Work_Order__r.State,
                Work_Order__r.Tow_Destination__Latitude__s,
@@ -353,7 +355,7 @@ def _build_woa_list(status_filter: str) -> dict:
     wo_ids = list({r.get('Work_Order__c') for r in woa_rows if r.get('Work_Order__c')})
     log.info(f"WOA list: {len(woa_rows)} rows, {len(wo_ids)} unique WOs to query WOLIs")
     woli_rows = batch_soql_parallel("""
-        SELECT WorkOrderId, WorkOrder.WorkOrderNumber, PricebookEntry.Name,
+        SELECT Id, WorkOrderId, WorkOrder.WorkOrderNumber, PricebookEntry.Name,
                Quantity, TotalPrice, Description
         FROM WorkOrderLineItem
         WHERE WorkOrderId IN ('{id_list}')
@@ -367,6 +369,7 @@ def _build_woa_list(status_filter: str) -> dict:
         if wo_id:
             pbe = (wl.get('PricebookEntry') or {}).get('Name') or ''
             wo_wolis[wo_id].append({
+                'id': wl.get('Id'),
                 'product': pbe,
                 'code': pbe.split(' - ')[0].strip() if ' - ' in pbe else pbe.split(' ')[0] if pbe else '',
                 'quantity': wl.get('Quantity'),
@@ -449,9 +452,10 @@ def _build_woa_list(status_filter: str) -> dict:
             'currently_paid': paid,
             'recommendation': rec,
             'rec_reason': rec_reason,
-            'facility': wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else '',
+            'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
             'wo_number': wo.get('WorkOrderNumber', ''),
             'wo_id': wo_id,
+            'woli_id': woli.get('id') or '',
             'created_date': _fmt_date_et(r.get('CreatedDate')),
             '_sort_date': (r.get('CreatedDate') or '')[:10],
             'created_by': (r.get('CreatedBy') or {}).get('Name', ''),

@@ -24,6 +24,8 @@ def _build_woa_audit(woa_id: str) -> dict:
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
+               Work_Order__r.Facility_Name__c,
+               Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
                Work_Order__r.City, Work_Order__r.State,
                Work_Order__r.Tow_Destination__Latitude__s,
@@ -35,7 +37,10 @@ def _build_woa_audit(woa_id: str) -> dict:
                Work_Order__r.Tow_Miles__c,
                Work_Order__r.ERS_Estimated_Tow_Miles__c,
                Work_Order__r.ERS_En_Route_Date_Time__c,
-               Work_Order__r.ERS_On_Location_Date_Time__c
+               Work_Order__r.ERS_On_Location_Date_Time__c,
+               Work_Order__r.Tax, Work_Order__r.GrandTotal,
+               Work_Order__r.Basic_Cost__c, Work_Order__r.Plus_Cost__c,
+               Work_Order__r.Other_Cost__c, Work_Order__r.Total_Amount_Invoiced__c
         FROM ERS_Work_Order_Adjustment__c
         WHERE Id = '{woa_id}'
         LIMIT 1
@@ -49,25 +54,77 @@ def _build_woa_audit(woa_id: str) -> dict:
     territory_id = wo.get('ServiceTerritoryId', '')
 
     woli_rows = sf_query_all(f"""
-        SELECT Id, WorkOrderId, PricebookEntry.Name, PricebookEntry.ProductCode,
-               Quantity, TotalPrice, Description
+        SELECT Id, WorkOrderId, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
+               Quantity, ListPrice, Subtotal, TotalPrice, Discount, Description, Status
         FROM WorkOrderLineItem
         WHERE WorkOrderId = '{wo_id}'
     """) if wo_id else []
 
-    # Build all WOLIs list for the audit panel
+    # Query WO Cost records for per-product pricing (unit price, tax, grand total)
+    wo_costs = sf_query_all(f"""
+        SELECT Name, Quantity__c, Unit_Price__c
+        FROM ERS_Work_Order_Cost__c
+        WHERE Work_Order__c = '{wo_id}'
+    """) if wo_id else []
+
+    # Build WOLIs list — show only New (pending) items; fallback to all if none are New
+    new_wolis = [wl for wl in woli_rows if wl.get('Status') == 'New']
+    display_wolis = new_wolis if new_wolis else woli_rows
+    # Match WO Cost records to WOLIs
+    # Cost records may split a single WOLI into Basic/Plus tiers (e.g., TW 5.88 = 5.0 Basic + 0.88 Plus)
+    # Strategy: consume cost records in order, summing amounts per WOLI by matching cumulative quantities
+    remaining_costs = sorted([c for c in wo_costs if c.get('Quantity__c')],
+                             key=lambda c: -(c.get('Quantity__c') or 0))  # largest first
+    product_wolis = sorted([wl for wl in display_wolis if wl.get('Quantity')],
+                           key=lambda w: -(w.get('Quantity') or 0))
+    woli_amounts = {}  # WOLI LineItemNumber → (total_amount, avg_rate)
+    for wl in product_wolis:
+        qty = wl.get('Quantity')
+        if qty is None or qty == 0:
+            continue
+        target = round(qty, 2)
+        consumed_qty = 0.0
+        consumed_amount = 0.0
+        to_remove = []
+        for i, c in enumerate(remaining_costs):
+            cq = round(c.get('Quantity__c') or 0, 2)
+            cp = _safe_float(c.get('Unit_Price__c')) or 0
+            if consumed_qty + cq <= target + 0.01:
+                consumed_qty += cq
+                consumed_amount += cq * cp
+                to_remove.append(i)
+                if abs(consumed_qty - target) < 0.02:
+                    break
+        for i in reversed(to_remove):
+            remaining_costs.pop(i)
+        if consumed_amount > 0:
+            woli_amounts[wl.get('LineItemNumber')] = (round(consumed_amount, 2), round(consumed_amount / qty, 2) if qty else 0)
+
     all_wolis = []
-    for wl in woli_rows:
+    for wl in display_wolis:
         pbe = wl.get('PricebookEntry') or {}
         product_name = pbe.get('Name') or ''
-        # Skip the auto-generated WOLI with no product (the dispatch WOLI)
-        if not product_name:
-            continue
+        qty = wl.get('Quantity')
+        line_num = wl.get('LineItemNumber')
+        amount_info = woli_amounts.get(line_num)
+        subtotal = amount_info[0] if amount_info else None
+        unit_price = amount_info[1] if amount_info else None
+        # Apportion WO-level tax proportionally to each WOLI by its subtotal share
+        wo_tax = _safe_float(wo.get('Tax')) or 0
+        total_woli_amount = sum(a[0] for a in woli_amounts.values()) if woli_amounts else 0
+        tax_share = round(wo_tax * subtotal / total_woli_amount, 2) if subtotal and total_woli_amount > 0 else None
+        grand_total = round(subtotal + tax_share, 2) if subtotal is not None and tax_share is not None else subtotal
         all_wolis.append({
+            'id': wl.get('Id') or '',
+            'name': wl.get('LineItemNumber') or '',
             'product': product_name,
             'code': pbe.get('ProductCode') or (product_name.split(' - ')[0].strip() if ' - ' in product_name else ''),
-            'quantity': wl.get('Quantity'),
-            'total_price': wl.get('TotalPrice'),
+            'quantity': qty,
+            'unit_price': unit_price,
+            'subtotal': subtotal,
+            'tax': tax_share,
+            'grand_total': grand_total,
+            'status': wl.get('Status') or '',
         })
 
     # Match WOA to best WOLI by requested quantity (same logic as list endpoint)
@@ -133,7 +190,8 @@ def _build_woa_audit(woa_id: str) -> dict:
         assigned_resource=_get_assigned_resource,
     )
 
-    status_transitions = ['None', 'Scheduled', 'Dispatched', 'En Route',
+    status_transitions = ['None', 'Scheduled', 'Assigned', 'Dispatched',
+                          'Accepted', 'Declined', 'En Route',
                           'On Location', 'In Progress', 'Completed',
                           'Cannot Complete', 'Canceled']
     sa_history = parallel_data['sa_history']
@@ -223,7 +281,7 @@ def _build_woa_audit(woa_id: str) -> dict:
         'requested_qty': _safe_float(woa.get('Quantity__c')),
         'currently_paid': _safe_float(woli.get('Quantity')),
         'description': (woli.get('Description') or '')[:500],
-        'facility': wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else '',
+        'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
         'on_location_minutes': on_location_minutes,
         'status_quality': status_quality,
         'google_distance_miles': google_distance,
@@ -306,10 +364,18 @@ def _build_woa_audit(woa_id: str) -> dict:
             'vehicle_model': wo.get('Vehicle_Model__c') or None,
             'vehicle_weight': _safe_float(wo.get('Weight_lbs__c')),
             'vehicle_group': wo.get('Vehicle_Group__c') or None,
+            'tow_destination_lat': _safe_float(wo.get('Tow_Destination__Latitude__s')),
+            'tow_destination_lon': _safe_float(wo.get('Tow_Destination__Longitude__s')),
+            'sf_estimated_tow_miles': _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
         },
-        'tow_destination_lat': _safe_float(wo.get('Tow_Destination__Latitude__s')),
-        'tow_destination_lon': _safe_float(wo.get('Tow_Destination__Longitude__s')),
-        'sf_estimated_tow_miles': _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
+        'wo_pricing': {
+            'tax': _safe_float(wo.get('Tax')),
+            'grand_total': _safe_float(wo.get('GrandTotal')),
+            'basic_cost': _safe_float(wo.get('Basic_Cost__c')),
+            'plus_cost': _safe_float(wo.get('Plus_Cost__c')),
+            'other_cost': _safe_float(wo.get('Other_Cost__c')),
+            'total_invoiced': _safe_float(wo.get('Total_Amount_Invoiced__c')),
+        },
         'woli_items': all_wolis,
         'sa_timeline': sa_timeline,
         'sf_urls': {

@@ -391,9 +391,19 @@ export default function Accounting() {
                       {/* Product */}
                       <td className="px-3 py-2.5">
                         {code || r.product ? (
-                          <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border', productClass)}>
-                            {code || r.product}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border', productClass)}>
+                              {code || r.product}
+                            </span>
+                            {r.woli_id && (
+                              <a href={`https://aaawcny.lightning.force.com/${r.woli_id}`} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="text-[9px] text-slate-500 hover:text-brand-400 hover:underline font-mono"
+                                title="Open WOLI in Salesforce">
+                                WOLI ↗
+                              </a>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-[10px] text-slate-600 italic cursor-help" title="No Work Order Line Items found on this WO. The product type could not be determined.">No WOLI</span>
                         )}
