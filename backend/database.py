@@ -7,6 +7,7 @@ Tables:
 - settings: key-value config (API keys, preferences)
 - cache: persistent L2 cache (replaces disk JSON files)
 - bonus_tiers: configurable contractor bonus rules
+- accounting_rates: admin-editable audit thresholds and included-miles reference data
 """
 
 import sqlite3
@@ -29,6 +30,25 @@ _DEFAULT_BONUS_TIERS = [
     (96, 3.0, '≥96%', 2),
     (94, 2.0, '≥94%', 3),
     (92, 1.0, '≥92%', 4),
+]
+
+# (code, label, value, unit, notes, category)
+_DEFAULT_ACCOUNTING_RATES = [
+    ('er_included_b',      'Basic ER Miles Included',     4.0,   'mi',  'Basic (B) coverage — en route miles included before overage', 'ER Miles Included'),
+    ('er_included_p',      'Plus ER Miles Included',      8.0,   'mi',  'Plus (P) coverage — en route miles included before overage', 'ER Miles Included'),
+    ('er_included_pp',     'Premier ER Miles Included',   100.0, 'mi',  'Premier (P+) coverage — effectively unlimited', 'ER Miles Included'),
+    ('tow_included_b',     'Basic Tow Miles Included',    3.0,   'mi',  'Basic (B) coverage — tow miles included', 'Tow Miles Included'),
+    ('tow_included_p',     'Plus Tow Miles Included',     100.0, 'mi',  'Plus (P) coverage — tow miles included', 'Tow Miles Included'),
+    ('tow_included_pp',    'Premier Tow Miles Included',  200.0, 'mi',  'Premier (P+) coverage — tow miles included', 'Tow Miles Included'),
+    ('mileage_pay_pct',    'Mileage Pay Threshold',       130.0, '%',   'ER/tow ≤ this % of Google baseline = approve without review', 'Audit Thresholds'),
+    ('mileage_review_pct', 'Mileage Review Threshold',    150.0, '%',   'ER/tow ≤ this % = request docs; > this = flag for denial', 'Audit Thresholds'),
+    ('time_pay_pct',       'Time Pay Threshold',          120.0, '%',   'Time products (E1/E2/MI) ≤ this % of on-scene = approve', 'Audit Thresholds'),
+    ('tl_flag_usd',              'Toll Flag Amount',              30.0,  '$',   'Toll claims above this amount require receipt verification note', 'Audit Thresholds'),
+    ('materiality_threshold_usd','Materiality Threshold',         10.0,  '$',   'Adjustments with estimated dollar impact below this amount are flagged as low-materiality (auto-approve signal)', 'Audit Thresholds'),
+    ('e1_time_cap_min',          'E1 Time Cap',                   60.0,  'min', 'Maximum payable minutes for E1 Extrication per call', 'Time Caps'),
+    ('er_rate_per_mile',         'ER Rate per Mile',               1.75, '$/mi','Estimated unit cost for ER (Enroute Miles) — used for materiality dollar estimate', 'Reference Rates'),
+    ('tow_rate_per_mile',        'Tow Rate per Mile',             15.0,  '$/mi','Estimated unit cost for TW tow miles — used for materiality dollar estimate', 'Reference Rates'),
+    ('e1_rate_per_min',          'E1/MI Rate per Min',             0.75, '$/min','Estimated unit cost for E1/E2/MI time products — used for materiality dollar estimate', 'Reference Rates'),
 ]
 
 
@@ -122,6 +142,31 @@ def init_db():
                 reviewer TEXT DEFAULT '',
                 reviewed_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS accounting_rates (
+                code TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                value REAL NOT NULL DEFAULT 0,
+                unit TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                category TEXT DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS opt_sync_audit (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at        TEXT NOT NULL,
+                finished_at       TEXT,
+                status            TEXT NOT NULL,
+                runs_found        INTEGER DEFAULT 0,
+                runs_inserted     INTEGER DEFAULT 0,
+                runs_skipped      INTEGER DEFAULT 0,
+                runs_failed       INTEGER DEFAULT 0,
+                verdicts_inserted INTEGER DEFAULT 0,
+                rows_purged       INTEGER DEFAULT 0,
+                error_detail      TEXT,
+                duration_ms       INTEGER
+            );
         """)
 
         # Seed default bonus tiers if empty
@@ -133,6 +178,16 @@ def init_db():
                     (min_pct, bonus, label, sort),
                 )
             log.info("Seeded default bonus tiers")
+
+        # Seed default accounting rates if empty
+        row = conn.execute("SELECT COUNT(*) cnt FROM accounting_rates").fetchone()
+        if row['cnt'] == 0:
+            for code, label, value, unit, notes, category in _DEFAULT_ACCOUNTING_RATES:
+                conn.execute(
+                    "INSERT INTO accounting_rates (code, label, value, unit, notes, category) VALUES (?, ?, ?, ?, ?, ?)",
+                    (code, label, value, unit, notes, category),
+                )
+            log.info("Seeded default accounting rates")
 
         # Cleanup expired cache rows
         deleted = conn.execute("DELETE FROM cache WHERE expires_at < ?", (time.time(),)).rowcount
@@ -305,6 +360,40 @@ def bonus_for_pct(pct) -> tuple:
     return 0, f'<{lowest}%'
 
 
+# ── Accounting Rates CRUD ─────────────────────────────────────────────────────
+
+def get_accounting_rates() -> list:
+    """Get all accounting reference rates, ordered by category then code."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT code, label, value, unit, notes, category, updated_at FROM accounting_rates ORDER BY category, code"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_accounting_rates_dict() -> dict:
+    """Get accounting rates as {code: value} for quick lookup in audit logic."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT code, value FROM accounting_rates").fetchall()
+        return {row['code']: row['value'] for row in rows}
+
+
+def set_accounting_rate(code: str, value: float) -> dict:
+    """Update the value for a single accounting rate. Returns the updated row."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE accounting_rates SET value = ?, updated_at = datetime('now') WHERE code = ?",
+            (value, code),
+        )
+        row = conn.execute(
+            "SELECT code, label, value, unit, notes, category, updated_at FROM accounting_rates WHERE code = ?",
+            (code,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Unknown accounting rate code: {code}")
+        return dict(row)
+
+
 # ── Migration: settings.json → SQLite ─────────────────────────────────────────
 
 def migrate_settings_json():
@@ -449,3 +538,44 @@ def get_woa_reviews_batch(woa_ids: list) -> dict:
             woa_ids,
         ).fetchall()
     return {row['woa_id']: dict(row) for row in rows}
+
+
+# ── Optimizer Sync Audit ──────────────────────────────────────────────────────
+
+def write_sync_audit(
+    started_at: str,
+    finished_at: str,
+    status: str,
+    runs_found: int = 0,
+    runs_inserted: int = 0,
+    runs_skipped: int = 0,
+    runs_failed: int = 0,
+    verdicts_inserted: int = 0,
+    rows_purged: int = 0,
+    error_detail: str | None = None,
+    duration_ms: int = 0,
+):
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO opt_sync_audit
+               (started_at, finished_at, status, runs_found, runs_inserted,
+                runs_skipped, runs_failed, verdicts_inserted, rows_purged,
+                error_detail, duration_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (started_at, finished_at, status, runs_found, runs_inserted,
+             runs_skipped, runs_failed, verdicts_inserted, rows_purged,
+             error_detail, duration_ms)
+        )
+
+
+def get_sync_audit(limit: int = 50) -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, started_at, finished_at, status, runs_found, runs_inserted,
+                      runs_skipped, runs_failed, verdicts_inserted, rows_purged,
+                      error_detail, duration_ms
+               FROM opt_sync_audit
+               ORDER BY id DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+    return [dict(row) for row in rows]

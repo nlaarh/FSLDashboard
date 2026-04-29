@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign, BrainCircuit } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
@@ -160,6 +160,7 @@ export default function Layout() {
               <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />Accounting
             </Link>
             )}
+            {/* Optimizer hidden until live SF data is wired in (was using synthetic seed data) */}
           </div>
           <div className="ml-auto flex items-center gap-1">
             <SASearch />

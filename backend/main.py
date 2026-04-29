@@ -47,8 +47,8 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if path.startswith("/track/") or (path.startswith("/api/track/") and request.method == "GET"):
         return await call_next(request)
-    # Azure Easy Auth: if SSO is active, this header is set by Azure
-    if request.headers.get("x-ms-client-principal"):
+    # Azure Easy Auth: only trust this header when running in Azure App Service
+    if request.headers.get("x-ms-client-principal") and os.environ.get("WEBSITE_SITE_NAME"):
         return await call_next(request)
     # Admin cookie
     cookie = request.cookies.get("fslapp_auth")
@@ -114,7 +114,7 @@ from routers import (
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
     garages_scorecard, garages_export, live_dispatch, watchlist, accounting,
-    accounting_reviews,
+    accounting_reviews, optimizer, optimizer_chat,
 )
 
 app.include_router(auth.router)
@@ -149,6 +149,8 @@ app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
 app.include_router(accounting.router)
 app.include_router(accounting_reviews.router)
+app.include_router(optimizer.router)
+app.include_router(optimizer_chat.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -231,6 +233,17 @@ def _nightly_trends_refresh():
             time.sleep(300)
 
 
+def _sync_ai_keys_from_env():
+    """Copy AI API keys from .env into the settings DB on startup.
+    DB value wins if already set — .env is only a seed/fallback."""
+    s = database.get_all_settings()
+    for env_var, db_key in (('ANTHROPIC_API_KEY', 'anthropic_api_key'),
+                             ('OPENAI_API_KEY', 'openai_api_key')):
+        env_val = os.environ.get(env_var, '').strip()
+        if env_val and not s.get(db_key, '').strip():
+            database.put_setting(db_key, env_val)
+
+
 @app.on_event("startup")
 async def startup():
     # Initialize SQLite database (settings, cache, bonus_tiers, users)
@@ -240,9 +253,16 @@ async def startup():
     users.migrate_json_users()
     users.seed_users()
 
+    # Sync AI API keys from .env → DB so they survive container restarts without re-entry
+    _sync_ai_keys_from_env()
+
     # Start proactive cache refresher (replaces _warmup_cache)
     # The refresher handles leader election — safe to call from all workers
     refresher.start()
+
+    # Start optimizer sync background thread (lock file prevents duplicate work)
+    import optimizer_sync
+    optimizer_sync.start()
 
     # Nightly heavy trends refresh (too heavy for regular refresher)
     threading.Thread(target=_nightly_trends_refresh, daemon=True).start()

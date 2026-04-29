@@ -10,10 +10,12 @@ import time
 router = APIRouter()
 
 # ── Admin PIN ────────────────────────────────────────────────────────────────
-_ADMIN_PIN = os.getenv('ADMIN_PIN', '121838')
+_ADMIN_PIN = os.getenv('ADMIN_PIN')  # required — no default in source
 
 
 def _check_pin(request: Request):
+    if not _ADMIN_PIN:
+        raise HTTPException(status_code=503, detail="ADMIN_PIN not configured on server")
     pin = request.headers.get('X-Admin-Pin', '')
     if pin != _ADMIN_PIN:
         raise HTTPException(status_code=403, detail="Invalid PIN")
@@ -198,6 +200,18 @@ def admin_update_settings(request: Request, body: dict):
             'primary_model': cb.get('primary_model', ''),
             'fallback_model': cb.get('fallback_model', ''),
         }
+    # Shared provider API keys (used by both chatbot and optimizer chat)
+    if 'anthropic_api_key' in body:
+        settings['anthropic_api_key'] = (body['anthropic_api_key'] or '').strip()
+    if 'openai_api_key' in body:
+        settings['openai_api_key'] = (body['openai_api_key'] or '').strip()
+    # Optimizer chat has its own provider + model (keys shared with above)
+    if 'optimizer_chat' in body:
+        oc = body['optimizer_chat']
+        settings['optimizer_chat'] = {
+            'provider': oc.get('provider', 'anthropic'),
+            'model': oc.get('model', ''),
+        }
     if 'help_video_url' in body:
         settings['help_video_url'] = (body['help_video_url'] or '').strip()
     if 'google_maps' in body:
@@ -240,6 +254,33 @@ def api_set_bonus_tiers(request: Request, body: list):
             raise HTTPException(400, "Each tier needs min_pct and bonus_per_sa")
     database.set_bonus_tiers(body)
     return database.get_bonus_tiers()
+
+
+# ── Accounting Rates ─────────────────────────────────────────────────────────
+
+@router.get("/api/admin/accounting-rates")
+def api_get_accounting_rates(request: Request):
+    """Get all accounting reference rates (included miles, audit thresholds)."""
+    _check_pin(request)
+    import database
+    return database.get_accounting_rates()
+
+
+@router.put("/api/admin/accounting-rates/{code}")
+def api_set_accounting_rate(request: Request, code: str, body: dict):
+    """Update the value for a single accounting rate."""
+    _check_pin(request)
+    import database
+    if 'value' not in body:
+        raise HTTPException(400, "body must include 'value'")
+    try:
+        val = float(body['value'])
+    except (TypeError, ValueError):
+        raise HTTPException(400, "'value' must be a number")
+    try:
+        return database.set_accounting_rate(code, val)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 # ── Activity Log ─────────────────────────────────────────────────────────────

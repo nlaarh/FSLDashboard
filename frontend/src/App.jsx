@@ -13,6 +13,8 @@ import Help from './pages/Help'
 import Issues from './pages/Issues'
 import OnRoute from './pages/OnRoute'
 import Accounting from './pages/Accounting'
+// Optimizer hidden until live SF data is wired in
+// import OptimizerDecoder from './pages/OptimizerDecoder'
 
 export default function App() {
   return (
@@ -32,6 +34,8 @@ export default function App() {
         <Route path="/issues" element={<Issues />} />
         <Route path="/help" element={<Help />} />
         <Route path="/admin" element={<Admin />} />
+        {/* Optimizer disabled until live SF data is wired — redirect to home */}
+        <Route path="/optimizer" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

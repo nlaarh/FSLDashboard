@@ -65,3 +65,14 @@
 .ai-summary ul, .ai-summary ol { padding-left: 18px; margin-bottom: 8px; }
 .ai-summary li { margin-bottom: 4px; }
 .ai-summary strong { color: #f1f5f9; }
+
+/* Optimizer chat animations */
+@keyframes optFadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes optBounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+.opt-msg-enter { animation: optFadeUp 0.2s ease-out; }

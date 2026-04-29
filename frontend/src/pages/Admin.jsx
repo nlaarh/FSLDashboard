@@ -5,6 +5,8 @@ import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyl
 import AdminAI from '../components/AdminAI'
 import AdminUsers from '../components/AdminUsers'
 import AdminActivityLog from '../components/AdminActivityLog'
+import AdminOptimizerSync from '../components/AdminOptimizerSync'
+import AdminAccountingRates from '../components/AdminAccountingRates'
 
 export default function Admin() {
   const [pin, setPin] = useState('')
@@ -159,6 +161,9 @@ export default function Admin() {
       {/* ── Activity Log ── */}
       <AdminActivityLog pin={pin} />
 
+      {/* ── Optimizer Sync Audit ── */}
+      <AdminOptimizerSync />
+
       {/* ── Map Style ── */}
       <div className="glass rounded-xl overflow-hidden">
         <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
@@ -198,6 +203,9 @@ export default function Admin() {
 
       {/* AI Assistant Config (extracted component) */}
       <AdminAI pin={pin} />
+
+      {/* Accounting Reference Rates */}
+      <AdminAccountingRates pin={pin} />
 
       {/* ── Google Maps ── */}
       <div className="glass rounded-xl overflow-hidden">

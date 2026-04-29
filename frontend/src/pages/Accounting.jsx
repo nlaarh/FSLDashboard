@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { fetchWOAdjustments } from '../api'
 import AccountingAuditPanel from '../components/AccountingAuditPanel'
+import AccountingAnalytics from '../components/AccountingAnalytics'
 import { productCode, formatQty } from '../utils/formatting'
 
 const PRODUCTS = [
@@ -32,19 +33,19 @@ const PRODUCTS = [
 ]
 
 const PRODUCT_COLORS = {
-  ER: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-  TW: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  TB: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  TT: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  TU: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  TM: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  EM: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  E1: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-  Z8: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-  MH: 'bg-red-500/15 text-red-400 border-red-500/30',
-  TL: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  MI: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
-  HO: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  ER: 'bg-blue-500/25 text-blue-300 border-blue-500/50',
+  TW: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  TB: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  TT: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  TU: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  TM: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  EM: 'bg-purple-500/25 text-purple-300 border-purple-500/50',
+  E1: 'bg-orange-500/25 text-orange-300 border-orange-500/50',
+  Z8: 'bg-orange-500/25 text-orange-300 border-orange-500/50',
+  MH: 'bg-red-500/25 text-red-300 border-red-500/50',
+  TL: 'bg-emerald-500/25 text-emerald-300 border-emerald-500/50',
+  MI: 'bg-slate-500/25 text-slate-300 border-slate-500/50',
+  HO: 'bg-amber-500/25 text-amber-300 border-amber-500/50',
 }
 
 const SORT_DEF = {
@@ -60,7 +61,7 @@ const COL_HELP = {
   product: 'Product code from the Work Order Line Item (WOLI).\n\nBA = Base Rate — flat fee for showing up\nER = Enroute Miles — miles from truck location to breakdown (SF uses Google Maps to calculate)\nTW = Tow Miles — miles towing vehicle pickup to drop-off destination\nE1 = Extrication 1st Truck — winch-out/recovery time in MINUTES (vehicle stuck in ditch, snow, mud, accident)\nE2 = Extrication 2nd Truck — if a second truck was needed\nMH = Medium/Heavy Duty — vehicle over 10,000 lbs required special equipment\nTL = Tolls/Parking — out-of-pocket costs (tolls on thruway, airport parking, etc.)\nMI = Miscellaneous — usually wait time (member held up the driver)\nBC = Basic Cost\nPC = Plus Cost\n\nHow we verify each:\n• ER/TW: Compare requested miles vs SF Google-calculated distance\n• E1/MI: Compare requested minutes vs actual on-scene time from SA timestamps\n• MH: Check vehicle group (DW=heavy) or weight field\n• TL: Always Review — need receipts\n• BA/BC/PC: Always Review — policy-based\n\nProduct matched to WOA by finding the WOLI with closest quantity.',
   requested_qty: 'What the garage is requesting in this adjustment.\n\nFor ER/TW: miles\nFor E1: minutes\nFor TL: dollar amount\nFor BA/BC/PC: flat rate\n\nNegative = credit/reduction (garage overpaid, adjusting down).',
   currently_paid: 'What SF currently has on the Work Order Line Item for this product.\n\nThis is the quantity that was billed — what the garage was (or will be) paid based on SF\'s auto-calculation.\n\nThe garage submitted this adjustment because they believe this amount is wrong.\n\nSource: WorkOrderLineItem.Quantity in Salesforce.',
-  delta: 'Difference between what the garage requests and what SF billed.\n\nIf SF Billed > 0: Delta = Requested - SF Billed (garage wants a correction).\nIf SF Billed = 0: Delta = full Requested amount (product not yet on the WO).\n\nPositive = garage wants more than what SF calculated.\nZero = garage asking for same amount already billed.\nNegative = garage acknowledges overpayment.',
+  delta: 'Net change: Requested (total claimed) minus SF Billed (currently on WOLI).\n\nDelta = 0  → garage is confirming the SF amount, no additional payment needed.\nDelta > 0  → garage is claiming more than SF calculated, additional payment needed.\nDelta < 0  → credit (garage was overpaid, adjusting down).\n\nThe Recommendation compares the total claimed directly against the SF baseline distance.',
   recommendation: 'Auto-calculated recommendation based on SF data. No AI — pure math.\n\n✓ Approve = Data supports the garage\'s request\n⚠ Review = Data doesn\'t match or is missing. Needs human verification.\n\nHow we verify by product:\n• ER/TW (miles): Requested vs SF Google distance (≤130% = Approve)\n• E1/MI (time): Requested minutes vs actual on-scene time from SA timestamps (≤120% = Approve)\n• MH (weight): Vehicle Group DW/HD = Approve, PS = Review\n• TL (tolls): Always Review — need receipts\n• BA/BC/PC (rates): Always Review — policy-based\n\nSF already uses Google Maps internally — we reuse those distances, no extra API calls.\n\nHover over ⚠ Review for the specific reason.',
   created_date: 'When the adjustment was submitted.',
   created_by: 'Who submitted the adjustment (usually dispatch/garage staff).',
@@ -114,10 +115,11 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason }) {
+function AuditToggle({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd }) {
   return (
     <div>
-      <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} />
+      <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
+        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} />
     </div>
   )
 }
@@ -140,6 +142,7 @@ export default function Accounting() {
   const [sort, setSort] = useState({ col: 'created_date', dir: 'desc' })
   const [expanded, setExpanded] = useState(null)
   const [page, setPage] = useState(0)
+  const [activeTab, setActiveTab] = useState('woa')
   const PAGE_SIZE = 50
   const handleAuditComplete = useCallback(() => {}, [])
 
@@ -164,9 +167,8 @@ export default function Accounting() {
   const rows = useMemo(() => {
     return items.map(r => ({
       ...r,
-      delta: r.currently_paid > 0
-        ? (r.requested_qty || 0) - (r.currently_paid || 0)
-        : (r.requested_qty || 0),
+      // WOA quantity = total claimed; delta = net additional vs what's already billed
+      delta: (r.requested_qty || 0) - (r.currently_paid || 0),
     }))
   }, [items])
 
@@ -213,6 +215,22 @@ export default function Accounting() {
         </div>
       </div>
 
+      {/* Tab Bar */}
+      <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60 -mx-0">
+        {[{ id: 'woa', label: 'WO Adjustments' }, { id: 'analytics', label: 'Analytics' }].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={clsx('px-4 py-2 text-xs font-medium border-b-2 transition-colors -mb-px',
+              activeTab === t.id
+                ? 'border-brand-400 text-brand-300'
+                : 'border-transparent text-slate-500 hover:text-slate-300')}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'analytics' && <AccountingAnalytics status={statusFilter} />}
+
+      {activeTab === 'woa' && <>
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <div className="glass rounded-xl border border-slate-700/30 p-4">
@@ -326,8 +344,10 @@ export default function Accounting() {
                     ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
                     : <span className="inline-block w-3 ml-0.5" />}
                 </th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Conf.</th>
                 <Th label="Created"    col="created_date"  sort={sort} onSort={onSort} />
                 <Th label="Created By" col="created_by"    sort={sort} onSort={onSort} />
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Description</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/40">
@@ -348,6 +368,12 @@ export default function Accounting() {
                 const code = productCode(r.product)
                 const productClass = PRODUCT_COLORS[code] || PRODUCT_COLORS.MI
                 const delta = r.delta || 0
+                const isLowMat = r.is_low_materiality
+                const siblings = rows.filter(row =>
+                  (row.id || row.woa_number) !== rowKey &&
+                  row.wo_id && row.wo_id === r.wo_id &&
+                  productCode(row.product) === code
+                )
                 return (
                   <Fragment key={rowKey}>
                     <tr
@@ -355,21 +381,30 @@ export default function Accounting() {
                       className={clsx(
                         'cursor-pointer transition-colors group',
                         isExpanded ? 'bg-slate-800/70' : 'hover:bg-slate-800/40',
+                        isLowMat && !isExpanded && 'opacity-60',
                       )}
                     >
                       <td className="px-1 py-2 text-[10px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
 
                       {/* WOA # */}
                       <td className="px-3 py-2.5">
-                        {r.id ? (
-                          <a href={`https://aaawcny.lightning.force.com/${r.id}`} target="_blank" rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            className="text-brand-400 hover:text-brand-300 font-mono font-medium hover:underline">
-                            {r.woa_number || '--'}
-                          </a>
-                        ) : (
-                          <span className="font-mono text-slate-300">{r.woa_number || '--'}</span>
-                        )}
+                        <div className="flex flex-col gap-0.5">
+                          {r.id ? (
+                            <a href={`https://aaawcny.lightning.force.com/${r.id}`} target="_blank" rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="text-brand-400 hover:text-brand-300 font-mono font-medium hover:underline">
+                              {r.woa_number || '--'}
+                            </a>
+                          ) : (
+                            <span className="font-mono text-slate-300">{r.woa_number || '--'}</span>
+                          )}
+                          {r.wo_woa_count > 1 && (
+                            <span className="text-[9px] text-slate-500"
+                              title={`This Work Order has ${r.wo_woa_count} adjustments submitted`}>
+                              {r.wo_woa_count} WOAs on WO
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Facility */}
@@ -391,17 +426,39 @@ export default function Accounting() {
                       {/* Product */}
                       <td className="px-3 py-2.5">
                         {code || r.product ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border', productClass)}>
-                              {code || r.product}
-                            </span>
-                            {r.woli_id && (
-                              <a href={`https://aaawcny.lightning.force.com/${r.woli_id}`} target="_blank" rel="noopener noreferrer"
-                                onClick={e => e.stopPropagation()}
-                                className="text-[9px] text-slate-500 hover:text-brand-400 hover:underline font-mono"
-                                title="Open WOLI in Salesforce">
-                                WOLI ↗
-                              </a>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border', productClass)}>
+                                {code || r.product}
+                              </span>
+                              {r.product_synthetic && (
+                                <span className="text-[9px] text-amber-400 font-bold cursor-help" title="Product inferred from tow estimate — no TW line item on WO. Verify in Salesforce.">?</span>
+                              )}
+                              {r.is_possible_duplicate && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-500/20 text-red-400 border border-red-500/40 cursor-help"
+                                  title={`Another WOA on Work Order ${r.wo_number} has nearly identical ${r.code} quantity. Likely a double-submit — cancel the extra one in Salesforce before approving.`}>
+                                  DUPE?
+                                </span>
+                              )}
+                              {r.is_multi_same_product && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 cursor-help"
+                                  title={`Multiple ${r.code} adjustments on Work Order ${r.wo_number} with different quantities. Could be split billing or a correction — evaluate both together before approving.`}>
+                                  MULTI
+                                </span>
+                              )}
+                              {r.woli_id && (
+                                <a href={`https://aaawcny.lightning.force.com/${r.woli_id}`} target="_blank" rel="noopener noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  className="text-[9px] text-brand-400 hover:text-brand-300 hover:underline font-mono"
+                                  title="Open WOLI in Salesforce">
+                                  WOLI ↗
+                                </a>
+                              )}
+                            </div>
+                            {r.all_products && (
+                              <span className="text-[9px] text-slate-500 font-mono" title={`All non-BA products on this WO: ${r.all_products}`}>
+                                {r.all_products}
+                              </span>
                             )}
                           </div>
                         ) : (
@@ -431,14 +488,36 @@ export default function Accounting() {
                         </span>
                       </td>
 
-                      {/* Recommendation — hyperlink style, clicks expand the row */}
+                      {/* Recommendation + materiality signal */}
                       <td className="px-3 py-2.5">
-                        {r.recommendation === 'approve'
-                          ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                              className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300">✓ Approve</a>
-                          : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                              className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300">⚠ Review</a>
-                        }
+                        <div className="flex flex-col gap-0.5">
+                          {isLowMat
+                            ? <span className="text-[10px] font-bold text-slate-500"
+                                title={`Estimated impact: $${r.estimated_usd?.toFixed(2)} — below materiality threshold. No review needed.`}>
+                                ✓ Low $ — pass
+                              </span>
+                            : r.recommendation === 'approve'
+                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                  className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300">✓ Approve</a>
+                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                  className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300">⚠ Review</a>
+                          }
+                          {r.estimated_usd != null && (
+                            <span className="text-[9px] text-slate-600 font-mono"
+                              title="Estimated dollar impact if approved (requested qty × WOLI unit rate)">
+                              ~${r.estimated_usd.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Confidence */}
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span className={clsx('text-[9px] font-bold uppercase',
+                          r.confidence === 'HIGH' ? 'text-emerald-500' :
+                          r.confidence === 'MEDIUM' ? 'text-amber-500' : 'text-slate-500')}>
+                          {r.confidence || '--'}
+                        </span>
                       </td>
 
                       {/* Created */}
@@ -446,12 +525,20 @@ export default function Accounting() {
 
                       {/* Created By */}
                       <td className="px-3 py-2.5 text-slate-500 truncate max-w-[140px]">{r.created_by || '--'}</td>
+
+                      {/* Description */}
+                      <td className="px-3 py-2.5 text-slate-500 max-w-[200px]">
+                        {r.description
+                          ? <span title={r.description} className="truncate block cursor-help">{r.description.slice(0, 60)}{r.description.length > 60 ? '…' : ''}</span>
+                          : <span className="text-slate-700">—</span>}
+                      </td>
                     </tr>
 
                     {isExpanded && (
                       <tr>
-                        <td colSpan={11} className="p-0 border-b border-slate-700/30">
-                          <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} />
+                        <td colSpan={13} className="p-0 border-b border-slate-700/30">
+                          <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
+                            isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd} />
                         </td>
                       </tr>
                     )}
@@ -494,6 +581,7 @@ export default function Accounting() {
           </div>
         )}
       </div>
+      </>}
     </div>
   )
 }

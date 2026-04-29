@@ -4,9 +4,12 @@ import {
   Loader2, AlertTriangle, ExternalLink,
   MapPin, RefreshCw, ArrowRight, Info,
 } from 'lucide-react'
-import { fetchWOAAudit, recalculateWOAAudit } from '../api'
+import { fetchWOAAudit, recalculateWOAAudit, fetchAccountingRates } from '../api'
 import { productCode } from '../utils/formatting'
 import { PRODUCT_NAMES, TOW_CODES, TIME_CODES, FLAT_CODES, UNITS, headerSummary, buildLocalSummary } from '../utils/accountingAudit'
+import WODiagnosticStrip from './WODiagnosticStrip'
+import AuditVerificationCard from './AuditVerificationCard'
+import WOAAuditMap from './WOAAuditMap'
 
 const REC_BADGE = {
   PAY:    'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
@@ -14,11 +17,14 @@ const REC_BADGE = {
   DENY:   'bg-red-500/15 text-red-400 border border-red-500/30',
 }
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [recalcing, setRecalcing] = useState(false)
+  const [rates, setRates] = useState({})
+
+  useEffect(() => { fetchAccountingRates().then(setRates).catch(() => {}) }, [])
 
   const handleResult = (data) => {
     setAudit(data)
@@ -50,6 +56,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
   const isTime = TIME_CODES.has(code)
   const isFlat = FLAT_CODES.has(code)
   const googleMi = ev.google_distance_miles
+  const googleTowMi = ev.google_tow_distance_miles
   const sfMi = isTow ? ev.sf_tow_miles : ev.sf_enroute_miles
   const sfEst = isTow ? ev.sf_estimated_tow_miles : ev.sf_estimated_miles
   const vehicle = [ev.vehicle_make, ev.vehicle_model].filter(Boolean).join(' ')
@@ -58,21 +65,43 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
   // Tow destination for TW products
   const towDestLat = ev.tow_destination_lat, towDestLon = ev.tow_destination_lon
 
-  // Ratios — baseline from our Google calc (previous job → call), then SF estimate, then SF recorded
-  // Our Google calc uses a verifiable origin (previous job or garage). SF Recorded may be inflated.
+  // Ratios — baseline priority:
+  //   ER: Google (truck GPS → call) → SF estimate → SF recorded
+  //   TW: Google (pickup → tow destination) → SF estimate → SF recorded
   const baseline = isTow
-    ? (sfEst > 0 ? sfEst : sfMi > 0 ? sfMi : null)
+    ? (googleTowMi ?? (sfEst > 0 ? sfEst : sfMi > 0 ? sfMi : null))
     : (googleMi ?? (sfEst > 0 ? sfEst : sfMi > 0 ? sfMi : null))
-  const mileRatio = isMileage && ev.requested != null && baseline ? (ev.requested / baseline * 100) : null
-  const baselineLabel = isTow ? (sfEst > 0 ? 'SF tow est' : 'SF tow recorded')
-    : (googleMi ? 'Google (prev job)' : sfEst > 0 ? 'SF estimate' : 'SF recorded')
+  // Garages request ADDITIONAL — true total = what we'd owe if approved
+  const trueTotal = ev.requested != null ? ((ev.currently_paid || 0) + ev.requested) : null
+  const mileRatio = isMileage && trueTotal != null && baseline ? (trueTotal / baseline * 100) : null
+  const baselineLabel = isTow
+    ? (googleTowMi ? 'SF Google est (pickup → dest)' : sfEst > 0 ? 'SF tow estimate' : 'SF tow recorded')
+    : (googleMi
+        ? (origin?.source === 'towbook_gps_enroute' ? 'Google (Towbook GPS)'
+           : origin?.source === 'driver_gps_enroute' ? 'Google (driver GPS)'
+           : 'Google (prev job)')
+        : sfEst > 0 ? 'SF estimate' : 'SF recorded')
+  const payPct    = rates?.mileage_pay_pct?.value    ?? 130
+  const reviewPct = rates?.mileage_review_pct?.value ?? 150
+  const timePct   = rates?.time_pay_pct?.value       ?? 120
   const mileColor = mileRatio == null ? 'text-slate-400'
-    : mileRatio <= 130 ? 'text-emerald-400' : mileRatio <= 150 ? 'text-amber-400' : 'text-red-400'
+    : mileRatio <= payPct ? 'text-emerald-400' : mileRatio <= reviewPct ? 'text-amber-400' : 'text-red-400'
   const mileBg = mileRatio == null ? 'bg-slate-800/30 border-slate-700/30'
-    : mileRatio <= 130 ? 'bg-emerald-500/10 border-emerald-700/30'
-    : mileRatio <= 150 ? 'bg-amber-500/10 border-amber-700/30' : 'bg-red-500/10 border-red-700/30'
+    : mileRatio <= payPct ? 'bg-emerald-500/10 border-emerald-700/30'
+    : mileRatio <= reviewPct ? 'bg-amber-500/10 border-amber-700/30' : 'bg-red-500/10 border-red-700/30'
   const timeRatio = isTime && ev.requested != null && ev.on_location_minutes ? (ev.requested / ev.on_location_minutes * 100) : null
-  const timeColor = timeRatio == null ? 'text-slate-400' : timeRatio <= 120 ? 'text-emerald-400' : 'text-amber-400'
+  const timeColor = timeRatio == null ? 'text-slate-400' : timeRatio <= timePct ? 'text-emerald-400' : 'text-amber-400'
+
+  // Cross-WOA combined exposure when multiple adjustments for same product exist on this WO
+  const hasSiblings = siblingWoas?.length > 0
+  const isDupeRisk = hasSiblings && siblingWoas.some(s => s.is_possible_duplicate)
+  const combinedAdditional = hasSiblings
+    ? (ev.requested || 0) + siblingWoas.reduce((sum, s) => sum + (s.requested_qty || 0), 0)
+    : null
+  const combinedTrueTotal = combinedAdditional != null ? (ev.currently_paid || 0) + combinedAdditional : null
+  const combinedPct = combinedTrueTotal != null && baseline ? (combinedTrueTotal / baseline * 100) : null
+  const combinedColor = combinedPct == null ? 'text-amber-300'
+    : combinedPct <= payPct ? 'text-emerald-400' : combinedPct <= reviewPct ? 'text-amber-400' : 'text-red-400'
 
   // Google Maps link: TW = call→tow destination, ER = truck→call
   const googleMapsLink = isTow
@@ -80,7 +109,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
     : (originLat && destLat ? `https://www.google.com/maps/dir/${originLat},${originLon}/${destLat},${destLon}`
       : destLat ? `https://www.google.com/maps/dir/${originCity || 'garage'}/${destLat},${destLon}` : null)
 
-  const localSummary = buildLocalSummary(ev, audit.woli_items)
+  const localSummary = buildLocalSummary(ev, audit.woli_items, rates)
   const aiText = audit.ai_summary || audit.summary
   const showAi = aiText && !aiText.startsWith('AI not configured')
 
@@ -93,6 +122,18 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
           <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           <span className="text-[10px] text-amber-300">
             Cached from before latest update — click <strong>Recalculate</strong> to refresh.
+          </span>
+        </div>
+      )}
+
+      {/* Low materiality banner */}
+      {isLowMateriality && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-700/30">
+          <Info className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="text-[10px] text-emerald-300">
+            <strong>Low materiality</strong> — estimated impact{' '}
+            {estimatedUsd != null ? `$${estimatedUsd.toFixed(2)}` : ''} is below the configured threshold.
+            {' '}No detailed review needed — approve in Salesforce.
           </span>
         </div>
       )}
@@ -124,6 +165,28 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
         </div>
       )}
 
+      {/* ── Same-member same-day alert ── */}
+      {ev.same_member_same_day?.length > 0 && (
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-600/30">
+          <AlertTriangle className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
+          <div className="text-[10px] text-purple-300 leading-relaxed">
+            <strong>Same member, same day:</strong> This member had {ev.same_member_same_day.length} other service call{ev.same_member_same_day.length > 1 ? 's' : ''} on the same date.{' '}
+            {ev.same_member_same_day.map((c, i) => (
+              <span key={i}>
+                {i > 0 && ' · '}
+                <span className="font-mono">WO#{c.wo_number}</span>
+                {c.trouble_code && ` (TC:${c.trouble_code})`}
+                {c.territory && `, ${c.territory}`}
+              </span>
+            ))}
+            . Verify each call is for a distinct breakdown event — same-day multi-call is uncommon and may indicate duplicate billing.
+          </div>
+        </div>
+      )}
+
+      {/* ── WO Classification strip — codes, coverage, contract, flags ── */}
+      <WODiagnosticStrip ev={ev} sfUrls={urls} />
+
       {/* ── ROW 2: Route card with Google Maps link ── */}
       {!isStale && (origin || destCity) && (
         <div className="px-4 py-3 rounded-xl bg-slate-800/30 border border-slate-700/20 text-[10px] space-y-1.5">
@@ -150,6 +213,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
                 <span className="text-slate-600">From:</span>{' '}
                 <span className="text-slate-200 font-medium">{originCity || 'Unknown'}</span>
                 {origin?.source === 'driver_gps_enroute' && <span className="text-emerald-500"> (driver GPS at En Route)</span>}
+                {origin?.source === 'towbook_gps_enroute' && <span className="text-emerald-500"> (Towbook GPS at En Route)</span>}
                 {origin?.source === 'previous_job' && <span className="text-slate-600"> (estimated — last known job)</span>}
                 {origin?.source === 'garage_location' && <span className="text-slate-600"> (garage location)</span>}
                 {origin?.source === 'home_address' && <span className="text-slate-600"> (home)</span>}
@@ -165,180 +229,98 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
               </div>
             </div>
           )}
+          {/* On-location GPS from SA (Fleet FSL app tap) */}
+          {ev.sa_on_location_lat && (
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600">Driver On-Location GPS:</span>
+              <span className="text-emerald-400 font-mono text-[9px]">({ev.sa_on_location_lat.toFixed(4)}, {ev.sa_on_location_lon.toFixed(4)})</span>
+              <a href={`https://www.google.com/maps?q=${ev.sa_on_location_lat},${ev.sa_on_location_lon}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-[9px] text-brand-400 hover:text-brand-300 underline flex items-center gap-0.5">
+                <MapPin className="w-2.5 h-2.5" />Pin ↗
+              </a>
+              <span className="text-[9px] text-slate-600">(SA.On_Location_Geolocation — FSL app tap)</span>
+            </div>
+          )}
           {googleMapsLink && (
             <a href={googleMapsLink} target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 underline">
               <MapPin className="w-3 h-3" />{isTow ? 'Verify tow route on Google Maps' : 'Verify route on Google Maps'}
             </a>
           )}
-          {/* Note when SF Recorded is much higher than our Google calc — driver may have been elsewhere */}
+          {/* Note when SF Recorded is much higher than our Google calc */}
           {!isTow && googleMi && sfMi > 0 && sfMi > googleMi * 1.5 && (
             <div className="text-[9px] text-amber-400 mt-1">
-              SF recorded {sfMi} mi at En Route but our calc shows {googleMi} mi — driver may have been somewhere other than the previous job when dispatched
+              SF recorded {sfMi} mi but Google route shows {googleMi} mi —{' '}
+              {(origin?.source === 'towbook_gps_enroute' || origin?.source === 'driver_gps_enroute')
+                ? 'origin is actual driver GPS — driver may have taken a longer route or SF recording is off'
+                : 'driver may have been somewhere other than the estimated origin when dispatched'}
             </div>
           )}
         </div>
       )}
 
-      {/* ── ROW 3: Two-column — Distance Check + WO Context ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-
-        {/* Left: Verification — adapts to product type */}
-        <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-3">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">
-            {isTime ? 'Time Verification' : code === 'MH' ? 'Heavy Vehicle Verification'
-              : code === 'TL' ? 'Toll / Receipt Verification' : isFlat ? 'Service Verification'
-              : isTow ? 'Tow Distance Verification' : 'Distance Verification'}
+      {/* ── Multi-WOA combined exposure warning ── */}
+      {hasSiblings && (
+        <div className={clsx(
+          'px-4 py-3 rounded-xl border space-y-2',
+          isDupeRisk
+            ? 'bg-red-500/10 border-red-600/30'
+            : 'bg-amber-500/10 border-amber-600/30',
+        )}>
+          <div className="flex items-center gap-2">
+            <AlertTriangle className={clsx('w-3.5 h-3.5 shrink-0', isDupeRisk ? 'text-red-400' : 'text-amber-400')} />
+            <span className={clsx('text-[11px] font-bold', isDupeRisk ? 'text-red-300' : 'text-amber-300')}>
+              {isDupeRisk ? 'POSSIBLE DUPLICATE SUBMISSION' : 'MULTIPLE ADJUSTMENTS — SAME PRODUCT'}
+              {' · '}{siblingWoas.length + 1} {code} WOAs on this Work Order
+            </span>
           </div>
 
-          {/* Claim vs Baseline */}
-          <div className="space-y-1.5 text-[11px]">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Garage Claimed</span>
-              <span className="font-bold text-white">{ev.requested ?? '—'} {UNITS[code] || 'units'}</span>
+          {/* Per-WOA breakdown */}
+          <div className="text-[10px] space-y-0.5">
+            <div className="flex justify-between text-slate-300">
+              <span>This WOA <span className="text-slate-500">(being audited)</span></span>
+              <span className="font-mono font-bold">+{(ev.requested || 0).toFixed(2)} {UNITS[code] || ''}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">SF Billed (WOLI)</span>
-              <span className="font-bold text-slate-300">{ev.currently_paid ?? 'Not on WO'}</span>
-            </div>
-            {ev.currently_paid > 0 && ev.requested != null && (
-              <div className="flex justify-between">
-                <span className="text-slate-400">Delta</span>
-                <span className={clsx('font-bold', (ev.requested - ev.currently_paid) > 0 ? 'text-amber-400' : 'text-emerald-400')}>
-                  {(ev.requested - ev.currently_paid) > 0 ? '+' : ''}{(ev.requested - ev.currently_paid).toFixed(2)} {UNITS[code] || ''}
+            {siblingWoas.map((s, i) => (
+              <div key={i} className="flex justify-between text-slate-400">
+                <span className="font-mono">{s.woa_number || '—'}</span>
+                <span className="font-mono">+{(s.requested_qty || 0).toFixed(2)} {UNITS[code] || ''}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Combined impact footer */}
+          <div className={clsx('border-t pt-2 flex items-center justify-between gap-4 flex-wrap', isDupeRisk ? 'border-red-700/30' : 'border-amber-700/30')}>
+            <span className="text-[10px] text-slate-400">
+              If all approved — combined true total:
+            </span>
+            <span className={clsx('text-sm font-bold', combinedColor)}>
+              {combinedTrueTotal?.toFixed(2)} {UNITS[code] || ''}
+              {combinedPct != null && (
+                <span className="text-[10px] font-normal text-slate-400 ml-2">
+                  ({combinedPct.toFixed(0)}% of {baselineLabel})
                 </span>
-              </div>
-            )}
-
-            {/* Distance-specific fields */}
-            {isMileage && !isTow && (
-              <>
-                <div className="border-t border-slate-800/50 pt-1.5 mt-1.5" />
-                {googleMi != null && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Google Maps (our calc)</span>
-                    <span className="font-bold text-brand-300">{googleMi} mi</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">SF Recorded (at En Route)</span>
-                  <span className={clsx('font-bold', ev.sf_enroute_miles > 0 ? 'text-slate-300' : 'text-amber-400')}>
-                    {ev.sf_enroute_miles != null ? `${ev.sf_enroute_miles} mi` : 'N/A'}{ev.sf_enroute_miles === 0 ? ' — bad status?' : ''}
-                  </span>
-                </div>
-                {ev.sf_estimated_miles != null && ev.sf_estimated_miles > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">SF Google Est (pre-dispatch)</span>
-                    <span className="font-bold text-slate-300">{ev.sf_estimated_miles} mi</span>
-                  </div>
-                )}
-              </>
-            )}
-            {/* Tow-specific fields */}
-            {isTow && (
-              <>
-                <div className="border-t border-slate-800/50 pt-1.5 mt-1.5" />
-                <div className="flex justify-between">
-                  <span className="text-slate-400">SF Tow Miles (recorded)</span>
-                  <span className={clsx('font-bold', ev.sf_tow_miles > 0 ? 'text-slate-300' : 'text-amber-400')}>
-                    {ev.sf_tow_miles != null ? `${ev.sf_tow_miles} mi` : 'N/A'}
-                  </span>
-                </div>
-                {ev.sf_estimated_tow_miles != null && ev.sf_estimated_tow_miles > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">SF Tow Est (pre-dispatch)</span>
-                    <span className="font-bold text-slate-300">{ev.sf_estimated_tow_miles} mi</span>
-                  </div>
-                )}
-                {!towDestLat && (
-                  <div className="text-[10px] text-amber-400 mt-1">No tow destination GPS on WO — cannot verify tow distance automatically</div>
-                )}
-              </>
-            )}
-
-            {/* Time-specific fields */}
-            {isTime && (
-              <>
-                <div className="border-t border-slate-800/50 pt-1.5 mt-1.5" />
-                <div className="flex justify-between">
-                  <span className="text-slate-400">On-Scene Time (actual)</span>
-                  <span className="font-bold text-slate-300">{ev.on_location_minutes != null ? `${ev.on_location_minutes} min` : 'N/A'}</span>
-                </div>
-              </>
-            )}
-
-            {/* MH-specific: vehicle weight & group */}
-            {code === 'MH' && (
-              <>
-                <div className="border-t border-slate-800/50 pt-1.5 mt-1.5" />
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Vehicle</span>
-                  <span className="font-bold text-slate-300">{vehicle || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Vehicle Group</span>
-                  <span className={clsx('font-bold', ['DW', 'HD'].includes(ev.vehicle_group) ? 'text-emerald-400' : 'text-amber-400')}>
-                    {ev.vehicle_group || 'N/A'}
-                    {['DW', 'HD'].includes(ev.vehicle_group) && ' — Heavy duty confirmed'}
-                    {ev.vehicle_group === 'PS' && ' — Passenger (not heavy)'}
-                  </span>
-                </div>
-                {ev.vehicle_weight > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Weight</span>
-                    <span className="font-bold text-slate-300">{ev.vehicle_weight} lbs</span>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* TL: receipt + tow context */}
-            {code === 'TL' && (
-              <div className="mt-2 space-y-1.5">
-                <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-700/30 text-[10px] text-amber-300">
-                  No receipts in SF — request receipt from garage to verify.
-                </div>
-                {audit.woli_items?.some(w => TOW_CODES.has(w.code)) ? (
-                  <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-700/30 text-[10px] text-emerald-300">
-                    Tow exists on this WO — tolls plausible if route crosses toll road.
-                  </div>
-                ) : (
-                  <div className="px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30 text-[10px] text-slate-400">
-                    No tow on this WO — tolls less likely (unless parking/airport).
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Flat fee / service event */}
-            {isFlat && !isMileage && !isTime && code !== 'TL' && code !== 'MH' && (
-              <div className="mt-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30 text-[10px] text-slate-300">
-                {PRODUCT_NAMES[code] || code} — flat fee or service event. Verify the service was performed on this Work Order.
-              </div>
-            )}
+              )}
+            </span>
           </div>
-
-          {/* Comparison ratio bar */}
-          {mileRatio != null && (
-            <div className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg border', mileBg)}>
-              <span className="text-[10px] text-slate-500">vs {baselineLabel} ({baseline} mi):</span>
-              <span className={clsx('font-bold text-lg leading-none', mileColor)}>{mileRatio.toFixed(0)}%</span>
-              <span className={clsx('text-[10px] font-semibold', mileColor)}>
-                {mileRatio <= 130 ? '≤130% → PAY' : mileRatio <= 150 ? '130–150% → REVIEW' : '>150% → FLAG'}
-              </span>
-            </div>
-          )}
-          {timeRatio != null && (
-            <div className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg border',
-              timeRatio <= 120 ? 'bg-emerald-500/10 border-emerald-700/30' : 'bg-amber-500/10 border-amber-700/30')}>
-              <span className="text-[10px] text-slate-500">Ratio:</span>
-              <span className={clsx('font-bold text-lg leading-none', timeColor)}>{timeRatio.toFixed(0)}%</span>
-              <span className={clsx('text-[10px] font-semibold', timeColor)}>
-                {timeRatio <= 120 ? '≤120% → PAY' : '>120% → REVIEW'}
-              </span>
-            </div>
-          )}
         </div>
+      )}
+
+      {/* ── 4-column: Verification | WO Context | SA Timeline | Auditor Summary ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+
+        {/* Left: Verification — product-specific, extracted to AuditVerificationCard */}
+        <AuditVerificationCard
+          ev={ev} code={code} vehicle={vehicle}
+          isTow={isTow} isMileage={isMileage} isTime={isTime} isFlat={isFlat}
+          googleMi={googleMi} googleTowMi={googleTowMi} towDestLat={towDestLat} origin={origin}
+          trueTotal={trueTotal} baseline={baseline} baselineLabel={baselineLabel}
+          mileRatio={mileRatio} mileColor={mileColor} mileBg={mileBg}
+          timeRatio={timeRatio} timeColor={timeColor}
+          woliItems={audit.woli_items}
+          rates={rates}
+        />
 
         {/* Right: WO Context — everything the auditor needs to know about this WO */}
         <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-3">
@@ -428,51 +410,108 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason }) {
             </div>
           )}
         </div>
-      </div>
 
-      {/* ── What to verify (REVIEW only) ── */}
-      {/* ── Auditor Summary — narrative + action items combined ── */}
-      {(localSummary || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
-        <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
-          <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold mb-2">Auditor Summary</div>
-          {localSummary && (
-            <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
-              {localSummary.split('\n\n').map((para, i) => (
-                <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
-              ))}
+        {/* Col 3: SA Timeline */}
+        {timeline.length > 0 && (
+          <div className="glass rounded-xl border border-slate-700/20 p-4">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-3">
+              SA Timeline <span className="text-slate-600 normal-case font-normal ml-1">({timeline.length} events)</span>
             </div>
-          )}
-          {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-slate-700/30">
-              <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
-              {audit.ask_garage.map((item, i) => (
-                <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2">
-                  <span className="text-amber-400">-</span>{item}
+            <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
+              <span>Transition</span><span className="text-right">Elapsed</span>
+            </div>
+            {timeline.map((step, i) => {
+              const sec = step.elapsed_seconds
+              let lbl = ''
+              if (sec != null) {
+                lbl = sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
+              }
+              return (
+                <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-slate-300 font-medium truncate">
+                      {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                    </span>
+                    <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
+                      {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )}
+
+        {/* Col 4: Auditor Summary */}
+        {(localSummary || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
+          <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold mb-2">Auditor Summary</div>
+            {localSummary && (
+              <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
+                {localSummary.split('\n\n').map((para, i) => (
+                  <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
+                ))}
+              </div>
+            )}
+            {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-slate-700/30">
+                <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
+                {audit.ask_garage.map((item, i) => (
+                  <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2">
+                    <span className="text-amber-400">-</span>{item}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       {showAi && (
         <details className="glass rounded-xl border border-blue-800/20">
           <summary className="px-4 py-2.5 text-[10px] text-blue-400 uppercase tracking-wider font-bold cursor-pointer hover:bg-blue-900/10">AI Analysis</summary>
           <div className="px-4 pb-3 text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">{aiText}</div>
         </details>
       )}
-      {timeline.length > 0 && (
-        <details className="glass rounded-xl border border-slate-700/20">
-          <summary className="px-4 py-2.5 text-[10px] text-slate-400 uppercase tracking-wider font-bold cursor-pointer hover:bg-slate-800/30">SA Timeline ({timeline.length} events)</summary>
-          <div className="px-4 pb-3 space-y-0.5">
-            {timeline.map((step, i) => (
-              <div key={i} className="flex items-center gap-3 text-[10px] py-1 px-2 rounded bg-slate-800/30">
-                <span className="text-slate-600 font-mono w-40 shrink-0">{step.time || '--'}</span>
-                <span className="text-slate-500 shrink-0">{step.from || ''} →</span>
-                <span className="text-slate-300">{step.to || '--'}</span>
+
+      {/* ── Distance comparison bar chart (mileage products only) ── */}
+      {isMileage && (
+        <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-2">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Distance Comparison</div>
+          {(() => {
+            const vals = [
+              { label: 'Garage Claimed', val: ev.requested, color: 'bg-amber-400' },
+              isTow
+                ? { label: 'SF Google Est (tow)', val: googleTowMi ?? sfEst, color: 'bg-brand-400' }
+                : { label: 'Google (truck→call)', val: googleMi ?? sfEst, color: 'bg-brand-400' },
+              { label: isTow ? 'SF Tow Recorded' : 'SF ER Recorded', val: sfMi, color: 'bg-slate-400' },
+            ].filter(v => v.val != null && v.val > 0)
+            const maxVal = Math.max(...vals.map(v => v.val), 1)
+            return vals.map(({ label, val, color }) => (
+              <div key={label} className="flex items-center gap-2 text-[10px]">
+                <span className="text-slate-400 w-36 shrink-0">{label}</span>
+                <div className="flex-1 bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                  <div className={`h-full rounded-full ${color} opacity-80`}
+                    style={{ width: `${Math.min(100, (val / maxVal) * 100)}%` }} />
+                </div>
+                <span className="font-mono font-bold text-slate-200 w-12 text-right">{val} mi</span>
               </div>
-            ))}
+            ))
+          })()}
+        </div>
+      )}
+
+      {/* ── Route map ── */}
+      {(ev.call_location_lat || ev.truck_prev_location) && (
+        <div className="space-y-1">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold px-1">Route Map</div>
+          <WOAAuditMap ev={ev} />
+          <div className="flex gap-4 text-[9px] text-slate-600 px-1">
+            <span><span className="inline-block w-2 h-0.5 bg-slate-400 mr-1" style={{borderTop:'2px dashed'}} />— Truck→Call</span>
+            <span><span className="inline-block w-2 h-0.5 bg-purple-400 mr-1" />— Tow Route</span>
+            <span>🔴 Breakdown &nbsp; ⬛ Truck origin &nbsp; 🟢 Tow destination</span>
           </div>
-        </details>
+        </div>
       )}
 
       {/* ── SF Links ── */}

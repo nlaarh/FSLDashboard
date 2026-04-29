@@ -1,254 +1,21 @@
-"""Accounting — Work Order Adjustment auditing with AI-powered recommendations."""
+"""Accounting — Work Order Adjustment list, filtering, and export endpoints."""
 
 import logging
-import requests as _requests
-from datetime import datetime as _dt, timezone as _tz
-from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
-from utils import parse_dt as _parse_dt, load_ai_settings as _load_ai_settings, call_openai_simple as _call_openai_simple
+from utils import parse_dt as _parse_dt
 import cache
 from routers.accounting_export import build_export
+from routers.accounting_calc import (
+    _to_et, _fmt_et, _fmt_date_et, _safe_float,
+    _calc_recommendation, _SF_BASE,
+)
+from routers.accounting_audit import _build_woa_audit
 
 router = APIRouter()
 log = logging.getLogger('accounting')
-
-_ET = ZoneInfo('America/New_York')
-_SF_BASE = 'https://aaawcny.lightning.force.com'
-
-# ── Default audit prompt (used when no custom prompt configured) ─────────────
-
-_DEFAULT_AUDIT_PROMPT = (
-    "You are a senior accounting auditor for AAA Western & Central NY roadside assistance. "
-    "You're writing for an internal auditor who needs to understand WHAT HAPPENED on this call and WHETHER the garage's claim is justified. "
-    "NEVER just repeat numbers — explain what they MEAN. "
-    "ALWAYS spell out product names (ER = Enroute Miles, TW = Tow Miles, E1 = Extrication in minutes, BA = Base Rate, TL = Tolls/Parking, MH = Medium/Heavy Duty, MI = Wait Time). "
-    "ALWAYS include units (miles, minutes, dollars). "
-    "Tell the STORY: What service was performed? Where did the truck go? How long was the driver on scene? "
-    "Is the garage's claim reasonable compared to what Salesforce calculated using Google Maps? "
-    "If there's a discrepancy, explain POSSIBLE reasons (driver status issue, detour, system error) and what the auditor should check. "
-    "Rules: ER/TW within 130% of SF Google distance=reasonable. E1/MI within 120% of on-scene time=reasonable. "
-    "BA/BC/PC always need policy review. TL needs receipts. MH needs vehicle weight verification. "
-    'Respond JSON: {"recommendation":"PAY|REVIEW|DENY","confidence":"HIGH|MEDIUM|LOW",'
-    '"summary":"2-3 sentence auditor narrative with units and context",'
-    '"reasoning":["specific finding 1","specific finding 2"],'
-    '"ask_garage":["question for the garage if REVIEW"]}'
-)
-
-def _to_et(dt_str):
-    dt = _parse_dt(dt_str)
-    if not dt: return None
-    return dt.replace(tzinfo=_tz.utc) if dt.tzinfo is None else dt
-
-def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est_tow,
-                         on_loc_minutes=None, vehicle_weight=None, vehicle_group=None,
-                         all_wolis=None):
-    """Pure math recommendation. Returns (rec, step_by_step_reason, verification)."""
-    NAMES = {'ER': 'Enroute Miles', 'TW': 'Tow Miles', 'TB': 'Tow Miles Basic',
-             'TT': 'Tow Miles Plus (5-30mi)', 'TU': 'Tow Miles Plus (30-100mi)',
-             'TM': 'Tow Miles Premier', 'EM': 'Extra Tow Mileage',
-             'E1': 'Extrication (1st Truck)', 'E2': 'Extrication (2nd Truck)',
-             'Z8': 'RAP Extrication', 'MH': 'Medium/Heavy Duty', 'TL': 'Tolls/Parking',
-             'MI': 'Miscellaneous/Wait Time', 'BA': 'Base Rate', 'BC': 'Basic Cost',
-             'PC': 'Plus Cost', 'HO': 'Holiday Bonus', 'PG': 'Plus/Premier Fuel',
-             'Z5': 'RAP Fuel Delivery', 'Z7': 'RAP Lockout', 'TJ': 'TireJect',
-             'Z0': 'RAP Gone on Arrival', 'Z1': 'RAP Flat Tire', 'Z3': 'RAP Battery Boost'}
-    # Product category classification
-    TOW_CODES = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
-    TIME_CODES = {'E1', 'E2', 'Z8'}
-    FLAT_CODES = {'BA', 'BC', 'PC', 'HO', 'PG', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'}
-    L = []
-    v = {}
-    prod_name = NAMES.get(code, 'Unknown') if code else 'No product on WO'
-    L.append(f'PRODUCT: {code or "—"} — {prod_name}')
-    L.append(f'GARAGE REQUESTED: {requested}')
-    L.append(f'SF BILLED (WOLI): {paid if paid else "Not on WO"}')
-
-    if requested is None:
-        L.append('→ No quantity → REVIEW'); return 'review', '\n'.join(L), {}
-    if requested < 0:
-        L.append(f'→ Negative qty = credit/reduction → REVIEW'); return 'review', '\n'.join(L), {}
-    if requested == 0:
-        L.append('→ Zero qty → APPROVE'); return 'approve', '\n'.join(L), {}
-
-    if not code:
-        L.append(f'\nNO PRODUCT IDENTIFIED:')
-        L.append(f'  This Work Order has no line items.')
-        L.append(f'  Cannot determine what product the garage is requesting.')
-        L.append(f'  Auditor: open the WO in Salesforce to check what service was performed.')
-        L.append(f'\n→ Manual review required — no data to verify automatically.')
-        return 'review', '\n'.join(L), {}
-    if code == 'ER':
-        L.append(f'\nDATA FROM SF:')
-        L.append(f'  SF Google Estimate: {sf_est_er or "N/A"} mi')
-        L.append(f'  SF Recorded Actual: {sf_er or "N/A"} mi')
-        baseline = sf_est_er if sf_est_er and sf_est_er > 0 else sf_er if sf_er and sf_er > 0 else None
-        src = 'SF Google Estimate' if sf_est_er and sf_est_er > 0 else 'SF Recorded'
-        L.append(f'  Baseline: {src} = {baseline or "none"}')
-        v = {'sf_google_estimate': sf_est_er, 'sf_recorded': sf_er, 'sf_billed': paid, 'unit': 'mi'}
-    elif code in TOW_CODES:
-        L.append(f'\nDATA FROM SF (tow distance):')
-        L.append(f'  SF Google Tow Estimate: {sf_est_tow or "N/A"} mi')
-        L.append(f'  SF Recorded Tow: {sf_tow or "N/A"} mi')
-        baseline = sf_est_tow if sf_est_tow and sf_est_tow > 0 else sf_tow if sf_tow and sf_tow > 0 else None
-        src = 'SF Google Estimate' if sf_est_tow and sf_est_tow > 0 else 'SF Recorded'
-        L.append(f'  Baseline: {src} = {baseline or "none"}')
-        v = {'sf_google_estimate': sf_est_tow, 'sf_recorded': sf_tow, 'sf_billed': paid, 'unit': 'mi'}
-    elif code in TIME_CODES:
-        L.append(f'\nDATA FROM SF:')
-        L.append(f'  On-Location Time: {on_loc_minutes or "N/A"} min')
-        L.append(f'  (Completed timestamp - On Location timestamp)')
-        v = {'on_location_min': on_loc_minutes, 'sf_billed': paid, 'unit': 'min'}
-        if paid and paid > 0 and abs(requested - paid) < 0.5:
-            L.append(f'\n→ Requesting same as billed ({paid} min). No change needed.')
-            return 'approve', '\n'.join(L), v
-        if on_loc_minutes and on_loc_minutes > 0:
-            ratio = requested / on_loc_minutes
-            L.append(f'\nCALCULATION:')
-            L.append(f'  {requested} ÷ {on_loc_minutes} = {ratio:.0%}')
-            L.append(f'  Threshold: ≤120% = Approve')
-            if ratio <= 1.2:
-                L.append(f'→ {ratio:.0%} ≤ 120% → APPROVE'); return 'approve', '\n'.join(L), v
-            L.append(f'→ {ratio:.0%} > 120% → REVIEW'); return 'review', '\n'.join(L), v
-        L.append(f'→ No on-location time available → REVIEW'); return 'review', '\n'.join(L), v
-    elif code == 'MI':
-        L.append(f'\nDATA FROM SF:')
-        L.append(f'  On-Location Time: {on_loc_minutes or "N/A"} min')
-        v = {'on_location_min': on_loc_minutes, 'sf_billed': paid, 'unit': 'min'}
-        if paid and paid > 0 and abs(requested - paid) < 0.5:
-            L.append(f'\n→ Requesting same as billed ({paid} min). No change needed.')
-            return 'approve', '\n'.join(L), v
-        if on_loc_minutes and on_loc_minutes > 0:
-            L.append(f'\nCALCULATION:')
-            L.append(f'  On-scene {on_loc_minutes} min vs claimed {requested} min')
-            if on_loc_minutes >= requested * 0.8:
-                L.append(f'→ On-scene supports claim → APPROVE'); return 'approve', '\n'.join(L), v
-            L.append(f'→ On-scene shorter than claimed → REVIEW'); return 'review', '\n'.join(L), v
-        L.append(f'→ No on-location time → REVIEW'); return 'review', '\n'.join(L), v
-    elif code == 'MH':
-        L.append(f'\nDATA FROM SF:')
-        L.append(f'  Vehicle Weight: {vehicle_weight or "Not populated"} lbs')
-        L.append(f'  Vehicle Group: {vehicle_group or "N/A"}')
-        L.append(f'  Threshold: ≥10,000 lbs or Group DW/HD/MD')
-        v = {'vehicle_weight': vehicle_weight, 'vehicle_group': vehicle_group}
-        if paid and paid > 0 and abs(requested - paid) < 0.5:
-            L.append(f'\n→ Requesting same as billed ({paid}). No change needed.')
-            return 'approve', '\n'.join(L), v
-        if vehicle_weight and vehicle_weight >= 10000:
-            L.append(f'→ {vehicle_weight} lbs ≥ 10,000 → APPROVE'); return 'approve', '\n'.join(L), v
-        if vehicle_group in ('MD', 'HD', 'DW'):
-            L.append(f'→ Group {vehicle_group} = heavy → APPROVE'); return 'approve', '\n'.join(L), v
-        if vehicle_weight and vehicle_weight < 10000:
-            L.append(f'→ {vehicle_weight} lbs < 10,000 → REVIEW'); return 'review', '\n'.join(L), v
-        L.append(f'→ No weight data → REVIEW'); return 'review', '\n'.join(L), v
-    elif code == 'TL':
-        wolis = all_wolis or []
-        has_tow = any(w.get('code') in TOW_CODES for w in wolis)
-        has_er = any(w.get('code') == 'ER' for w in wolis)
-        L.append(f'\nTOLLS/PARKING:')
-        L.append(f'  No receipts in SF — cannot verify amount automatically.')
-        L.append(f'  WO has tow: {"YES" if has_tow else "NO"}')
-        if has_tow:
-            L.append(f'  Tow present → tolls are plausible if route crosses toll road.')
-        else:
-            L.append(f'  No tow on WO → tolls less likely (unless parking/airport).')
-        if paid and paid > 0:
-            L.append(f'  Currently billed: ${paid}')
-            if abs(requested - paid) < 0.01:
-                L.append(f'\n→ Requesting same as billed. No change needed.')
-                return 'approve', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
-        if has_tow and requested and requested <= 20:
-            L.append(f'\n→ Small toll (${requested}) with tow on WO — plausible. Still request receipt.')
-            return 'approve', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
-        L.append(f'\n→ Request receipt from garage to verify ${requested}.')
-        return 'review', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
-    elif code in FLAT_CODES:
-        L.append(f'\nFLAT FEE / SERVICE EVENT:')
-        L.append(f'  {prod_name} — verify the service was performed.')
-        if paid and paid > 0 and abs(requested - paid) < 0.01:
-            L.append(f'→ Requesting same as billed → APPROVE')
-            return 'approve', '\n'.join(L), {'sf_billed': paid}
-        L.append(f'→ Requires policy review'); return 'review', '\n'.join(L), {'sf_billed': paid}
-    else:
-        baseline = sf_est_er if sf_est_er and sf_est_er > 0 else sf_er if sf_er and sf_er > 0 else None
-        src = 'SF data'
-        L.append(f'\nDATA: SF={baseline or "N/A"}')
-        v = {'sf_google_estimate': sf_est_er, 'sf_recorded': sf_er, 'sf_billed': paid}
-
-    # Mileage comparison (ER, TW, unknown)
-    L.append(f'\nCALCULATION:')
-    if baseline is None or baseline == 0:
-        L.append(f'\n→ No SF data to compare against. Cannot verify automatically.')
-        return 'review', '\n'.join(L), v
-    if paid and paid > 0 and abs(requested - paid) < 0.5:
-        L.append(f'\n→ Garage is asking for the same amount already billed. No change needed.')
-        return 'approve', '\n'.join(L), v
-    ratio = requested / baseline
-    pct_over = round((ratio - 1) * 100)
-    L.append(f'\nCOMPARISON:')
-    L.append(f'  Requested {requested} vs {src} {baseline}')
-    if ratio <= 1.0:
-        L.append(f'\n→ Garage is asking for less than what SF calculated. Reasonable.')
-    elif ratio <= 1.3:
-        L.append(f'\n→ Garage is asking {pct_over}% more than SF calculated. Within normal range.')
-    elif ratio <= 1.5:
-        L.append(f'\n→ Garage is asking {pct_over}% more than SF calculated. Slightly high — verify the route.')
-    elif ratio <= 2.0:
-        L.append(f'\n→ Garage is asking {ratio:.1f}x what SF calculated ({pct_over}% more). Needs verification.')
-    else:
-        L.append(f'\n→ Garage is asking {ratio:.1f}x what SF calculated. Significant discrepancy — investigate.')
-    if ratio <= 1.3:
-        return 'approve', '\n'.join(L), v
-    return 'review', '\n'.join(L), v
-
-def _fmt_et(dt_str):
-    dt = _to_et(dt_str)
-    return dt.astimezone(_ET).strftime('%m/%d/%Y %I:%M:%S %p') if dt else None
-
-def _fmt_date_et(dt_str):
-    dt = _to_et(dt_str)
-    return dt.astimezone(_ET).strftime('%m/%d/%Y') if dt else None
-
-def _safe_float(val):
-    """Safely convert to float, return None on failure."""
-    if val is None:
-        return None
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return None
-
-def _google_distance(api_key, origin_lat, origin_lon, dest_lat, dest_lon, origin_str=None):
-    if not api_key or None in (dest_lat, dest_lon):
-        return None
-    if origin_str:
-        origin_param = origin_str
-    elif origin_lat is not None and origin_lon is not None:
-        origin_param = f"{origin_lat},{origin_lon}"
-    else:
-        return None
-    try:
-        resp = _requests.get(
-            "https://maps.googleapis.com/maps/api/distancematrix/json",
-            params={
-                "origins": origin_param,
-                "destinations": f"{dest_lat},{dest_lon}",
-                "key": api_key,
-                "units": "imperial",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        element = data.get("rows", [{}])[0].get("elements", [{}])[0]
-        if element.get("status") == "OK":
-            meters = element["distance"]["value"]
-            return round(meters / 1609.344, 2)
-    except Exception as e:
-        log.warning('Google Distance Matrix failed: %s', e)
-    return None
 
 @router.get("/api/accounting/wo-adjustments")
 def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_size: int = Query(50),
@@ -333,7 +100,9 @@ def _build_woa_list(status_filter: str) -> dict:
                Work_Order__r.Tow_Miles__c,
                Work_Order__r.ERS_Estimated_Tow_Miles__c,
                Work_Order__r.ERS_En_Route_Date_Time__c,
-               Work_Order__r.ERS_On_Location_Date_Time__c
+               Work_Order__r.ERS_On_Location_Date_Time__c,
+               Work_Order__r.Long_Tow_Used__c,
+               Work_Order__r.Long_Tow_Miles__c
         FROM ERS_Work_Order_Adjustment__c
         ORDER BY CreatedDate DESC
         LIMIT 15000
@@ -363,40 +132,87 @@ def _build_woa_list(status_filter: str) -> dict:
 
     # Build WO → ALL WOLIs map (keep all line items per WO)
     from collections import defaultdict
+    import database as _db
+    _rates = _db.get_accounting_rates_dict()
+    _materiality = _rates.get('materiality_threshold_usd', 10.0)
+
     wo_wolis = defaultdict(list)
     for wl in woli_rows:
         wo_id = wl.get('WorkOrderId')
         if wo_id:
             pbe = (wl.get('PricebookEntry') or {}).get('Name') or ''
+            qty = wl.get('Quantity')
+            total_price = _safe_float(wl.get('TotalPrice'))
+            unit_rate = (total_price / qty) if (qty and qty > 0 and total_price and total_price > 0) else None
             wo_wolis[wo_id].append({
                 'id': wl.get('Id'),
                 'product': pbe,
                 'code': pbe.split(' - ')[0].strip() if ' - ' in pbe else pbe.split(' ')[0] if pbe else '',
-                'quantity': wl.get('Quantity'),
+                'quantity': qty,
+                'unit_rate': unit_rate,
                 'description': wl.get('Description'),
             })
 
-    def _best_woli(wo_id, requested_qty):
-        """Find the WOLI most likely related to this WOA."""
+    TOW_CODES = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
+
+    def _best_woli(wo_id, requested_qty, wo=None):
+        """Find the WOLI most likely related to this WOA.
+
+        Matching priority:
+        1. Exact quantity match across ALL named WOLIs (including BA) — single match wins
+        2. Multiple non-BA WOLIs: closest quantity
+        3. Single non-BA WOLI: check if WOA is for TW not yet billed
+           (WO has tow estimate but no TW WOLI, and qty is closer to tow signal than ER)
+        4. Fallback: the one non-BA WOLI
+        """
         wolis = wo_wolis.get(wo_id, [])
         if not wolis:
             return {}
         named = [w for w in wolis if w['product']]
         if not named:
             return wolis[0] if wolis else {}
-        if len(named) == 1:
+
+        non_ba = [w for w in named if w['code'] != 'BA']
+        if not non_ba:
             return named[0]
+
         if requested_qty is not None:
-            # Exact match first (e.g., requested=1.0 matches BA qty=1.0)
-            exact = [w for w in named if w.get('quantity') is not None and abs((w['quantity']) - requested_qty) < 0.01]
+            # Exact quantity match across ALL named WOLIs (BA included) — single unambiguous match wins
+            exact = [w for w in named if w.get('quantity') is not None and abs(w['quantity'] - requested_qty) < 0.01]
             if len(exact) == 1:
                 return exact[0]
-            # Otherwise closest match, preferring non-BA
-            non_ba = [w for w in named if w['code'] != 'BA']
-            candidates = non_ba if non_ba else named
-            candidates.sort(key=lambda w: abs((w.get('quantity') or 0) - requested_qty))
-            return candidates[0]
-        return named[0]
+
+            # Multiple non-BA WOLIs: closest quantity (works well for ER vs TW on same WO)
+            if len(non_ba) > 1:
+                candidates = sorted(non_ba, key=lambda w: abs((w.get('quantity') or 0) - requested_qty))
+                return candidates[0]
+
+            # Single non-BA WOLI: check if WOA is actually for TW not yet billed.
+            # Pattern: WO has tow estimate > 0, no TW WOLI exists, and requested qty
+            # is closer to the tow estimate than to the ER WOLI/estimate.
+            if wo and not any(w['code'] in TOW_CODES for w in named):
+                sf_tow = _safe_float(wo.get('Tow_Miles__c'))
+                sf_est_tow = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c'))
+                tow_signal = max(sf_tow or 0, sf_est_tow or 0)
+                if tow_signal > 0:
+                    sf_er = _safe_float(wo.get('ERS_En_Route_Miles__c'))
+                    sf_est_er = _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c'))
+                    er_woli_qty = non_ba[0].get('quantity') or 0
+                    er_anchor = max(sf_er or 0, sf_est_er or 0, er_woli_qty)
+                    dist_to_tow = abs(requested_qty - tow_signal)
+                    dist_to_er = abs(requested_qty - er_anchor) if er_anchor > 0.1 else float('inf')
+                    if dist_to_tow < dist_to_er:
+                        tw_paid = sf_tow if sf_tow and sf_tow > 0.1 else 0
+                        return {
+                            'product': 'TW - Tow Miles',
+                            'code': 'TW',
+                            'quantity': tw_paid,
+                            'description': None,
+                            'id': '',
+                            '_synthetic': True,
+                        }
+
+        return non_ba[0]
 
     items = []
     for r in woa_rows:
@@ -404,12 +220,17 @@ def _build_woa_list(status_filter: str) -> dict:
         wo = r.get('Work_Order__r') or {}
         wo_id = r.get('Work_Order__c', '')
         req_qty = _safe_float(r.get('Quantity__c'))
-        woli = _best_woli(wo_id, req_qty)
+        woli = _best_woli(wo_id, req_qty, wo=wo)
         is_open = r.get('CreatedById') == r.get('LastModifiedById')
 
         product = woli.get('product') or ''
         code = woli.get('code') or ''
         paid = _safe_float(woli.get('quantity'))
+        # When WO has multiple named non-BA WOLIs, build a comma-separated list for display
+        all_named_non_ba = [w for w in wo_wolis.get(wo_id, []) if w.get('product') and w.get('code') != 'BA']
+        all_products_str = ', '.join(
+            f"{w['code']}={w.get('quantity')}" for w in all_named_non_ba if w.get('code')
+        ) if len(all_named_non_ba) > 1 else ''
         sf_er = _safe_float(wo.get('ERS_En_Route_Miles__c'))
         sf_est_er = _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c'))
         sf_tow = _safe_float(wo.get('Tow_Miles__c'))
@@ -424,13 +245,29 @@ def _build_woa_list(status_filter: str) -> dict:
         v_model = wo.get('Vehicle_Model__c') or ''
         v_group = wo.get('Vehicle_Group__c') or ''
         all_wolis = wo_wolis.get(wo_id, [])
+        long_tow_used = bool(wo.get('Long_Tow_Used__c'))
+        long_tow_miles = _safe_float(wo.get('Long_Tow_Miles__c'))
+
+        _CONFIDENCE_MAP = {
+            'ER': 'HIGH', 'TW': 'HIGH', 'TB': 'HIGH', 'TT': 'HIGH', 'TU': 'HIGH', 'TM': 'HIGH', 'EM': 'HIGH',
+            'E1': 'HIGH', 'E2': 'HIGH', 'Z8': 'HIGH',
+            'MH': 'HIGH', 'MI': 'MEDIUM', 'TL': 'MEDIUM',
+            'BA': 'LOW', 'BC': 'LOW', 'PC': 'LOW', 'HO': 'LOW', 'PG': 'LOW',
+        }
+        confidence = _CONFIDENCE_MAP.get(code, 'MEDIUM')
+        # MH degrades to LOW when no weight data
+        if code == 'MH' and not _safe_float(wo.get('Weight_lbs__c')) and v_group not in ('MD', 'HD', 'DW'):
+            confidence = 'LOW'
+
+        woli_description = woli.get('description') or ''
 
         rec, rec_reason, verification = _calc_recommendation(
             code, req_qty, paid, sf_er, sf_est_er, sf_tow, sf_est_tow,
             on_loc_minutes=on_loc_min,
             vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
             vehicle_group=v_group,
-            all_wolis=all_wolis)
+            all_wolis=all_wolis,
+            long_tow_used=long_tow_used)
 
         # Append WO context to the reason tooltip
         if all_wolis:
@@ -444,13 +281,43 @@ def _build_woa_list(status_filter: str) -> dict:
         # WO line items summary for export
         woli_summary = ' | '.join(f'{wl["code"]}={wl.get("quantity")}' for wl in all_wolis if wl.get('product'))
 
+        # Estimated dollar impact = NET additional cost (requested − already billed).
+        # WOA.Quantity__c is the total the garage claims, so delta = requested − paid.
+        _er_rate  = _rates.get('er_rate_per_mile',  1.75)
+        _tow_rate = _rates.get('tow_rate_per_mile', 15.0)
+        _e1_rate  = _rates.get('e1_rate_per_min',   0.75)
+        _TOW_CODES_EST = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
+        _TIME_CODES_EST = {'E1', 'E2', 'MI', 'Z8'}
+        if req_qty is not None:
+            _delta_qty = req_qty - (paid or 0)  # net additional units being claimed
+            if code == 'TL':
+                estimated_usd = round(abs(_delta_qty), 2)
+            elif code == 'ER':
+                estimated_usd = round(abs(_delta_qty) * _er_rate, 2)
+            elif code in _TOW_CODES_EST:
+                estimated_usd = round(abs(_delta_qty) * _tow_rate, 2)
+            elif code in _TIME_CODES_EST:
+                estimated_usd = round(abs(_delta_qty) * _e1_rate, 2)
+            else:
+                estimated_usd = None  # BA/flat — no reliable rate estimate
+        else:
+            estimated_usd = None
+        is_low_materiality = (estimated_usd is not None and estimated_usd < _materiality)
+
         items.append({
             'id': woa_id,
             'woa_number': r.get('Name', ''),
             'product': product,
+            'code': code,
+            'all_products': all_products_str,
+            'product_synthetic': woli.get('_synthetic', False),
             'requested_qty': req_qty,
             'currently_paid': paid,
             'recommendation': rec,
+            'confidence': confidence,
+            'description': woli_description[:200] if woli_description else '',
+            'long_tow_used': long_tow_used,
+            'long_tow_miles': long_tow_miles,
             'rec_reason': rec_reason,
             'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
             'wo_number': wo.get('WorkOrderNumber', ''),
@@ -462,7 +329,40 @@ def _build_woa_list(status_filter: str) -> dict:
             'sf_miles': {'enroute': sf_er, 'estimated_enroute': sf_est_er, 'tow': sf_tow, 'estimated_tow': sf_est_tow},
             'vehicle': {'make': v_make, 'model': v_model, 'group': v_group},
             'woli_summary': woli_summary,
+            'estimated_usd': estimated_usd,
+            'is_low_materiality': is_low_materiality,
         })
+
+    # Post-process: per-WO WOA counts and same-product duplicate detection
+    wo_total_counts = defaultdict(int)
+    wo_code_counts = defaultdict(lambda: defaultdict(int))
+    wo_code_qtys = defaultdict(list)      # (wo_id, code) → [requested_qty, ...]
+    for item in items:
+        wid = item.get('wo_id', '')
+        c = item.get('code', '')
+        q = item.get('requested_qty') or 0
+        if wid:
+            wo_total_counts[wid] += 1
+            if c:
+                wo_code_counts[wid][c] += 1
+                wo_code_qtys[(wid, c)].append(q)
+    for item in items:
+        wid = item.get('wo_id', '')
+        c = item.get('code', '')
+        woa_count = wo_total_counts.get(wid, 1)
+        same_code = wo_code_counts.get(wid, {}).get(c, 1) if c else 1
+        item['wo_woa_count'] = woa_count
+        if woa_count > 1 and same_code > 1 and c:
+            qtys = wo_code_qtys.get((wid, c), [])
+            max_q = max(qtys) if qtys else 0
+            min_q = min(qtys) if qtys else 0
+            # Within 10% of max → quantities nearly identical → likely accidental re-submit
+            qty_spread = (max_q - min_q) / max_q if max_q > 0 else 0
+            item['is_possible_duplicate'] = qty_spread < 0.10
+            item['is_multi_same_product'] = not item['is_possible_duplicate']
+        else:
+            item['is_possible_duplicate'] = False
+            item['is_multi_same_product'] = False
 
     log.info(f"WOA list built: {len(items)} items in {_time.time() - _t0:.1f}s")
     return {'items': items, 'total': len(items), 'status_filter': status_filter}
@@ -518,4 +418,137 @@ def api_woa_recalculate(woa_id: str):
     return result
 
 
-from routers.accounting_audit import _build_woa_audit
+@router.get("/api/accounting/rates")
+def api_accounting_rates():
+    """Public read-only: return accounting reference rates for the audit panel."""
+    import database
+    return {r['code']: r for r in database.get_accounting_rates()}
+
+
+@router.get("/api/accounting/analytics")
+def api_accounting_analytics(status: str = Query('open')):
+    cache_key = f'accounting_woa_list_{status}'
+    full = cache.stale_while_revalidate(cache_key, lambda: _build_woa_list(status), ttl=900, stale_ttl=3600)
+    return _compute_analytics(full.get('items', []))
+
+
+def _compute_analytics(items: list) -> dict:
+    from collections import Counter, defaultdict
+    import re as _re
+
+    fac_stats: dict = defaultdict(lambda: {
+        'count': 0, 'approve': 0, 'review': 0, 'est_usd': 0.0,
+        'codes': Counter(), 'creators': Counter(),
+    })
+    prod_stats: Counter = Counter()
+    prod_rec: dict = defaultdict(lambda: {'approve': 0, 'review': 0})
+    creator_stats: Counter = Counter()
+    creator_rec: dict = defaultdict(lambda: {'approve': 0, 'review': 0})
+    approve_total = review_total = 0
+    total_est_usd = 0.0
+    _STOP = {'the','a','an','and','or','for','of','to','in','is','was','it','this','that',
+             'with','on','at','from','by','per','no','not','na','was','are','be','we'}
+    kw_counter: Counter = Counter()
+
+    for item in items:
+        fac     = item.get('facility') or 'Unknown'
+        code    = item.get('code') or ''
+        rec     = item.get('recommendation') or 'review'
+        creator = item.get('created_by') or 'Unknown'
+        est     = item.get('estimated_usd') or 0.0
+
+        fs = fac_stats[fac]
+        fs['count'] += 1
+        fs['est_usd'] += est
+        if code: fs['codes'][code] += 1
+        fs['creators'][creator] += 1
+        if rec == 'approve':
+            fs['approve'] += 1; approve_total += 1
+        else:
+            fs['review'] += 1; review_total += 1
+
+        if code:
+            prod_stats[code] += 1
+            prod_rec[code]['approve' if rec == 'approve' else 'review'] += 1
+        creator_stats[creator] += 1
+        creator_rec[creator]['approve' if rec == 'approve' else 'review'] += 1
+        total_est_usd += est
+
+        desc = (item.get('description') or '').lower()
+        if desc:
+            for w in _re.findall(r'\b[a-z]{3,}\b', desc):
+                if w not in _STOP:
+                    kw_counter[w] += 1
+
+    by_fac = sorted([
+        {
+            'facility': fac,
+            'count': s['count'],
+            'approve': s['approve'],
+            'review': s['review'],
+            'risk_score': s['review'],  # WOAs needing manual review — primary sort key
+            'approve_pct': round(s['approve'] / s['count'] * 100) if s['count'] else 0,
+            'est_usd': round(s['est_usd'], 2),
+            'all_codes': [{'code': c, 'count': n} for c, n in s['codes'].most_common()],
+            'top_creators': [{'name': n, 'count': c} for n, c in s['creators'].most_common(3)],
+        }
+        for fac, s in fac_stats.items()
+    ], key=lambda x: x['risk_score'], reverse=True)
+
+    return {
+        'total_woas': len(items),
+        'total_facilities': len(fac_stats),
+        'total_est_usd': round(total_est_usd, 2),
+        'approve_count': approve_total,
+        'review_count': review_total,
+        'by_facility': by_fac[:50],
+        'by_product': [
+            {'code': c, 'count': n,
+             'approve': prod_rec[c]['approve'], 'review': prod_rec[c]['review']}
+            for c, n in prod_stats.most_common()
+        ],
+        'by_creator': [
+            {'name': n, 'count': c,
+             'approve': creator_rec[n]['approve'], 'review': creator_rec[n]['review']}
+            for n, c in creator_stats.most_common(20)
+        ],
+        'keywords': [{'word': w, 'count': c} for w, c in kw_counter.most_common(30)],
+    }
+
+
+from pydantic import BaseModel
+import concurrent.futures
+
+class BatchAuditRequest(BaseModel):
+    woa_ids: list[str] = []
+    product_filter: str = ''
+
+@router.post("/api/accounting/wo-adjustments/batch-audit")
+def api_batch_audit(body: BatchAuditRequest):
+    """Run audit on multiple WOAs in parallel. Returns cached results where available."""
+    woa_ids = [sanitize_soql(wid) for wid in body.woa_ids[:50]]
+
+    if not woa_ids and body.product_filter:
+        full = cache.stale_while_revalidate('accounting_woa_list_open', lambda: _build_woa_list('open'), ttl=900, stale_ttl=3600)
+        woa_ids = [r['id'] for r in full.get('items', [])
+                   if body.product_filter.lower() in (r.get('product') or '').lower()][:50]
+
+    def _audit_one(woa_id):
+        ck = f'accounting_woa_audit_{woa_id}'
+        cached = cache.get(ck) or cache.disk_get(ck, ttl=1800)
+        if cached:
+            return {'woa_id': woa_id, 'from_cache': True,
+                    **{k: cached.get(k) for k in ('recommendation', 'confidence', 'woa_number')}}
+        try:
+            result = _build_woa_audit(woa_id)
+            cache.put(ck, result, ttl=1800)
+            cache.disk_put(ck, result, ttl=1800)
+            return {'woa_id': woa_id, 'from_cache': False,
+                    **{k: result.get(k) for k in ('recommendation', 'confidence', 'woa_number')}}
+        except Exception as e:
+            return {'woa_id': woa_id, 'error': str(e)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(_audit_one, woa_ids))
+
+    return {'total': len(results), 'results': results}

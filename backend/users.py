@@ -27,29 +27,40 @@ def _check_password(password: str, stored_hash: str, salt: str) -> bool:
 
 
 # ── Seed default users (only if users table is empty) ────────────────────────
+# Passwords come from env vars — never stored in source code.
 
-_SEED_USERS = [
-    ('admin', 'admin2026!@', 'Admin', 'admin', '', ''),
-    ('tingraham@nyaaa.com', 'p@DsnF*6', 'Tina Ingraham', 'manager', 'tingraham@nyaaa.com', ''),
-    ('dfisher@nyaaa.com', '5NjR8#8z', 'D Fisher', 'manager', 'dfisher@nyaaa.com', ''),
-    ('nlaaroubi@nyaaa.com', 'Hh%9hXrL', 'Nour Laaroubi', 'superadmin', 'nlaaroubi@nyaaa.com', ''),
-    ('shorn@nyaaa.com', 'nUC@eS3x', 'S Horn', 'manager', 'shorn@nyaaa.com', ''),
-    ('jnixon@nyaaa.com', 'Q3HFf&YC', 'J Nixon', 'officer', 'jnixon@nyaaa.com', ''),
+_SEED_USER_DEFS = [
+    ('admin',               'SEED_PASS_ADMIN',     'Admin',         'admin',      '',                    ''),
+    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM', 'Tina Ingraham', 'manager',    'tingraham@nyaaa.com', ''),
+    ('dfisher@nyaaa.com',   'SEED_PASS_DFISHER',   'D Fisher',      'manager',    'dfisher@nyaaa.com',   ''),
+    ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI', 'Nour Laaroubi', 'superadmin', 'nlaaroubi@nyaaa.com', ''),
+    ('shorn@nyaaa.com',     'SEED_PASS_SHORN',     'S Horn',        'manager',    'shorn@nyaaa.com',     ''),
+    ('jnixon@nyaaa.com',    'SEED_PASS_JNIXON',    'J Nixon',       'officer',    'jnixon@nyaaa.com',    ''),
 ]
 
 
 def seed_users():
-    """Seed default users ONLY if users table is empty. Never overwrites existing users."""
+    """Seed default users ONLY if users table is empty. Passwords read from SEED_PASS_* env vars."""
+    import os, logging
+    _log = logging.getLogger('users')
     with db.get_db() as conn:
         count = conn.execute("SELECT COUNT(*) cnt FROM users").fetchone()['cnt']
         if count > 0:
             return  # users exist, don't touch
-        for username, password, name, role, email, phone in _SEED_USERS:
+        seeded = 0
+        for username, env_var, name, role, email, phone in _SEED_USER_DEFS:
+            password = os.getenv(env_var)
+            if not password:
+                _log.warning(f"Skipping seed for {username}: {env_var} not set in env")
+                continue
             h, salt = _hash_password(password)
             conn.execute(
                 "INSERT OR IGNORE INTO users (username, name, role, email, phone, password_hash, salt, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
                 (username, name, role, email, phone, h, salt, time.time()),
             )
+            seeded += 1
+        if seeded == 0:
+            _log.error("Users table is empty and no SEED_PASS_* env vars found — set them in .env")
 
 
 def migrate_json_users():

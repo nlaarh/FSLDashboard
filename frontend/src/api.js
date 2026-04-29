@@ -191,3 +191,20 @@ export const adminSetBonusTiers = (pin, tiers) => api.put('/admin/bonus-tiers', 
 export const adminGetActivityLog = (pin, limit = 100) => api.get(`/admin/activity-log?limit=${limit}`, pinHeader(pin)).then(r => r.data)
 export const adminGetActivityStats = (pin) => api.get('/admin/activity-stats', pinHeader(pin)).then(r => r.data)
 export const adminClearActivityLog = (pin) => api.delete('/admin/activity-log', pinHeader(pin)).then(r => r.data)
+// No PIN required — Admin.jsx guards the page; endpoint is read-only audit data
+export const adminGetOptimizerSyncAudit = (limit = 50) => api.get(`/optimizer/admin/sync-audit?limit=${limit}`).then(r => r.data)
+export const adminGetAccountingRates = (pin) => api.get('/admin/accounting-rates', pinHeader(pin)).then(r => r.data)
+export const adminSetAccountingRate = (pin, code, value) => api.put(`/admin/accounting-rates/${code}`, { value }, pinHeader(pin)).then(r => r.data)
+export const fetchAccountingRates = () => api.get('/accounting/rates').then(r => r.data)
+export const fetchAccountingAnalytics = (status = 'open') => api.get(`/accounting/analytics?status=${status}`).then(r => r.data)
+
+// Optimizer Decoder
+export const optimizerGetStatus = () => api.get('/optimizer/status').then(r => r.data)
+export const optimizerGetRuns = (params = {}) => api.get('/optimizer/runs', { params }).then(r => r.data)
+export const optimizerGetRun = (runId) => api.get(`/optimizer/runs/${runId}`).then(r => r.data)
+export const optimizerGetSA = (saNumber, limit = 5) => api.get(`/optimizer/sa/${saNumber}?limit=${limit}`).then(r => r.data)
+export const optimizerGetDriver = (driverName, days = 7) => api.get(`/optimizer/driver/${encodeURIComponent(driverName)}?days=${days}`).then(r => r.data)
+export const optimizerGetUnscheduled = (runId) => api.get(`/optimizer/runs/${runId}/unscheduled`).then(r => r.data)
+export const optimizerGetPatterns = (territory, days = 7) => api.get('/optimizer/patterns', { params: { territory, days } }).then(r => r.data)
+export const optimizerChat = (messages, runContext = null) =>
+  api.post('/optimizer/chat', { messages, run_context: runContext }).then(r => r.data)
