@@ -3,15 +3,25 @@ import { Users, UserPlus, Edit3, Trash, Radio, Loader2, CheckCircle2, Eye, EyeOf
 import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions } from '../api'
 import { clsx } from 'clsx'
 
-const ROLES = ['superadmin', 'manager', 'officer', 'viewer']
+const ROLES = ['superadmin', 'admin', 'executive', 'ers', 'finance', 'manager', 'officer', 'viewer']
+const DEPTS = [{ value: '', label: '— None —' }, { value: 'ers', label: 'ERS' }, { value: 'finance', label: 'Finance' }, { value: 'executive', label: 'Executive' }]
+
+const DEPT_STYLE = {
+  ers:       'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  finance:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+}
 
 const ROLE_STYLE = {
   superadmin: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  admin: 'bg-brand-500/10 text-brand-400 border-brand-500/20',
-  manager: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  officer: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  admin:      'bg-brand-500/10 text-brand-400 border-brand-500/20',
+  executive:  'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  ers:        'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  finance:    'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  manager:    'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  officer:    'bg-amber-500/10 text-amber-400 border-amber-500/20',
   supervisor: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  viewer: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+  viewer:     'bg-slate-500/10 text-slate-400 border-slate-500/20',
 }
 
 function genPassword() {
@@ -36,7 +46,7 @@ export default function AdminUsers({ pin }) {
   const [sessions, setSessions] = useState([])
   const [showUserForm, setShowUserForm] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
-  const [userForm, setUserForm] = useState({ username: '', password: '', name: '', role: 'viewer', email: '', phone: '' })
+  const [userForm, setUserForm] = useState({ username: '', password: '', name: '', role: 'viewer', email: '', phone: '', department: '' })
   const [userError, setUserError] = useState('')
   const [userSaving, setUserSaving] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -75,7 +85,7 @@ export default function AdminUsers({ pin }) {
 
   const openEditUser = (u) => {
     setEditingUser(u.username)
-    setUserForm({ username: u.username, password: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '' })
+    setUserForm({ username: u.username, password: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '' })
     setShowPassword(false)
     setUserError('')
     setShowUserForm(true)
@@ -86,7 +96,7 @@ export default function AdminUsers({ pin }) {
     setUserSaving(true)
     try {
       if (editingUser) {
-        const data = { name: userForm.name, role: userForm.role, email: userForm.email }
+        const data = { name: userForm.name, role: userForm.role, email: userForm.email, department: userForm.department }
         if (userForm.password) data.password = userForm.password
         await adminUpdateUser(pin, editingUser, data)
         if (userForm.password) {
@@ -166,6 +176,7 @@ export default function AdminUsers({ pin }) {
                 <th className="text-left py-2.5 px-4 font-medium">Username</th>
                 <th className="text-left py-2.5 px-4 font-medium">Name</th>
                 <th className="text-left py-2.5 px-4 font-medium">Role</th>
+                <th className="text-left py-2.5 px-4 font-medium">Dept</th>
                 <th className="text-center py-2.5 px-4 font-medium">Password</th>
                 <th className="text-center py-2.5 px-4 font-medium">Status</th>
                 <th className="text-right py-2.5 px-4 font-medium">Actions</th>
@@ -185,6 +196,14 @@ export default function AdminUsers({ pin }) {
                       ROLE_STYLE[u.role] || ROLE_STYLE.viewer)}>
                       {u.role}
                     </span>
+                  </td>
+                  <td className="py-2.5 px-4">
+                    {u.department ? (
+                      <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold border',
+                        DEPT_STYLE[u.department] || 'bg-slate-500/10 text-slate-400 border-slate-500/20')}>
+                        {u.department}
+                      </span>
+                    ) : <span className="text-[10px] text-slate-600">—</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">
                     <div className="flex items-center justify-center gap-1">
@@ -232,7 +251,7 @@ export default function AdminUsers({ pin }) {
                 </tr>
               ))}
               {userList.length === 0 && (
-                <tr><td colSpan={6} className="py-8 text-center text-slate-600">No users</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-slate-600">No users</td></tr>
               )}
             </tbody>
           </table>
@@ -288,6 +307,14 @@ export default function AdminUsers({ pin }) {
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
                              focus:outline-none focus:ring-1 focus:ring-brand-500/40">
                   {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Department</label>
+                <select value={userForm.department} onChange={e => setUserForm(f => ({ ...f, department: e.target.value }))}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
+                             focus:outline-none focus:ring-1 focus:ring-brand-500/40">
+                  {DEPTS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
                 </select>
               </div>
               <div>

@@ -151,6 +151,8 @@ export const fetchWOAdjustments = (status = 'open', page = 0, pageSize = 50, pro
   api.get(`/accounting/wo-adjustments?status=${status}&page=${page}&page_size=${pageSize}&product_filter=${product}&rec_filter=${rec}&q=${encodeURIComponent(q)}&sort_col=${sortCol}&sort_dir=${sortDir}&start_date=${startDate}&end_date=${endDate}`).then(r => r.data)
 export const fetchWOAAudit = (woaId) =>
   api.get(`/accounting/wo-adjustments/${woaId}/audit`).then(r => r.data)
+export const fetchWOAAiAnalysis = (woaId) =>
+  api.get(`/accounting/wo-adjustments/${woaId}/ai-analysis`).then(r => r.data)
 export const fetchWOARecommendations = (ids) =>
   api.get(`/accounting/wo-adjustments/recommendations?ids=${ids.join(',')}`).then(r => r.data)
 export const recalculateWOAAudit = (woaId) =>
@@ -197,6 +199,7 @@ export const adminGetAccountingRates = (pin) => api.get('/admin/accounting-rates
 export const adminSetAccountingRate = (pin, code, value) => api.put(`/admin/accounting-rates/${code}`, { value }, pinHeader(pin)).then(r => r.data)
 export const fetchAccountingRates = () => api.get('/accounting/rates').then(r => r.data)
 export const fetchAccountingAnalytics = (status = 'open') => api.get(`/accounting/analytics?status=${status}`).then(r => r.data)
+export const fetchAccountingAiInsights = (status = 'open') => api.get(`/accounting/analytics/ai-insights?status=${status}`).then(r => r.data)
 
 // Optimizer Decoder
 export const optimizerGetStatus = () => api.get('/optimizer/status').then(r => r.data)

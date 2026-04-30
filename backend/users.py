@@ -91,13 +91,21 @@ def migrate_json_users():
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _dept(row) -> str:
+    try:
+        return row['department'] or ''
+    except Exception:
+        return ''
+
+
 def authenticate(username: str, password: str) -> dict | None:
     with db.get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ? AND active = 1", (username,)).fetchone()
         if not row:
             return None
         if _check_password(password, row['password_hash'], row['salt']):
-            return {"username": row['username'], "name": row['name'], "role": row['role'], "email": row['email']}
+            return {"username": row['username'], "name": row['name'], "role": row['role'],
+                    "email": row['email'], "department": _dept(row)}
     return None
 
 
@@ -107,7 +115,7 @@ def get_user(username: str) -> dict | None:
         if not row:
             return None
         return {"username": row['username'], "name": row['name'], "role": row['role'],
-                "email": row['email'], "active": bool(row['active'])}
+                "email": row['email'], "active": bool(row['active']), "department": _dept(row)}
 
 
 def list_users() -> list[dict]:
@@ -115,23 +123,24 @@ def list_users() -> list[dict]:
         rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
         return [{"username": r['username'], "name": r['name'], "role": r['role'],
                  "email": r['email'], "phone": r['phone'], "active": bool(r['active']),
-                 "created": r['created_at']} for r in rows]
+                 "created": r['created_at'], "department": _dept(r)} for r in rows]
 
 
-def create_user(username: str, password: str, name: str, role: str = "viewer", email: str = "", phone: str = "") -> dict:
+def create_user(username: str, password: str, name: str, role: str = "viewer",
+                email: str = "", phone: str = "", department: str = "") -> dict:
     h, salt = _hash_password(password)
     try:
         with db.get_db() as conn:
             conn.execute(
-                "INSERT INTO users (username, name, role, email, phone, password_hash, salt, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                (username, name, role, email, phone, h, salt, time.time()),
+                "INSERT INTO users (username, name, role, email, phone, password_hash, salt, active, created_at, department) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (username, name, role, email, phone, h, salt, time.time(), department),
             )
     except Exception:
         raise ValueError(f"User '{username}' already exists")
-    return {"username": username, "name": name, "role": role, "email": email, "phone": phone}
+    return {"username": username, "name": name, "role": role, "email": email, "phone": phone, "department": department}
 
 
-def update_user(username: str, name: str = None, role: str = None,
+def update_user(username: str, name: str = None, role: str = None, department: str = None,
                 password: str = None, active: bool = None, email: str = None, phone: str = None) -> dict:
     with db.get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
@@ -143,6 +152,8 @@ def update_user(username: str, name: str = None, role: str = None,
             updates.append("name = ?"); params.append(name)
         if role is not None:
             updates.append("role = ?"); params.append(role)
+        if department is not None:
+            updates.append("department = ?"); params.append(department)
         if email is not None:
             updates.append("email = ?"); params.append(email)
         if phone is not None:
@@ -158,7 +169,8 @@ def update_user(username: str, name: str = None, role: str = None,
             conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         return {"username": row['username'], "name": row['name'], "role": row['role'],
-                "active": bool(row['active']), "email": row['email'], "phone": row['phone']}
+                "active": bool(row['active']), "email": row['email'], "phone": row['phone'],
+                "department": _dept(row)}
 
 
 def delete_user(username: str):
@@ -175,10 +187,10 @@ def delete_user(username: str):
 
 # ── Session management ────────────────────────────────────────────────────────
 
-def create_session(username: str, role: str, name: str) -> str:
+def create_session(username: str, role: str, name: str, department: str = '') -> str:
     token = secrets.token_hex(32)
     with _sess_lock:
-        _sessions[token] = {"user": username, "name": name, "role": role,
+        _sessions[token] = {"user": username, "name": name, "role": role, "department": department,
                             "login_time": time.time(), "last_seen": time.time()}
     return token
 

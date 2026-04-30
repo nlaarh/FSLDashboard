@@ -2,7 +2,7 @@
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
-from utils import parse_dt as _parse_dt, load_ai_settings as _load_ai_settings, call_openai_simple as _call_openai_simple
+from utils import parse_dt as _parse_dt
 from fastapi import HTTPException
 import cache, logging, requests as _requests
 from datetime import timezone as _tz
@@ -10,14 +10,16 @@ from zoneinfo import ZoneInfo
 
 log = logging.getLogger("accounting")
 _ET = ZoneInfo("America/New_York")
-_SF_BASE = "https://aaawcny.lightning.force.com"
-
 from routers.accounting_calc import (
-    _to_et, _fmt_et, _safe_float, _google_distance, _DEFAULT_AUDIT_PROMPT,
+    _to_et, _fmt_et, _safe_float, _google_distance, _calc_recommendation, match_best_woli,
     _google_toll_check, _google_nearby_places, _scan_keywords, _parse_claimed_minutes,
+    _SF_BASE,
 )
+from routers.accounting_audit_ai import call_audit_ai
 
-def _build_woa_audit(woa_id: str) -> dict:
+def _build_woa_data(woa_id: str) -> dict:
+    """Build full WOA audit data WITHOUT the AI call (fast path, ~3-5s).
+    Returns _ai_context and _garage_history as internal fields for the AI step."""
     import json as _json
     import database
 
@@ -64,19 +66,37 @@ def _build_woa_audit(woa_id: str) -> dict:
     wo_id = woa.get('Work_Order__c', '')
     territory_id = wo.get('ServiceTerritoryId', '')
 
-    woli_rows = sf_query_all(f"""
-        SELECT Id, WorkOrderId, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
-               Quantity, ListPrice, Subtotal, TotalPrice, Discount, Description, Status
-        FROM WorkOrderLineItem
-        WHERE WorkOrderId = '{wo_id}'
-    """) if wo_id else []
-
-    # Query WO Cost records for per-product pricing (unit price, tax, grand total)
-    wo_costs = sf_query_all(f"""
-        SELECT Name, Quantity__c, Unit_Price__c
-        FROM ERS_Work_Order_Cost__c
-        WHERE Work_Order__c = '{wo_id}'
-    """) if wo_id else []
+    # Parallel: WOLI + Costs + SA — all need only wo_id (from Round 1)
+    _SA_FIELDS = """Id, AppointmentNumber, Status, SchedStartTime,
+                   ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
+                   ERS_En_Route_Geolocation__Latitude__s,
+                   ERS_En_Route_Geolocation__Longitude__s,
+                   On_Location_Geolocation__Latitude__s,
+                   On_Location_Geolocation__Longitude__s,
+                   ERS_Completed_Geolocation__Latitude__s,
+                   ERS_Completed_Geolocation__Longitude__s,
+                   ERS_Membership_Level_Coverage__c"""
+    _ph2 = sf_parallel(
+        woli=lambda: sf_query_all(f"""
+            SELECT Id, WorkOrderId, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
+                   Quantity, ListPrice, Subtotal, TotalPrice, Discount, Description, Status
+            FROM WorkOrderLineItem
+            WHERE WorkOrderId = '{wo_id}'
+        """) if wo_id else [],
+        costs=lambda: sf_query_all(f"""
+            SELECT Name, Quantity__c, Unit_Price__c
+            FROM ERS_Work_Order_Cost__c
+            WHERE Work_Order__c = '{wo_id}'
+        """) if wo_id else [],
+        sa_direct=lambda: sf_query_all(f"""
+            SELECT {_SA_FIELDS}
+            FROM ServiceAppointment
+            WHERE ParentRecordId = '{wo_id}' AND Status = 'Completed'
+            ORDER BY SchedStartTime DESC LIMIT 1
+        """) if wo_id else [],
+    )
+    woli_rows = _ph2['woli']
+    wo_costs = _ph2['costs']
 
     # Build WOLIs list — show only New (pending) items; fallback to all if none are New
     new_wolis = [wl for wl in woli_rows if wl.get('Status') == 'New']
@@ -138,47 +158,34 @@ def _build_woa_audit(woa_id: str) -> dict:
             'status': wl.get('Status') or '',
         })
 
-    # Match WOA to best WOLI by requested quantity (same logic as list endpoint)
+    # Match WOA to best WOLI — identical logic to list endpoint (including synthetic TW detection)
     req_qty = _safe_float(woa.get('Quantity__c'))
-    named_wolis = [wl for wl in woli_rows if (wl.get('PricebookEntry') or {}).get('Name')]
-    if named_wolis and req_qty is not None:
-        # Exact quantity match first
-        exact = [w for w in named_wolis if w.get('Quantity') is not None and abs(w['Quantity'] - req_qty) < 0.01]
-        if len(exact) == 1:
-            woli = exact[0]
-        else:
-            # Closest match, prefer non-BA
-            non_ba = [w for w in named_wolis if not (w.get('PricebookEntry') or {}).get('Name', '').startswith('BA')]
-            candidates = non_ba if non_ba else named_wolis
-            candidates = sorted(candidates, key=lambda w: abs((w.get('Quantity') or 0) - req_qty))
-            woli = candidates[0]
-    elif named_wolis:
-        woli = named_wolis[0]
-    else:
-        woli = woli_rows[0] if woli_rows else {}
+    _wm = [{'id': w.get('Id') or '', 'product': (w.get('PricebookEntry') or {}).get('Name') or '',
+             'code': (w.get('PricebookEntry') or {}).get('ProductCode') or '',
+             'quantity': w.get('Quantity'), 'description': w.get('Description')} for w in woli_rows]
+    _best = match_best_woli(_wm, req_qty, wo=wo)
+    _woli_sf = next((w for w in woli_rows if w.get('Id') == _best.get('id')), None)
+    woli = _woli_sf or (woli_rows[0] if woli_rows else {})
 
-    # Find SA from any WOLI — single batch query
-    woli_ids = [wl['Id'] for wl in woli_rows if wl.get('Id')]
+    # SA — use direct WO lookup (parallel above); fall back to WOLI IDs if needed
     sa = {}
     sa_id = ''
-    if woli_ids:
-        sa_check = batch_soql_parallel("""
-            SELECT Id, AppointmentNumber, Status, SchedStartTime,
-                   ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
-                   ERS_En_Route_Geolocation__Latitude__s,
-                   ERS_En_Route_Geolocation__Longitude__s,
-                   On_Location_Geolocation__Latitude__s,
-                   On_Location_Geolocation__Longitude__s,
-                   ERS_Completed_Geolocation__Latitude__s,
-                   ERS_Completed_Geolocation__Longitude__s,
-                   ERS_Membership_Level_Coverage__c
-            FROM ServiceAppointment
-            WHERE ParentRecordId IN ('{id_list}')
-              AND Status = 'Completed'
-        """, woli_ids, chunk_size=200)
-        if sa_check:
-            sa = sa_check[0]
-            sa_id = sa.get('Id', '')
+    sa_direct_rows = _ph2.get('sa_direct') or []
+    if sa_direct_rows:
+        sa = sa_direct_rows[0]
+        sa_id = sa.get('Id', '')
+    else:
+        woli_ids = [wl['Id'] for wl in woli_rows if wl.get('Id')]
+        if woli_ids:
+            sa_check = batch_soql_parallel(f"""
+                SELECT {_SA_FIELDS}
+                FROM ServiceAppointment
+                WHERE ParentRecordId IN ('{{id_list}}')
+                  AND Status = 'Completed'
+            """, woli_ids, chunk_size=200)
+            if sa_check:
+                sa = sa_check[0]
+                sa_id = sa.get('Id', '')
 
     def _get_sa_history():
         if not sa_id:
@@ -220,10 +227,39 @@ def _build_woa_audit(woa_id: str) -> dict:
             LIMIT 20
         """)
 
+    # Same-member same-day and garage history only need WOA data — run in parallel
+    _account_id = wo.get('AccountId')
+    _woa_date_str = (woa.get('CreatedDate') or '')[:10]
+
+    def _get_same_day():
+        if not (_account_id and _woa_date_str):
+            return []
+        try:
+            rows = sf_query_all(f"""
+                SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
+                       ServiceTerritory.Name
+                FROM WorkOrder
+                WHERE AccountId = '{sanitize_soql(_account_id)}'
+                  AND CreatedDate >= {_woa_date_str}T00:00:00Z
+                  AND CreatedDate <= {_woa_date_str}T23:59:59Z
+                  AND Id != '{sanitize_soql(wo_id)}'
+                LIMIT 10
+            """, max_records=10)
+            return [
+                {'wo_number': r.get('WorkOrderNumber'), 'status': r.get('Status'),
+                 'trouble_code': r.get('Trouble_Code__c'), 'created_date': r.get('CreatedDate'),
+                 'territory': (r.get('ServiceTerritory') or {}).get('Name')}
+                for r in (rows or [])
+                if r.get('WorkOrderNumber') != wo.get('WorkOrderNumber')
+            ]
+        except Exception:
+            return []
+
     parallel_data = sf_parallel(
         sa_history=_get_sa_history,
         assigned_resource=_get_assigned_resource,
         rflib_gps=_get_rflib_gps,
+        same_day=_get_same_day,
     )
 
     status_transitions = ['None', 'Scheduled', 'Assigned', 'Dispatched',
@@ -322,78 +358,55 @@ def _build_woa_audit(woa_id: str) -> dict:
     if not truck_prev and rflib_enroute_gps:
         truck_prev = rflib_enroute_gps
 
-    # Priority 3: Previous completed SA call location (estimate — no real GPS available)
-    if not truck_prev and driver_resource_id and sa.get('SchedStartTime'):
-        prev_rows = sf_query_all(f"""
-            SELECT ServiceAppointment.Latitude, ServiceAppointment.Longitude,
-                   ServiceAppointment.City, ServiceAppointment.State
-            FROM AssignedResource
-            WHERE ServiceResourceId = '{driver_resource_id}'
-              AND ServiceAppointment.Status = 'Completed'
-              AND ServiceAppointment.SchedStartTime < {sa['SchedStartTime']}
-              AND ServiceAppointment.Id != '{sa_id}'
-            ORDER BY ServiceAppointment.SchedStartTime DESC LIMIT 1
-        """)
-        if prev_rows:
-            p = (prev_rows[0].get('ServiceAppointment') or {})
-            truck_prev = {'lat': _safe_float(p.get('Latitude')), 'lon': _safe_float(p.get('Longitude')),
-                          'city': p.get('City') or '', 'state': p.get('State') or '', 'source': 'previous_job'}
-
-    # Priority 3: Garage location (last resort)
+    # Fallback: garage/territory location (no extra query — use data already fetched)
     if not truck_prev and territory_id:
         t = wo.get('ServiceTerritory') or {}
-        t_name = t.get('Name', '')
-        t_lat, t_lon = _safe_float(t.get('Latitude')), _safe_float(t.get('Longitude'))
-        if not t_lat:
-            t_rows = sf_query_all(f"SELECT Latitude, Longitude FROM ServiceTerritory WHERE Id = '{territory_id}' LIMIT 1")
-            if t_rows:
-                t_lat, t_lon = _safe_float(t_rows[0].get('Latitude')), _safe_float(t_rows[0].get('Longitude'))
-        truck_prev = {'lat': t_lat, 'lon': t_lon, 'city': t_name, 'state': '', 'source': 'garage_location'}
+        truck_prev = {'lat': None, 'lon': None, 'city': t.get('Name', ''), 'state': '', 'source': 'garage_location'}
 
+    # SF already has distance data — no need to call Google Distance Matrix.
     google_distance = None
-    gm_settings = database.get_setting('google_maps') or {}
-    gm_key = gm_settings.get('api_key', '')
+    google_tow_distance = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')) or None
 
     call_lat = _safe_float(wo.get('Latitude'))
     call_lon = _safe_float(wo.get('Longitude'))
     tow_dest_lat = _safe_float(wo.get('Tow_Destination__Latitude__s'))
     tow_dest_lon = _safe_float(wo.get('Tow_Destination__Longitude__s'))
 
-    # Tow distance: use SF's own Google-calculated estimate (ERS_Estimated_Tow_Miles__c) —
-    # SF already called Google at dispatch time, no need to call again.
-    google_tow_distance = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')) or None
-
-    if gm_key and truck_prev:
-        google_distance = _google_distance(
-            gm_key,
-            truck_prev.get('lat'), truck_prev.get('lon'),
-            call_lat, call_lon,
-            origin_str=truck_prev.get('address_str'),
-        )
-
-    # TL context: toll detection (Routes API) + nearby places (Places API)
+    # Google APIs only for TL (toll/parking) product validation
     tl_context = None
-    if call_lat and call_lon:
-        if tow_dest_lat and tow_dest_lon:
-            toll_result = _google_toll_check(gm_key, call_lat, call_lon, tow_dest_lat, tow_dest_lon)
-        elif truck_prev and truck_prev.get('lat') and truck_prev.get('lon'):
-            toll_result = _google_toll_check(gm_key, truck_prev['lat'], truck_prev['lon'], call_lat, call_lon)
-        else:
-            toll_result = {'status': 'no_coords'}
-        tl_context = {'toll': toll_result, 'nearby': _google_nearby_places(gm_key, call_lat, call_lon)}
 
     req_qty_audit  = _safe_float(woa.get('Quantity__c'))
-    paid_qty_audit = _safe_float(woli.get('Quantity'))
+    paid_qty_audit = _safe_float(_best.get('quantity'))
     woli_desc      = (woli.get('Description') or '').strip()
     description_keywords = _scan_keywords(woli_desc)
     claimed_minutes = _parse_claimed_minutes(woli_desc)
     long_tow_used  = bool(wo.get('Long_Tow_Used__c'))
     long_tow_miles = _safe_float(wo.get('Long_Tow_Miles__c'))
+    woli_code = _best.get('code') or ''
 
-    # Quantity interpretation — what the garage actually wants
-    if req_qty_audit is not None and paid_qty_audit is not None and paid_qty_audit > 0:
-        qty_interpretation = (f"Requesting total of {req_qty_audit}, already paid {paid_qty_audit} "
-                              f"→ additional {round(req_qty_audit - paid_qty_audit, 2)}")
+    # Google APIs only for TL product — toll + parking validation only
+    if woli_code == 'TL' and call_lat and call_lon:
+        gm_settings = database.get_setting('google_maps') or {}
+        gm_key = gm_settings.get('api_key', '')
+        if gm_key:
+            _tl_lat0 = call_lat if (tow_dest_lat and tow_dest_lon) else (truck_prev or {}).get('lat')
+            _tl_lon0 = call_lon if (tow_dest_lat and tow_dest_lon) else (truck_prev or {}).get('lon')
+            _tl_lat1 = tow_dest_lat if (tow_dest_lat and tow_dest_lon) else call_lat
+            _tl_lon1 = tow_dest_lon if (tow_dest_lat and tow_dest_lon) else call_lon
+            _tl_res = sf_parallel(
+                toll=lambda: _google_toll_check(gm_key, _tl_lat0, _tl_lon0, _tl_lat1, _tl_lon1),
+                nearby=lambda: _google_nearby_places(gm_key, call_lat, call_lon, types=['parking']),
+            )
+            tl_context = {'toll': _tl_res['toll'], 'nearby': _tl_res['nearby']}
+
+    rule_rec, rec_reason, _ = _calc_recommendation(
+        woli_code, req_qty_audit, paid_qty_audit,
+        _safe_float(wo.get('ERS_En_Route_Miles__c')), _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c')),
+        _safe_float(wo.get('Tow_Miles__c')), _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
+        on_loc_minutes=on_location_minutes, vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
+        vehicle_group=wo.get('Vehicle_Group__c'), all_wolis=all_wolis, long_tow_used=long_tow_used)
+    if req_qty_audit is not None and paid_qty_audit and paid_qty_audit > 0:
+        qty_interpretation = f"Requesting total of {req_qty_audit}, already paid {paid_qty_audit} → additional {round(req_qty_audit - paid_qty_audit, 2)}"
     elif req_qty_audit is not None:
         qty_interpretation = f"Nothing currently paid → full adjustment of {req_qty_audit}"
     else:
@@ -401,7 +414,7 @@ def _build_woa_audit(woa_id: str) -> dict:
 
     data_context = {
         'woa_number': woa.get('Name', ''),
-        'product': (woli.get('PricebookEntry') or {}).get('Name', ''),
+        'product': _best.get('product') or (woli.get('PricebookEntry') or {}).get('Name', ''),
         'requested_qty': req_qty_audit,
         'currently_paid': paid_qty_audit,
         'qty_interpretation': qty_interpretation,
@@ -448,75 +461,26 @@ def _build_woa_audit(woa_id: str) -> dict:
             'vehicle_weight': _safe_float(wo.get('Weight_lbs__c')),
         },
         'reference_rates': database.get_accounting_rates_dict(),
+        'tl_context': tl_context,
     }
 
-    # ── Same-member same-day duplicate check ──────────────────────────────────
-    account_id = wo.get('AccountId')
-    woa_date_str = (woa.get('CreatedDate') or '')[:10]  # YYYY-MM-DD
-    same_day_calls = []
-    if account_id and woa_date_str:
-        try:
-            same_day_rows = sf_query_all(f"""
-                SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
-                       ServiceTerritory.Name
-                FROM WorkOrder
-                WHERE AccountId = '{sanitize_soql(account_id)}'
-                AND CreatedDate >= {woa_date_str}T00:00:00Z
-                AND CreatedDate <= {woa_date_str}T23:59:59Z
-                AND Id != '{sanitize_soql(wo_id)}'
-                LIMIT 10
-            """, max_records=10)
-            same_day_calls = [
-                {
-                    'wo_number': r.get('WorkOrderNumber'),
-                    'status': r.get('Status'),
-                    'trouble_code': r.get('Trouble_Code__c'),
-                    'created_date': r.get('CreatedDate'),
-                    'territory': (r.get('ServiceTerritory') or {}).get('Name'),
-                }
-                for r in (same_day_rows or [])
-                if r.get('WorkOrderNumber') != wo.get('WorkOrderNumber')
-            ]
-        except Exception:
-            same_day_calls = []
-
-    # Append same-day count to AI context now that it's computed
+    garage_history = None
+    same_day_calls = parallel_data.get('same_day') or []
     data_context['same_member_same_day_count'] = len(same_day_calls)
-
-    acct_settings = database.get_setting('accounting') or {}
-    audit_prompt = acct_settings.get('audit_prompt', '') or _DEFAULT_AUDIT_PROMPT
-    recommendation, confidence, ai_summary, ask_garage = 'REVIEW', 'LOW', None, None
-
-    _provider, api_key, model = _load_ai_settings()
-    if api_key:
-        user_prompt = f"Audit this WOA:\n\n{_json.dumps(data_context, indent=2, default=str)}"
-        raw = _call_openai_simple(api_key, model, audit_prompt, user_prompt)
-        if raw:
-            ai_summary = raw
-            # Try to parse JSON from the AI response
-            try:
-                # Handle markdown code fences
-                clean = raw.strip()
-                if clean.startswith('```'):
-                    clean = clean.split('\n', 1)[1] if '\n' in clean else clean[3:]
-                    clean = clean.rsplit('```', 1)[0]
-                parsed = _json.loads(clean)
-                recommendation = parsed.get('recommendation', 'REVIEW')
-                confidence = parsed.get('confidence', 'LOW')
-                ai_summary = parsed.get('summary', raw)
-                ask_garage = parsed.get('ask_garage')
-            except (_json.JSONDecodeError, AttributeError):
-                # AI returned free-text — use as-is
-                pass
-    else:
-        ai_summary = 'AI not configured. Go to Admin → AI Assistant to set up.'
-
     return {
         'woa_id': woa_id,
         'woa_number': woa.get('Name', ''),
-        'recommendation': recommendation,
-        'confidence': confidence,
-        'ai_summary': ai_summary,
+        'recommendation': rule_rec,
+        'rec_reason': rec_reason,
+        'confidence': 'LOW',
+        'ai_summary': None,
+        'ai_headline': None,
+        'ai_story': None,
+        'ai_fraud_signals': [],
+        'ai_anomalies': [],
+        'ai_what_to_do': [],
+        '_ai_context': data_context,
+        '_garage_history': garage_history,
         'evidence': {
             'on_location_minutes': on_location_minutes,
             'status_quality': status_quality,
@@ -534,7 +498,7 @@ def _build_woa_audit(woa_id: str) -> dict:
             'currently_paid': paid_qty_audit,
             'requested': req_qty_audit,
             'qty_interpretation': qty_interpretation,
-            'product': (woli.get('PricebookEntry') or {}).get('Name') or '',
+            'product': _best.get('product') or (woli.get('PricebookEntry') or {}).get('Name') or '',
             'garage_note': woli_desc or None,
             'description_keywords': description_keywords,
             'claimed_minutes_from_description': claimed_minutes,
@@ -586,6 +550,8 @@ def _build_woa_audit(woa_id: str) -> dict:
             'facility': f'{_SF_BASE}/{territory_id}' if territory_id else None,
             'account': f'{_SF_BASE}/{wo.get("AccountId")}' if wo.get('AccountId') else None,
         },
-        'ask_garage': ask_garage,
+        'ask_garage': [],
         'same_member_same_day': same_day_calls,
     }
+
+

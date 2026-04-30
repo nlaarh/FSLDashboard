@@ -19,10 +19,45 @@ function makePin(color, label) {
   })
 }
 
+function makeDistanceLabel(text, color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      background:rgba(15,23,42,0.85);border:1px solid ${color};
+      border-radius:4px;padding:2px 6px;
+      color:${color};font-size:9px;font-weight:700;
+      white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.6);
+      line-height:1.3">
+      ${text}
+    </div>`,
+    iconSize: [1, 1],
+    iconAnchor: [0, 0],
+  })
+}
+
+function makeTollIcon(priceText) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      background:rgba(217,119,6,0.92);border:1.5px solid #fbbf24;
+      border-radius:50%;width:22px;height:22px;
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 2px 6px rgba(0,0,0,0.5);
+      font-size:11px;line-height:1">💰</div>
+    ${priceText ? `<div style="color:#fbbf24;font-size:8px;font-weight:700;text-align:center;margin-top:1px;text-shadow:0 1px 2px rgba(0,0,0,0.9);white-space:nowrap">${priceText}</div>` : ''}`,
+    iconSize: [22, priceText ? 34 : 22],
+    iconAnchor: [11, 11],
+  })
+}
+
 const PINS = {
   truck:   makePin('#64748b', 'Truck'),
   call:    makePin('#ef4444', 'Call'),
   tow:     makePin('#22c55e', 'Tow Dest'),
+}
+
+function midpoint(a, b) {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
 }
 
 export default function WOAAuditMap({ ev }) {
@@ -35,6 +70,16 @@ export default function WOAAuditMap({ ev }) {
   const hasCall  = callLat != null && callLon != null
   const hasTruck = truck?.lat != null && truck?.lon != null
   const hasTow   = towLat != null && towLon != null
+
+  // Distance values — prefer actual SF miles, fall back to estimated
+  const erMiles  = ev?.sf_enroute_miles ?? ev?.sf_estimated_miles
+  const towMiles = ev?.sf_tow_miles ?? ev?.sf_estimated_tow_miles
+
+  // Toll context (only populated for TL product audits)
+  const tollData    = ev?.tl_context?.toll
+  const tollLikely  = tollData?.toll_likely === true
+  const tollPrice   = tollData?.estimated_price?.[0]
+  const tollText    = tollPrice ? `$${tollPrice.amount}` : null
 
   const points = useMemo(() => {
     const pts = []
@@ -56,6 +101,10 @@ export default function WOAAuditMap({ ev }) {
       No call coordinates — map unavailable
     </div>
   )
+
+  // Midpoints for distance labels
+  const erMid  = hasTruck && hasCall ? midpoint([truck.lat, truck.lon], [callLat, callLon]) : null
+  const towMid = hasCall && hasTow   ? midpoint([callLat, callLon], [towLat, towLon]) : null
 
   return (
     <div className="rounded-xl overflow-hidden border border-slate-700/30" style={{ height: 200 }}>
@@ -97,6 +146,31 @@ export default function WOAAuditMap({ ev }) {
         {hasCall && hasTow && (
           <Polyline positions={[[callLat, callLon], [towLat, towLon]]}
             pathOptions={{ color: '#a78bfa', weight: 2, dashArray: '5,5', opacity: 0.7 }} />
+        )}
+
+        {/* Distance label — en route segment */}
+        {erMid && erMiles != null && (
+          <Marker position={erMid}
+            icon={makeDistanceLabel(`${erMiles.toFixed(1)} mi`, '#60a5fa')}
+            interactive={false} />
+        )}
+
+        {/* Distance label — tow segment */}
+        {towMid && towMiles != null && (
+          <Marker position={towMid}
+            icon={makeDistanceLabel(`${towMiles.toFixed(1)} mi`, '#a78bfa')}
+            interactive={false} />
+        )}
+
+        {/* Toll icon — shown near call location when toll detected */}
+        {tollLikely && hasCall && (
+          <Marker position={[callLat + 0.008, callLon + 0.01]}
+            icon={makeTollIcon(tollText)}>
+            <Popup>
+              <span className="text-xs font-semibold">⚠ Toll Road Detected</span>
+              {tollText && <><br /><span className="text-xs text-gray-600">Est. toll: {tollText} {tollPrice?.currency || ''}</span></>}
+            </Popup>
+          </Marker>
         )}
       </MapContainer>
     </div>

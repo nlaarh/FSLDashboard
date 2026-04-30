@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { SAReportProvider } from './contexts/SAReportContext.jsx'
 import Layout from './components/Layout'
@@ -17,23 +18,33 @@ import Accounting from './pages/Accounting'
 // import OptimizerDecoder from './pages/OptimizerDecoder'
 
 export default function App() {
+  const [department, setDepartment] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/auth/me').then(r => r.json()).then(d => setDepartment(d.department || '')).catch(() => setDepartment(''))
+  }, [])
+
+  const isFinance = department === 'finance'
+  // While loading, render null so routes aren't mounted with wrong guard
+  if (department === null) return null
+
   return (
     <SAReportProvider>
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<CommandCenter />} />
-        <Route path="/garages" element={<Dashboard />} />
-        <Route path="/garage/:id" element={<GarageDetail />} />
-        <Route path="/queue" element={<QueueBoard />} />
-        <Route path="/pta" element={<PtaAdvisor />} />
-        <Route path="/forecast" element={<Forecast />} />
-        <Route path="/onroute" element={<OnRoute />} />
-        <Route path="/matrix" element={<MatrixAdvisor />} />
+        <Route path="/" element={isFinance ? <Navigate to="/accounting" replace /> : <CommandCenter />} />
+        <Route path="/garages" element={isFinance ? <Navigate to="/accounting" replace /> : <Dashboard />} />
+        <Route path="/garage/:id" element={isFinance ? <Navigate to="/accounting" replace /> : <GarageDetail />} />
+        <Route path="/queue" element={isFinance ? <Navigate to="/accounting" replace /> : <QueueBoard />} />
+        <Route path="/pta" element={isFinance ? <Navigate to="/accounting" replace /> : <PtaAdvisor />} />
+        <Route path="/forecast" element={isFinance ? <Navigate to="/accounting" replace /> : <Forecast />} />
+        <Route path="/onroute" element={isFinance ? <Navigate to="/accounting" replace /> : <OnRoute />} />
+        <Route path="/matrix" element={isFinance ? <Navigate to="/accounting" replace /> : <MatrixAdvisor />} />
         <Route path="/accounting" element={<Accounting />} />
         <Route path="/data" element={<Navigate to="/help" replace />} />
-        <Route path="/issues" element={<Issues />} />
-        <Route path="/help" element={<Help />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/issues" element={isFinance ? <Navigate to="/accounting" replace /> : <Issues />} />
+        <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />
+        <Route path="/admin" element={isFinance ? <Navigate to="/accounting" replace /> : <Admin />} />
         {/* Optimizer disabled until live SF data is wired — redirect to home */}
         <Route path="/optimizer" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

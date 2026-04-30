@@ -75,9 +75,11 @@ function SASearch() {
 export default function Layout() {
   const { pathname } = useLocation()
   const [features, setFeatures] = useState({})
+  const [department, setDepartment] = useState('')
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {})
+    fetch('/api/auth/me').then(r => r.json()).then(d => setDepartment(d.department || '')).catch(() => {})
     const handler = (e) => {
       // Admin passes features directly via CustomEvent — no API roundtrip needed
       if (e.detail) setFeatures(e.detail)
@@ -86,6 +88,9 @@ export default function Layout() {
     window.addEventListener('featuresChanged', handler)
     return () => window.removeEventListener('featuresChanged', handler)
   }, [])
+
+  // finance = accounting only; everyone else sees everything
+  const isFinance = department === 'finance'
 
   const handleLogout = async () => {
     try {
@@ -104,6 +109,7 @@ export default function Layout() {
             <span>Fleet<span className="text-brand-400">Pulse</span></span>
           </Link>
           <div className="flex items-center gap-1 ml-6">
+            {!isFinance && (<>
             <Link to="/"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -152,6 +158,7 @@ export default function Layout() {
                 <ArrowRightLeft className="w-4 h-4 inline mr-1.5 -mt-0.5" />Insights
               </Link>
             )}
+            </>)}
             {features.accounting !== false && (
             <Link to="/accounting"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${

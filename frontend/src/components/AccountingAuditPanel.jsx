@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
 import {
   Loader2, AlertTriangle, ExternalLink,
-  MapPin, RefreshCw, ArrowRight, Info,
+  MapPin, RefreshCw, ArrowRight, Info, Sparkles, ShieldAlert, Lightbulb, CheckSquare,
 } from 'lucide-react'
-import { fetchWOAAudit, recalculateWOAAudit, fetchAccountingRates } from '../api'
+import { fetchWOAAudit, recalculateWOAAudit, fetchAccountingRates, fetchWOAAiAnalysis } from '../api'
 import { productCode } from '../utils/formatting'
 import { PRODUCT_NAMES, TOW_CODES, TIME_CODES, FLAT_CODES, UNITS, headerSummary, buildLocalSummary } from '../utils/accountingAudit'
 import WODiagnosticStrip from './WODiagnosticStrip'
@@ -17,11 +17,26 @@ const REC_BADGE = {
   DENY:   'bg-red-500/15 text-red-400 border border-red-500/30',
 }
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd }) {
+const Skeleton = ({ className = '' }) => (
+  <div className={`animate-pulse bg-slate-700/30 rounded ${className}`} />
+)
+
+const SkeletonCard = () => (
+  <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-3">
+    <Skeleton className="h-3 w-1/3" />
+    <Skeleton className="h-2 w-full" />
+    <Skeleton className="h-2 w-4/5" />
+    <Skeleton className="h-2 w-2/3" />
+    <Skeleton className="h-2 w-3/4" />
+  </div>
+)
+
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [recalcing, setRecalcing] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
   const [rates, setRates] = useState({})
 
   useEffect(() => { fetchAccountingRates().then(setRates).catch(() => {}) }, [])
@@ -29,19 +44,35 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const handleResult = (data) => {
     setAudit(data)
     if (data?.recommendation) onComplete?.(woaId, { recommendation: data.recommendation, confidence: data.confidence, summary: data.ai_summary || '' })
+    // If AI not yet loaded (data-only response), fetch it separately
+    if (!data?.ai_headline && !data?.ai_story) {
+      setAiLoading(true)
+      fetchWOAAiAnalysis(woaId)
+        .then(ai => setAudit(prev => prev ? { ...prev, ...ai, recommendation: prev.recommendation, rec_reason: prev.rec_reason } : prev))
+        .catch(() => {})
+        .finally(() => setAiLoading(false))
+    }
   }
   const load = (fetcher) => { setLoading(true); setError(null); fetcher(woaId).then(handleResult).catch(e => setError(e.message || 'Failed')).finally(() => setLoading(false)) }
   useEffect(() => { load(fetchWOAAudit) }, [woaId])
   const handleRecalculate = () => { setRecalcing(true); recalculateWOAAudit(woaId).then(handleResult).catch(e => setError(e.message || 'Failed')).finally(() => setRecalcing(false)) }
 
-  if (loading) return <div className="flex items-center justify-center gap-2 py-8"><Loader2 className="w-4 h-4 animate-spin text-brand-400" /><span className="text-xs text-slate-500">Running audit…</span></div>
+  // Map list rec (approve/review/deny) → audit badge key (PAY/REVIEW/DENY)
+  const initRec = rowRec === 'approve' ? 'PAY' : (rowRec || 'REVIEW').toUpperCase()
+
+  if (loading) return (
+    <div className="px-6 py-4 space-y-3 bg-slate-900/40">
+      <SkeletonCard />
+    </div>
+  )
   if (error) return <div className="flex items-center justify-center gap-2 py-8"><AlertTriangle className="w-4 h-4 text-red-400" /><span className="text-xs text-red-400">{error}</span></div>
   if (!audit) return null
 
-  const rec = (audit.recommendation || '').toUpperCase()
-  const urls = audit.sf_urls || {}
-  const timeline = audit.sa_timeline || []
-  const ev = audit.evidence || {}
+  const recRaw = (audit.recommendation || initRec || 'REVIEW').toUpperCase()
+  const rec = recRaw === 'APPROVE' ? 'PAY' : recRaw
+  const urls = audit?.sf_urls || {}
+  const timeline = audit?.sa_timeline || []
+  const ev = audit?.evidence || {}
   const code = productCode(ev.product)
 
   const isStale = !('call_location_city' in ev)
@@ -71,8 +102,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const baseline = isTow
     ? (googleTowMi ?? (sfEst > 0 ? sfEst : sfMi > 0 ? sfMi : null))
     : (googleMi ?? (sfEst > 0 ? sfEst : sfMi > 0 ? sfMi : null))
-  // Garages request ADDITIONAL — true total = what we'd owe if approved
-  const trueTotal = ev.requested != null ? ((ev.currently_paid || 0) + ev.requested) : null
+  // WOA.Quantity__c IS the total the garage claims — not additional on top of paid
+  const trueTotal = ev.requested != null ? ev.requested : null
   const mileRatio = isMileage && trueTotal != null && baseline ? (trueTotal / baseline * 100) : null
   const baselineLabel = isTow
     ? (googleTowMi ? 'SF Google est (pickup → dest)' : sfEst > 0 ? 'SF tow estimate' : 'SF tow recorded')
@@ -109,8 +140,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
     : (originLat && destLat ? `https://www.google.com/maps/dir/${originLat},${originLon}/${destLat},${destLon}`
       : destLat ? `https://www.google.com/maps/dir/${originCity || 'garage'}/${destLat},${destLon}` : null)
 
-  const localSummary = buildLocalSummary(ev, audit.woli_items, rates)
-  const aiText = audit.ai_summary || audit.summary
+  const localSummary = buildLocalSummary(ev, audit?.woli_items, rates)
+  const aiText = audit.ai_summary
   const showAi = aiText && !aiText.startsWith('AI not configured')
 
   return (
@@ -137,35 +168,35 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           </span>
         </div>
       )}
-
-      {/* ── ROW 1: Verdict bar ── */}
       <div className="flex items-center gap-3 flex-wrap">
         <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
           {rec || 'UNKNOWN'}
         </span>
-        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{headerSummary(ev, code)}</span>
-        {audit.confidence && (
+        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">
+          {audit ? headerSummary(ev, code) : (recReason || <span className="text-slate-600 italic">Loading details…</span>)}
+        </span>
+        {(audit?.confidence || rowConf) && (
           <span className="text-[10px] text-slate-600 shrink-0">
-            Conf: <span className="text-slate-400 font-semibold">{audit.confidence}</span>
+            Conf: <span className="text-slate-400 font-semibold">{audit?.confidence || rowConf}</span>
           </span>
         )}
         <button onClick={handleRecalculate} disabled={recalcing}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium
-                     bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 shrink-0">
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 shrink-0">
           <RefreshCw className={clsx('w-3 h-3', recalcing && 'animate-spin')} />
           {recalcing ? 'Working…' : 'Recalculate'}
         </button>
+        <a href={`/api/accounting/wo-adjustments/${woaId}/pdf`} target="_blank" rel="noreferrer"
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-blue-700 text-slate-400 hover:text-white transition-colors shrink-0">
+          PDF
+        </a>
       </div>
-
-      {/* ── Status warning (only if bad) ── */}
+      {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
       {status.startsWith('BAD') && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-700/30">
           <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
           <span className="text-[10px] text-red-300">{status} — SF distance data is unreliable for this call</span>
         </div>
       )}
-
-      {/* ── Same-member same-day alert ── */}
       {ev.same_member_same_day?.length > 0 && (
         <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-600/30">
           <AlertTriangle className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
@@ -184,11 +215,22 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </div>
       )}
 
-      {/* ── WO Classification strip — codes, coverage, contract, flags ── */}
-      <WODiagnosticStrip ev={ev} sfUrls={urls} />
+      {loading && (
+        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+          <Loader2 className="w-3 h-3 animate-spin text-brand-400" />Loading audit details…
+        </div>
+      )}
+
+      {audit && <WODiagnosticStrip ev={ev} sfUrls={urls} />}
+
+      {!audit && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
+        </div>
+      )}
 
       {/* ── ROW 2: Route card with Google Maps link ── */}
-      {!isStale && (origin || destCity) && (
+      {audit && !isStale && (origin || destCity) && (
         <div className="px-4 py-3 rounded-xl bg-slate-800/30 border border-slate-700/20 text-[10px] space-y-1.5">
           {isTow ? (
             /* TW: show call location → tow destination */
@@ -261,7 +303,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       )}
 
       {/* ── Multi-WOA combined exposure warning ── */}
-      {hasSiblings && (
+      {audit && hasSiblings && (
         <div className={clsx(
           'px-4 py-3 rounded-xl border space-y-2',
           isDupeRisk
@@ -308,7 +350,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       )}
 
       {/* ── 4-column: Verification | WO Context | SA Timeline | Auditor Summary ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+      {audit && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
 
         {/* Left: Verification — product-specific, extracted to AuditVerificationCard */}
         <AuditVerificationCard
@@ -443,66 +485,61 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           </div>
         )}
 
-        {/* Col 4: Auditor Summary */}
-        {(localSummary || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
+        {/* Col 4: Auditor Summary — full AI when available, local fallback otherwise */}
+        {(localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
           <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
-            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold mb-2">Auditor Summary</div>
-            {localSummary && (
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Auditor Summary</div>
+              {(showAi || aiLoading) && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-[9px] font-bold text-blue-400 uppercase tracking-wider">
+                  <Sparkles className={clsx('w-2.5 h-2.5', aiLoading && 'animate-pulse')} />
+                  {aiLoading ? 'AI…' : 'AI'}
+                </span>
+              )}
+            </div>
+            {showAi ? (
+              <div className="space-y-3">
+                {audit.ai_headline && <div className="text-[12px] font-semibold text-slate-200 leading-snug">{audit.ai_headline}</div>}
+                {audit.ai_story && <div className="text-[11px] text-slate-300 leading-relaxed">{audit.ai_story}</div>}
+                {audit.ai_fraud_signals?.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><ShieldAlert className="w-3 h-3 text-red-400" /><span className="text-[9px] font-bold text-red-400 uppercase tracking-wider">Fraud Signals</span></div>
+                    {audit.ai_fraud_signals.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-red-300"><span className="text-red-500 mt-0.5">●</span>{s}</div>)}
+                  </div>
+                )}
+                {audit.ai_anomalies?.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><Lightbulb className="w-3 h-3 text-amber-400" /><span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Anomalies</span></div>
+                    {audit.ai_anomalies.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-amber-300"><span className="text-amber-500 mt-0.5">●</span>{s}</div>)}
+                  </div>
+                )}
+                {audit.ai_what_to_do?.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><CheckSquare className="w-3 h-3 text-emerald-400" /><span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">What To Do</span></div>
+                    {audit.ai_what_to_do.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-emerald-300"><span className="text-emerald-600 font-bold mt-0.5">{i + 1}.</span>{s}</div>)}
+                  </div>
+                )}
+              </div>
+            ) : localSummary ? (
               <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
                 {localSummary.split('\n\n').map((para, i) => (
                   <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
                 ))}
               </div>
-            )}
+            ) : null}
             {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
               <div className="mt-2 pt-2 border-t border-slate-700/30">
                 <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
                 {audit.ask_garage.map((item, i) => (
-                  <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2">
-                    <span className="text-amber-400">-</span>{item}
-                  </div>
+                  <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2"><span className="text-amber-400">-</span>{item}</div>
                 ))}
               </div>
             )}
           </div>
         )}
-      </div>
-      {showAi && (
-        <details className="glass rounded-xl border border-blue-800/20">
-          <summary className="px-4 py-2.5 text-[10px] text-blue-400 uppercase tracking-wider font-bold cursor-pointer hover:bg-blue-900/10">AI Analysis</summary>
-          <div className="px-4 pb-3 text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">{aiText}</div>
-        </details>
-      )}
-
-      {/* ── Distance comparison bar chart (mileage products only) ── */}
-      {isMileage && (
-        <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-2">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Distance Comparison</div>
-          {(() => {
-            const vals = [
-              { label: 'Garage Claimed', val: ev.requested, color: 'bg-amber-400' },
-              isTow
-                ? { label: 'SF Google Est (tow)', val: googleTowMi ?? sfEst, color: 'bg-brand-400' }
-                : { label: 'Google (truck→call)', val: googleMi ?? sfEst, color: 'bg-brand-400' },
-              { label: isTow ? 'SF Tow Recorded' : 'SF ER Recorded', val: sfMi, color: 'bg-slate-400' },
-            ].filter(v => v.val != null && v.val > 0)
-            const maxVal = Math.max(...vals.map(v => v.val), 1)
-            return vals.map(({ label, val, color }) => (
-              <div key={label} className="flex items-center gap-2 text-[10px]">
-                <span className="text-slate-400 w-36 shrink-0">{label}</span>
-                <div className="flex-1 bg-slate-800 rounded-full h-2.5 overflow-hidden">
-                  <div className={`h-full rounded-full ${color} opacity-80`}
-                    style={{ width: `${Math.min(100, (val / maxVal) * 100)}%` }} />
-                </div>
-                <span className="font-mono font-bold text-slate-200 w-12 text-right">{val} mi</span>
-              </div>
-            ))
-          })()}
-        </div>
-      )}
-
+      </div>}
       {/* ── Route map ── */}
-      {(ev.call_location_lat || ev.truck_prev_location) && (
+      {audit && (ev.call_location_lat || ev.truck_prev_location) && (
         <div className="space-y-1">
           <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold px-1">Route Map</div>
           <WOAAuditMap ev={ev} />
@@ -515,7 +552,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       )}
 
       {/* ── SF Links ── */}
-      <div className="flex items-center gap-3 pt-1">
+      {audit && <div className="flex items-center gap-3 pt-1">
         {urls.woa && (
           <a href={urls.woa} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-500 rounded-lg text-xs font-semibold text-white transition-colors">
@@ -528,7 +565,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
             <ExternalLink className="w-3.5 h-3.5" />Open Work Order
           </a>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

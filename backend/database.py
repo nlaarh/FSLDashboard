@@ -199,6 +199,13 @@ def init_db():
         if purged:
             log.info(f"Purged {purged} activity log entries older than 30 days")
 
+        # Migration: add department column if missing
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT ''")
+            log.info("Migrated: added department column to users")
+        except Exception:
+            pass  # column already exists
+
     log.info(f"Database initialized at {DB_PATH}")
 
 

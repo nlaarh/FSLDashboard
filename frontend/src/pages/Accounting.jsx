@@ -115,11 +115,11 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd }) {
+function AuditToggle({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
   return (
     <div>
       <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
-        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} />
+        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec} rowConf={rowConf} />
     </div>
   )
 }
@@ -228,7 +228,8 @@ export default function Accounting() {
         ))}
       </div>
 
-      {activeTab === 'analytics' && <AccountingAnalytics status={statusFilter} />}
+      {activeTab === 'analytics' && <AccountingAnalytics status={statusFilter}
+        onDrillDown={(prod) => { setProduct(prod); setActiveTab('woa'); setPage(0); }} />}
 
       {activeTab === 'woa' && <>
       {/* KPIs */}
@@ -488,19 +489,17 @@ export default function Accounting() {
                         </span>
                       </td>
 
-                      {/* Recommendation + materiality signal */}
+                      {/* Recommendation */}
                       <td className="px-3 py-2.5">
                         <div className="flex flex-col gap-0.5">
-                          {isLowMat
-                            ? <span className="text-[10px] font-bold text-slate-500"
-                                title={`Estimated impact: $${r.estimated_usd?.toFixed(2)} — below materiality threshold. No review needed.`}>
-                                ✓ Low $ — pass
-                              </span>
-                            : r.recommendation === 'approve'
-                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                                  className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300">✓ Approve</a>
-                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                                  className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300">⚠ Review</a>
+                          {r.recommendation === 'approve'
+                            ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
+                                title={isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
+                                ✓ Approve
+                              </a>
+                            : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300">⚠ Review</a>
                           }
                           {r.estimated_usd != null && (
                             <span className="text-[9px] text-slate-600 font-mono"
@@ -538,7 +537,8 @@ export default function Accounting() {
                       <tr>
                         <td colSpan={13} className="p-0 border-b border-slate-700/30">
                           <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
-                            isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd} />
+                            isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}
+                            rowRec={r.recommendation} rowConf={r.confidence} />
                         </td>
                       </tr>
                     )}

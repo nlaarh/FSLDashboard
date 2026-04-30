@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
-from routers.auth import _verify_cookie, _PUBLIC_PATHS
+from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _finance_ok
 import cache
 import refresher
 import database
@@ -52,7 +52,13 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     # Admin cookie
     cookie = request.cookies.get("fslapp_auth")
-    if cookie and _verify_cookie(cookie):
+    payload = _verify_cookie(cookie) if cookie else None
+    if payload:
+        # Department access control: finance can only reach accounting + auth endpoints
+        username = payload.split(":")[0]
+        dept = _get_department(username)
+        if dept == 'finance' and path.startswith('/api/') and not _finance_ok(path):
+            return JSONResponse(status_code=403, content={"detail": "Access restricted to Accounting only"})
         return await call_next(request)
     # Local dev: no auth needed
     if os.environ.get("WEBSITE_SITE_NAME") is None:
@@ -114,7 +120,7 @@ from routers import (
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
     garages_scorecard, garages_export, live_dispatch, watchlist, accounting,
-    accounting_reviews, optimizer, optimizer_chat,
+    accounting_reviews, accounting_ai, optimizer, optimizer_chat,
 )
 
 app.include_router(auth.router)
@@ -149,6 +155,7 @@ app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
 app.include_router(accounting.router)
 app.include_router(accounting_reviews.router)
+app.include_router(accounting_ai.router)
 app.include_router(optimizer.router)
 app.include_router(optimizer_chat.router)
 

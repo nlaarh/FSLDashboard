@@ -9,25 +9,36 @@ from utils import parse_dt as _parse_dt
 
 log = logging.getLogger('accounting')
 _ET = ZoneInfo('America/New_York')
-_SF_BASE = 'https://aaawcny.lightning.force.com'
+_SF_BASE   = 'https://aaawcny.lightning.force.com'
+_TOW_CODES = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
+_TIME_CODES = {'E1', 'E2', 'MI', 'Z8'}
+_FLAT_CODES = {'BA', 'BC', 'PC', 'HO', 'PG', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'}
 
 _DEFAULT_AUDIT_PROMPT = (
-    "You are a senior accounting auditor for AAA Western & Central NY roadside assistance. "
-    "You're writing for an internal auditor who needs to understand WHAT HAPPENED on this call and WHETHER the garage's claim is justified. "
-    "NEVER just repeat numbers — explain what they MEAN. "
-    "ALWAYS spell out product names (ER = Enroute Miles, TW = Tow Miles, E1 = Extrication in minutes, BA = Base Rate, TL = Tolls/Parking, MH = Medium/Heavy Duty, MI = Wait Time). "
-    "ALWAYS include units (miles, minutes, dollars). "
-    "Tell the STORY: What service was performed? Where did the truck go? How long was the driver on scene? "
-    "Is the garage's claim reasonable compared to what Salesforce calculated using Google Maps? "
-    "If there's a discrepancy, explain POSSIBLE reasons (driver status issue, detour, system error) and what the auditor should check. "
-    "Rules: ER — use google_distance_miles (our live Google call: truck location → call) as the benchmark; within 130% = reasonable. "
-    "TW — use google_tow_distance_miles (SF's Google estimate at dispatch: pickup → tow destination) as the benchmark; within 130% = reasonable. "
-    "E1/MI within 120% of on-scene time=reasonable. "
-    "BA/BC/PC always need policy review. TL needs receipts. MH needs vehicle weight verification. "
-    'Respond JSON: {"recommendation":"PAY|REVIEW|DENY","confidence":"HIGH|MEDIUM|LOW",'
-    '"summary":"2-3 sentence auditor narrative with units and context",'
-    '"reasoning":["specific finding 1","specific finding 2"],'
-    '"ask_garage":["question for the garage if REVIEW"]}'
+    "You are a senior accounting supervisor at AAA Western & Central NY roadside assistance, "
+    "speaking directly to an accountant who processes garage invoices. "
+    "Your job: read the WOA data and tell a CLEAR STORY — what happened, why the garage is asking for more money, "
+    "whether the claim is justified, and exactly what the accountant should do next. "
+    "\n\nALWAYS spell out product codes: ER=Enroute Miles, TW=Tow Miles, E1=Extrication, BA=Base Rate, "
+    "TL=Tolls/Parking, MH=Medium/Heavy Duty, MI=Wait Time. ALWAYS include units (miles, minutes, dollars). "
+    "\n\nBenchmark rules: "
+    "ER — compare claimed vs google_distance_miles (truck GPS → call). Within 130%=PAY. "
+    "TW — compare claimed vs google_tow_distance_miles (pickup → tow destination). Within 130%=PAY. "
+    "E1/MI — compare claimed minutes vs on_location_minutes. Within 120%=PAY. "
+    "BA/BC/PC — always REVIEW (policy required). TL — REVIEW (receipts required). MH — REVIEW (weight verification required). "
+    "If same_member_same_day_count > 0, flag as potential duplicate. "
+    "If tl_context shows toll roads on the route, mention it as context. "
+    "\n\nFraud signals to watch: GPS doesn't support claimed distance; En Route and On Location timestamps seconds apart "
+    "(driver never actually drove); claimed minutes >> on-scene time; same member called multiple garages same day. "
+    "\n\nRespond ONLY with valid JSON — no markdown fences, no commentary outside the JSON: "
+    '{"recommendation":"PAY|REVIEW|DENY",'
+    '"confidence":"HIGH|MEDIUM|LOW",'
+    '"headline":"One sentence: what happened and whether it checks out",'
+    '"story":"3-5 sentences written to an accountant: what service was done, where the truck went, what the numbers show, and whether to pay",'
+    '"fraud_signals":["red flag if found — omit array entirely if none"],'
+    '"anomalies":["yellow flag / unusual finding — omit if none"],'
+    '"what_to_do":["specific action for the accountant, e.g. Approve in Salesforce, Call garage about X"],'
+    '"ask_garage":["specific question to ask the garage if REVIEW or DENY — omit if PAY"]}'
 )
 
 
@@ -101,9 +112,9 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
              'PC': 'Plus Cost', 'HO': 'Holiday Bonus', 'PG': 'Plus/Premier Fuel',
              'Z5': 'RAP Fuel Delivery', 'Z7': 'RAP Lockout', 'TJ': 'TireJect',
              'Z0': 'RAP Gone on Arrival', 'Z1': 'RAP Flat Tire', 'Z3': 'RAP Battery Boost'}
-    TOW_CODES = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
-    TIME_CODES = {'E1', 'E2', 'Z8'}
-    FLAT_CODES = {'BA', 'BC', 'PC', 'HO', 'PG', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'}
+    TOW_CODES  = _TOW_CODES
+    TIME_CODES = _TIME_CODES
+    FLAT_CODES = _FLAT_CODES
     L = []
     v = {}
     prod_name = NAMES.get(code, 'Unknown') if code else 'No product on WO'
@@ -127,6 +138,9 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         return 'review', '\n'.join(L), {}
 
     if code == 'ER':
+        if paid and paid > 0 and abs(requested - paid) < 0.01:
+            L.append(f'\n→ Requesting same as billed ({paid} mi). No change needed → APPROVE')
+            return 'approve', '\n'.join(L), {'sf_billed': paid, 'unit': 'mi'}
         L.append(f'\nDATA FROM SF:')
         L.append(f'  SF Google Estimate: {sf_est_er or "N/A"} mi')
         L.append(f'  SF Recorded Actual: {sf_er or "N/A"} mi')
@@ -135,6 +149,9 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         L.append(f'  Baseline: {src} = {baseline or "none"}')
         v = {'sf_google_estimate': sf_est_er, 'sf_recorded': sf_er, 'sf_billed': paid, 'unit': 'mi'}
     elif code in TOW_CODES:
+        if paid and paid > 0 and abs(requested - paid) < 0.01:
+            L.append(f'\n→ Requesting same as billed ({paid} mi). No change needed → APPROVE')
+            return 'approve', '\n'.join(L), {'sf_billed': paid, 'unit': 'mi'}
         L.append(f'\nDATA FROM SF (tow distance):')
         L.append(f'  SF Google Tow Estimate: {sf_est_tow or "N/A"} mi')
         L.append(f'  SF Recorded Tow: {sf_tow or "N/A"} mi')
@@ -210,6 +227,11 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         L.append(f'\n→ Request receipt from garage to verify ${requested}.')
         return 'review', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
     elif code in FLAT_CODES:
+        if paid and paid > 0 and abs(requested - paid) < 0.01:
+            L.append(f'\nFLAT FEE / SERVICE EVENT:')
+            L.append(f'  {prod_name} — requesting same as billed ({paid}). No change needed.')
+            L.append(f'\n→ Requesting same as billed. No financial impact → APPROVE')
+            return 'approve', '\n'.join(L), {'sf_billed': paid}
         L.append(f'\nFLAT FEE / SERVICE EVENT:')
         L.append(f'  {prod_name} — verify the service was performed.')
         L.append(f'→ Flat-fee products (BA/BC/PC/HO/PG/RAP) always require policy review.')
@@ -355,3 +377,46 @@ def _google_nearby_places(api_key: str, lat, lon, types=None) -> dict:
             log.warning('Places API nearby search failed: %s', e)
             results_by_type[place_type] = None
     return {'status': 'ok', **results_by_type}
+
+
+def match_best_woli(wolis: list, requested_qty, wo: dict | None = None) -> dict:
+    """Find the WOLI entry most likely matching a WOA's requested quantity.
+
+    wolis: list of {id, product, code, quantity, description} dicts.
+    wo:    raw SF WorkOrder row for synthetic TW detection.
+    Returns the best-match entry, or a synthetic TW dict if the WOA is for unbilled tow miles.
+    """
+    if not wolis:
+        return {}
+    named = [w for w in wolis if w.get('product')]
+    if not named:
+        return wolis[0]
+    non_ba = [w for w in named if w.get('code') != 'BA']
+    if not non_ba:
+        return named[0]
+
+    if requested_qty is not None:
+        exact = [w for w in named if w.get('quantity') is not None and abs(w['quantity'] - requested_qty) < 0.01]
+        if len(exact) == 1:
+            return exact[0]
+        if len(non_ba) > 1:
+            return sorted(non_ba, key=lambda w: abs((w.get('quantity') or 0) - requested_qty))[0]
+        # Single non-BA: detect if this WOA is for TW not yet billed (no TW WOLI on the WO).
+        if wo and not any(w['code'] in _TOW_CODES for w in named):
+            sf_tow = _safe_float(wo.get('Tow_Miles__c'))
+            sf_est_tow = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c'))
+            tow_signal = max(sf_tow or 0, sf_est_tow or 0)
+            if tow_signal > 0:
+                er_woli_qty = non_ba[0].get('quantity') or 0
+                er_anchor = max(
+                    _safe_float(wo.get('ERS_En_Route_Miles__c')) or 0,
+                    _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c')) or 0,
+                    er_woli_qty,
+                )
+                dist_to_tow = abs(requested_qty - tow_signal)
+                dist_to_er = abs(requested_qty - er_anchor) if er_anchor > 0.1 else float('inf')
+                if dist_to_tow < dist_to_er:
+                    return {'product': 'TW - Tow Miles', 'code': 'TW',
+                            'quantity': sf_tow if sf_tow and sf_tow > 0.1 else 0,
+                            'description': None, 'id': '', '_synthetic': True}
+    return non_ba[0]

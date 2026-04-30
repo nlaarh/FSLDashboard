@@ -51,11 +51,12 @@ export function headerSummary(ev, code, rates = {}) {
     ? (sfEst > 0 ? sfEst : sfRec > 0 ? sfRec : null)
     : (google ?? (sfEst > 0 ? sfEst : sfRec > 0 ? sfRec : null))
   if (req != null && baseline != null && baseline > 0 && (code === 'ER' || isTowCode)) {
-    const trueTotal = (paid || 0) + req
-    const pct = (trueTotal / baseline * 100).toFixed(0)
+    // req IS the total claimed (not additional) — backend: true_total = requested
+    const delta = paid > 0 ? req - paid : null
+    const pct = (req / baseline * 100).toFixed(0)
     const src = isTowCode ? (sfEst > 0 ? 'Google/SF est' : 'SF rec') : google != null ? 'Google' : sfEst > 0 ? 'SF est' : 'SF rec'
-    return paid > 0
-      ? `+${req} ${unit} additional → true total ${trueTotal.toFixed(2)} ${unit} vs ${src} ${baseline} ${unit} (${pct}%)`
+    return delta != null
+      ? `${req} ${unit} total claimed (${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs ${paid} billed) → ${src} ${baseline} ${unit} (${pct}%)`
       : `${req} ${unit} claimed — ${src}: ${baseline} ${unit} (${pct}%)`
   }
   if (req != null && ev.on_location_minutes != null && TIME_CODES.has(code)) {
@@ -143,20 +144,21 @@ export function buildLocalSummary(ev, woliItems, rates = {}) {
         lines.push(`Member coverage: ${coverageNote}. Verify the claimed miles exceed the included miles in the member's entitlement before approving an overage charge.`)
     }
 
-    if (paid > 0) lines.push(`We already paid ${paid} ${unit} for this product.`)
-    else lines.push(`Nothing has been paid for this product yet.`)
-    const trueTotal = (paid || 0) + req
-    if (paid > 0)
-      lines.push(`The garage requests ${req} ${unit} additional on top of the ${paid} ${unit} already paid — true total if approved: ${trueTotal.toFixed(2)} ${unit}.`)
+    // req IS the total the garage claims — backend: true_total = requested (not paid + requested)
+    const delta = paid > 0 ? (req - paid) : null
+    if (paid > 0 && delta < 0)
+      lines.push(`We already paid ${paid} ${unit}. Garage is requesting a CREDIT — claiming total should be ${req} ${unit} (reduction of ${Math.abs(delta).toFixed(2)} ${unit}).`)
+    else if (paid > 0)
+      lines.push(`We already paid ${paid} ${unit}. Garage claims total should be ${req} ${unit} (+${delta.toFixed(2)} ${unit} additional).`)
     else
-      lines.push(`The garage is requesting ${req} ${unit}.`)
+      lines.push(`Nothing paid yet. Garage is requesting ${req} ${unit}.`)
     const baseline = distGoogle || bestSf
     if (baseline > 0) {
-      const ratio = trueTotal / baseline
-      if (ratio <= 1.0) lines.push(`True total (${trueTotal.toFixed(2)} ${unit}) is at or below the calculated distance — reasonable. Approve.`)
-      else if (ratio * 100 <= payPct) lines.push(`True total (${trueTotal.toFixed(2)} ${unit}) is ${((ratio - 1) * 100).toFixed(0)}% above calculated distance — within normal variance (≤${payPct}%). Approve.`)
-      else if (ratio * 100 <= reviewPct) lines.push(`True total (${trueTotal.toFixed(2)} ${unit}) is ${ratio.toFixed(1)}x the calculated distance (${(ratio * 100).toFixed(0)}%). Exceeds ${payPct}% threshold — ask the garage to explain the route.`)
-      else lines.push(`True total (${trueTotal.toFixed(2)} ${unit}) is ${ratio.toFixed(1)}x the calculated distance (${(ratio * 100).toFixed(0)}%) — exceeds ${reviewPct}% flag threshold. Ask the garage for route documentation (turn-by-turn or GPS log).`)
+      const ratio = req / baseline
+      if (ratio <= 1.0) lines.push(`Claimed total (${req} ${unit}) is at or below the calculated distance — reasonable. Approve.`)
+      else if (ratio * 100 <= payPct) lines.push(`Claimed total (${req} ${unit}) is ${((ratio - 1) * 100).toFixed(0)}% above calculated distance — within normal variance (≤${payPct}%). Approve.`)
+      else if (ratio * 100 <= reviewPct) lines.push(`Claimed total (${req} ${unit}) is ${ratio.toFixed(1)}x the calculated distance (${(ratio * 100).toFixed(0)}%). Exceeds ${payPct}% threshold — ask the garage to explain the route.`)
+      else lines.push(`Claimed total (${req} ${unit}) is ${ratio.toFixed(1)}x the calculated distance (${(ratio * 100).toFixed(0)}%) — exceeds ${reviewPct}% flag threshold. Ask the garage for route documentation (turn-by-turn or GPS log).`)
     }
     if (status.startsWith('BAD'))
       lines.push(`Warning: Driver status timestamps are unreliable — SF distance data may be inaccurate. Do not deny based on SF miles alone; use the Google Maps link to verify independently.`)
@@ -165,18 +167,21 @@ export function buildLocalSummary(ev, woliItems, rates = {}) {
   } else if (TIME_CODES.has(code)) {
     if (onLoc != null) lines.push(`The driver was on scene for ${onLoc} minutes.`)
     else lines.push(`On-scene time is not available.`)
-    const timeTrueTotal = (paid || 0) + req
-    if (paid > 0)
-      lines.push(`We paid ${paid} min. Garage requests ${req} min additional — true total if approved: ${timeTrueTotal.toFixed(1)} min.`)
+    // req IS the total claimed (not additional) — same semantics as distance products
+    const timeDelta = paid > 0 ? (req - paid) : null
+    if (paid > 0 && timeDelta < 0)
+      lines.push(`We paid ${paid} min. Garage claims total should be ${req} min (credit of ${Math.abs(timeDelta).toFixed(1)} min).`)
+    else if (paid > 0)
+      lines.push(`We paid ${paid} min. Garage claims total should be ${req} min (+${timeDelta.toFixed(1)} min additional).`)
     else
-      lines.push(`Nothing billed yet. Garage requests ${req} minutes.`)
+      lines.push(`Nothing billed yet. Garage is requesting ${req} minutes total.`)
 
     // E1: check against time cap
     if (code === 'E1') {
-      if (timeTrueTotal > e1Cap)
-        lines.push(`E1 TIME CAP: The true total (${timeTrueTotal.toFixed(1)} min) exceeds the policy cap of ${e1Cap} min. Per reference data, E1 is limited to ${e1Cap} minutes. Approve up to ${e1Cap} min; deny the excess.`)
+      if (req > e1Cap)
+        lines.push(`E1 TIME CAP: Claimed total (${req} min) exceeds the policy cap of ${e1Cap} min. Approve up to ${e1Cap} min; deny the excess.`)
       else
-        lines.push(`E1 time cap is ${e1Cap} min. True total ${timeTrueTotal.toFixed(1)} min is within cap.`)
+        lines.push(`E1 time cap is ${e1Cap} min. Claimed total ${req} min is within cap.`)
     }
 
     // E2: E1 must also be on this WO

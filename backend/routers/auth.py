@@ -12,6 +12,19 @@ _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
 
 _PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/health", "/api/features", "/favicon.ico"}
 
+# Paths finance-department users may call (everything else → 403)
+_FINANCE_ALLOWED = ('/api/auth/', '/api/accounting/', '/api/health', '/api/features')
+
+
+def _finance_ok(path: str) -> bool:
+    return any(path.startswith(p) for p in _FINANCE_ALLOWED)
+
+
+def _get_department(username: str) -> str:
+    """Return the user's department string, '' if not set or not found."""
+    u = users.get_user(username)
+    return (u or {}).get('department', '') or ''
+
 
 def _sign_cookie(payload: str) -> str:
     sig = hmac.new(_AUTH_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -209,10 +222,11 @@ def login_page():
 def admin_login(request: Request, creds: dict, response: Response):
     user = users.authenticate(creds.get("username", ""), creds.get("password", ""))
     if user:
-        token = users.create_session(user["username"], user["role"], user["name"])
+        dept = user.get("department", "")
+        token = users.create_session(user["username"], user["role"], user["name"], dept)
         payload = f"{user['username']}:{user['role']}:{token}"
         response.set_cookie("fslapp_auth", _sign_cookie(payload), httponly=True, samesite="lax", max_age=86400)
-        return {"ok": True, "user": user["username"], "name": user["name"], "role": user["role"]}
+        return {"ok": True, "user": user["username"], "name": user["name"], "role": user["role"], "department": dept}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -231,18 +245,22 @@ def auth_me(request: Request):
         role = parts[1] if len(parts) > 1 else "admin"
         name = username
         email = ""
+        department = ""
         # Try to get session info for richer data
         if len(parts) > 2:
             sess = users.get_session(parts[2])
             if sess:
                 name = sess.get("name", username)
                 role = sess.get("role", role)
-        # Get email from user record
+                department = sess.get("department", "")
+        # Get email + department from user record (authoritative; also handles old sessions without dept)
         user_record = users.get_user(username)
         if user_record:
             email = user_record.get("email", "")
-        return {"user": username, "name": name, "role": role, "email": email, "method": "admin"}
-    return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "method": "local"}
+            if not department:
+                department = user_record.get("department", "")
+        return {"user": username, "name": name, "role": role, "email": email, "department": department, "method": "admin"}
+    return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "department": "", "method": "local"}
 
 
 @router.post("/api/auth/logout")
