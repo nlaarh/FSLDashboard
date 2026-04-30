@@ -209,9 +209,9 @@ export function buildLocalSummary(ev, woliItems, rates = {}) {
     }
 
     if (onLoc && req) {
-      const ratio = timeTrueTotal / onLoc
-      if (ratio * 100 <= timePct) lines.push(`True total (${timeTrueTotal.toFixed(1)} min) is within ${timePct}% of on-scene time — reasonable. Approve.`)
-      else lines.push(`True total (${timeTrueTotal.toFixed(1)} min) is ${ratio.toFixed(1)}x on-scene time (${(ratio * 100).toFixed(0)}% — exceeds ${timePct}% threshold). Ask garage to explain.`)
+      const ratio = req / onLoc
+      if (ratio * 100 <= timePct) lines.push(`True total (${req.toFixed(1)} min) is within ${timePct}% of on-scene time — reasonable. Approve.`)
+      else lines.push(`True total (${req.toFixed(1)} min) is ${ratio.toFixed(1)}x on-scene time (${(ratio * 100).toFixed(0)}% — exceeds ${timePct}% threshold). Ask garage to explain.`)
     }
 
   // ── MH (heavy vehicle) ──
