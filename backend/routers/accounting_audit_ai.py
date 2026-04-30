@@ -124,8 +124,11 @@ def _build_woa_audit(woa_id: str) -> dict:
     ctx = data.pop('_ai_context', {})
     gh = data.pop('_garage_history', None)
     ai = call_audit_ai(ctx, gh)
+    # Keep rule engine's recommendation as the authoritative signal.
+    # The rule engine is deterministic; AI can hallucinate or commingle WOA data.
+    # Store AI's assessment separately as ai_recommendation so the UI can show it alongside.
     data.update({
-        'recommendation': ai['recommendation'], 'confidence': ai['confidence'],
+        'ai_recommendation': ai['recommendation'], 'confidence': ai['confidence'],
         'ai_summary': ai['ai_summary'], 'ai_headline': ai.get('headline'),
         'ai_story': ai.get('story'), 'ai_fraud_signals': ai.get('fraud_signals') or [],
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],

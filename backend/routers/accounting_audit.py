@@ -498,6 +498,31 @@ def _build_woa_data(woa_id: str) -> dict:
     garage_history = None
     same_day_calls = parallel_data.get('same_day') or []
     data_context['same_member_same_day_count'] = len(same_day_calls)
+
+    # Strip product-irrelevant fields from AI context to prevent cross-product commingling.
+    # E.g. WOA-20541 (E1 winch) and WOA-20542 (ER miles) share a Work Order — the AI must
+    # not see ER miles data when auditing the E1 claim.
+    _woli_code_upper = woli_code.upper() if woli_code else ''
+    _MILES_FIELDS = ('sf_enroute_miles', 'sf_estimated_enroute_miles', 'google_distance_miles',
+                     'truck_prev_location')
+    _TOW_FIELDS   = ('sf_tow_miles', 'sf_estimated_tow_miles', 'google_tow_distance_miles',
+                     'tow_destination')
+    from routers.accounting_calc import _TIME_CODES as _TC, _TOW_CODES as _TWC
+    if _woli_code_upper in _TC:
+        # Time product (E1/E2/MI/Z8): remove all miles data — only on_location_minutes matters
+        for _k in _MILES_FIELDS + _TOW_FIELDS:
+            data_context.pop(_k, None)
+    elif _woli_code_upper == 'ER':
+        # Enroute miles: remove tow data and on-location time (irrelevant for ER)
+        for _k in _TOW_FIELDS:
+            data_context.pop(_k, None)
+        data_context.pop('on_location_minutes', None)
+    elif _woli_code_upper in _TWC:
+        # Tow product: remove enroute data (irrelevant for tow)
+        for _k in _MILES_FIELDS:
+            data_context.pop(_k, None)
+        data_context.pop('on_location_minutes', None)
+
     return {
         'woa_id': woa_id,
         'woa_number': woa.get('Name', ''),

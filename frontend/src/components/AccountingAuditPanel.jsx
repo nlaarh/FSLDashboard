@@ -70,6 +70,10 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
 
   const recRaw = (audit.recommendation || initRec || 'REVIEW').toUpperCase()
   const rec = recRaw === 'APPROVE' ? 'PAY' : recRaw
+  // AI recommendation is stored separately (ai_recommendation) — rule engine owns 'recommendation'
+  const aiRecRaw = audit.ai_recommendation ? audit.ai_recommendation.toUpperCase() : null
+  const aiRec = aiRecRaw === 'APPROVE' ? 'PAY' : aiRecRaw
+  const aiRecDiffers = aiRec && aiRec !== rec
   const urls = audit?.sf_urls || {}
   const timeline = audit?.sa_timeline || []
   const ev = audit?.evidence || {}
@@ -191,6 +195,15 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </a>
       </div>
       {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
+      {aiRecDiffers && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/30">
+          <span className="text-[9px] text-slate-500">AI assessed:</span>
+          <span className={clsx('text-[9px] font-bold uppercase', REC_BADGE[aiRec] || REC_BADGE.REVIEW, 'px-1.5 py-0.5 rounded')}>
+            {aiRec}
+          </span>
+          <span className="text-[9px] text-slate-600">— rule engine takes precedence</span>
+        </div>
+      )}
       {status.startsWith('BAD') && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-700/30">
           <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
@@ -229,8 +242,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </div>
       )}
 
-      {/* ── ROW 2: Route card with Google Maps link ── */}
-      {audit && !isStale && (origin || destCity) && (
+      {/* ── ROW 2: Route card — only for mileage products (ER/TW). E1/MI/BA etc. don't use distance. ── */}
+      {audit && !isStale && isMileage && (origin || destCity) && (
         <div className="px-4 py-3 rounded-xl bg-slate-800/30 border border-slate-700/20 text-[10px] space-y-1.5">
           {isTow ? (
             /* TW: show call location → tow destination */
