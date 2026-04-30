@@ -200,6 +200,7 @@ export const adminSetAccountingRate = (pin, code, value) => api.put(`/admin/acco
 export const fetchAccountingRates = () => api.get('/accounting/rates').then(r => r.data)
 export const fetchAccountingAnalytics = (status = 'open') => api.get(`/accounting/analytics?status=${status}`).then(r => r.data)
 export const fetchAccountingAiInsights = (status = 'open') => api.get(`/accounting/analytics/ai-insights?status=${status}`).then(r => r.data)
+export const fetchAccountingAging = (status = 'open') => api.get(`/accounting/analytics/aging?status=${status}`).then(r => r.data)
 
 // Optimizer Decoder
 export const optimizerGetStatus = () => api.get('/optimizer/status').then(r => r.data)

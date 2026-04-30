@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { clsx } from 'clsx'
 import { RefreshCw, AlertTriangle, TrendingDown, Zap, Sparkles } from 'lucide-react'
 import AccountingAnalyticsAiCard from './AccountingAnalyticsAiCard'
+import AccountingAgingHeatmap from './AccountingAgingHeatmap'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts'
@@ -578,6 +579,9 @@ export default function AccountingAnalytics({ status, onDrillDown }) {
 
       {/* Product × Garage Heatmap */}
       <Heatmap facilities={facilities} />
+
+      {/* WOA Aging by Garage */}
+      <AccountingAgingHeatmap status={status} />
     </div>
   )
 }
