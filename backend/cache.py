@@ -20,7 +20,7 @@ from pathlib import Path
 log = logging.getLogger('cache')
 
 # ── Cache version — bump this when response shapes change to auto-invalidate ──
-CACHE_VERSION = 'v29'
+CACHE_VERSION = 'v30'
 
 _store = {}
 _lock = Lock()

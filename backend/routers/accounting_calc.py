@@ -130,11 +130,13 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         L.append('→ Zero qty → APPROVE'); return 'approve', '\n'.join(L), {}
 
     if not code:
-        L.append(f'\nNO PRODUCT IDENTIFIED:')
-        L.append(f'  This Work Order has no line items.')
-        L.append(f'  Cannot determine what product the garage is requesting.')
-        L.append(f'  Auditor: open the WO in Salesforce to check what service was performed.')
-        L.append(f'\n→ Manual review required — no data to verify automatically.')
+        L.append(f'\nPRODUCT NOT ON WORK ORDER:')
+        L.append(f'  The garage is claiming a product/service that does not appear as a')
+        L.append(f'  line item on the original Work Order (e.g. E1 winch time on a WO')
+        L.append(f'  that only has enroute miles and base rate).')
+        L.append(f'  Auditor: verify in Salesforce what service the garage actually performed')
+        L.append(f'  and whether this charge is legitimate for that call.')
+        L.append(f'\n→ Manual review required — no matching WOLI to verify against.')
         return 'review', '\n'.join(L), {}
 
     if code == 'ER':
@@ -419,4 +421,11 @@ def match_best_woli(wolis: list, requested_qty, wo: dict | None = None) -> dict:
                     return {'product': 'TW - Tow Miles', 'code': 'TW',
                             'quantity': sf_tow if sf_tow and sf_tow > 0.1 else 0,
                             'description': None, 'id': '', '_synthetic': True}
+        # Single non-BA fallback: check if quantity is wildly mismatched.
+        # If the WOA claims significantly more than the WOLI quantity, the garage is likely
+        # claiming a product that doesn't exist on this WO (e.g. E1 winch time on a WO with only ER).
+        best_qty = non_ba[0].get('quantity') or 0
+        if best_qty > 0 and requested_qty > best_qty * 2.5:
+            return {'product': '(not on WO)', 'code': '', 'quantity': None,
+                    'description': None, 'id': '', '_synthetic': True, '_no_match': True}
     return non_ba[0]

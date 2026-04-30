@@ -167,7 +167,12 @@ export default function Layout() {
               <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />Accounting
             </Link>
             )}
-            {/* Optimizer hidden until live SF data is wired in (was using synthetic seed data) */}
+            <Link to="/optimizer"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/optimizer' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}>
+              <BrainCircuit className="w-4 h-4 inline mr-1.5 -mt-0.5" />Optimizer
+            </Link>
           </div>
           <div className="ml-auto flex items-center gap-1">
             <SASearch />

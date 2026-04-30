@@ -7,3 +7,4 @@ pydantic==2.10.4
 gunicorn==22.0.0
 openpyxl==3.1.5
 duckdb==1.2.2
+azure-storage-blob==12.24.0

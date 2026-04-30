@@ -205,9 +205,18 @@ export const fetchAccountingAiInsights = (status = 'open') => api.get(`/accounti
 export const optimizerGetStatus = () => api.get('/optimizer/status').then(r => r.data)
 export const optimizerGetRuns = (params = {}) => api.get('/optimizer/runs', { params }).then(r => r.data)
 export const optimizerGetRun = (runId) => api.get(`/optimizer/runs/${runId}`).then(r => r.data)
-export const optimizerGetSA = (saNumber, limit = 5) => api.get(`/optimizer/sa/${saNumber}?limit=${limit}`).then(r => r.data)
+export const optimizerGetSA = (saNumber, limit = 5, runId = null) =>
+  api.get(`/optimizer/sa/${saNumber}`, { params: runId ? { run_id: runId } : { limit } }).then(r => r.data)
 export const optimizerGetDriver = (driverName, days = 7) => api.get(`/optimizer/driver/${encodeURIComponent(driverName)}?days=${days}`).then(r => r.data)
 export const optimizerGetUnscheduled = (runId) => api.get(`/optimizer/runs/${runId}/unscheduled`).then(r => r.data)
 export const optimizerGetPatterns = (territory, days = 7) => api.get('/optimizer/patterns', { params: { territory, days } }).then(r => r.data)
+export const optimizerListFiles = (date = null) =>
+  api.get('/optimizer/files', { params: date ? { date } : {} }).then(r => r.data)
+export const optimizerRunHealth = (runId) => api.get(`/optimizer/runs/${runId}/health`).then(r => r.data)
+export const optimizerDriverDay = (runId, driverId) =>
+  api.get(`/optimizer/runs/${runId}/driver/${driverId}/day`).then(r => r.data)
+// Build absolute URL so the browser handles the download (auth cookie auto-attached)
+export const optimizerRunZipUrl = (runId) => `/api/optimizer/files/${runId}/download`
+export const optimizerDateZipUrl = (date) => `/api/optimizer/files/by-date/${date}/download`
 export const optimizerChat = (messages, runContext = null) =>
   api.post('/optimizer/chat', { messages, run_context: runContext }).then(r => r.data)

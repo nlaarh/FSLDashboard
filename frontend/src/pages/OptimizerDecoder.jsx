@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, X } from 'lucide-react'
+import { AlertTriangle, X, Activity, Table2, FolderArchive } from 'lucide-react'
 import OptimizerTimeline from '../components/OptimizerTimeline'
-import OptimizerRunDetail from '../components/OptimizerRunDetail'
+import OptimizerHealthView from '../components/OptimizerHealthView'
 import OptimizerChat from '../components/OptimizerChat'
+import OptimizerFileBrowser from '../components/OptimizerFileBrowser'
+import OptimizerDecisionBrowser from '../components/OptimizerDecisionBrowser'
 import { optimizerGetStatus } from '../api'
 
 function PreviewBanner({ status, onDismiss }) {
@@ -59,6 +61,7 @@ export default function OptimizerDecoder() {
   const [chatContext, setChatContext]  = useState(null)
   const [status, setStatus]           = useState(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [view, setView]               = useState('health')   // 'health' | 'detail' | 'files'
 
   useEffect(() => {
     optimizerGetStatus().then(setStatus).catch(() => {})
@@ -79,29 +82,76 @@ export default function OptimizerDecoder() {
   }
 
   const showBanner = status?.is_test_data && !bannerDismissed
-  const heightOffset = showBanner ? 130 : 56
+  const heightOffset = (showBanner ? 130 : 56) + 36   // +36 for tab bar
   return (
     <div className="flex flex-col gap-0">
       {showBanner && <PreviewBanner status={status} onDismiss={() => setBannerDismissed(true)} />}
-      <div
-        className="flex gap-0 overflow-hidden rounded-xl border border-slate-700/40 bg-slate-900/30"
-        style={{ height: `calc(100vh - ${heightOffset}px - 48px)` }}
-      >
-        {/* Timeline sidebar */}
-        <div className="w-52 border-r border-slate-700/50 flex flex-col shrink-0 overflow-hidden">
-          <OptimizerTimeline onSelectRun={handleSelectRun} selectedId={selectedId} />
-        </div>
 
-        {/* Run detail — SA decisions table */}
-        <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-700/50">
-          <OptimizerRunDetail run={selectedRun} onAskAI={handleAskAI} />
-        </div>
-
-        {/* AI Chat */}
-        <div className="w-80 flex flex-col overflow-hidden shrink-0">
-          <OptimizerChat runContext={chatContext} />
-        </div>
+      {/* View tabs */}
+      <div className="flex items-center gap-1 px-1 mb-2">
+        {[
+          { id: 'health',  label: 'Health Check', Icon: Activity },
+          { id: 'detail',  label: 'SA Decisions', Icon: Table2 },
+          { id: 'files',   label: 'JSON Archive', Icon: FolderArchive },
+        ].map(t => {
+          const Icon = t.Icon
+          return (
+            <button
+              key={t.id}
+              onClick={() => setView(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                view === t.id
+                  ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Icon size={13} />
+              {t.label}
+            </button>
+          )
+        })}
       </div>
+
+      {view === 'health' ? (
+        <div
+          className="flex gap-0 overflow-hidden rounded-xl border border-slate-700/40 bg-slate-900/30"
+          style={{ height: `calc(100vh - ${heightOffset}px - 48px)` }}
+        >
+          <div className="w-52 border-r border-slate-700/50 flex flex-col shrink-0 overflow-hidden">
+            <OptimizerTimeline onSelectRun={handleSelectRun} selectedId={selectedId} />
+          </div>
+          <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-700/50">
+            <OptimizerHealthView run={selectedRun} onAskAI={handleAskAI} />
+          </div>
+          <div className="w-80 flex flex-col overflow-hidden shrink-0">
+            <OptimizerChat runContext={chatContext} />
+          </div>
+        </div>
+      ) : view === 'detail' ? (
+        <div
+          className="flex gap-0 overflow-hidden rounded-xl border border-slate-700/40 bg-slate-900/30"
+          style={{ height: `calc(100vh - ${heightOffset}px - 48px)` }}
+        >
+          {/* Timeline sidebar */}
+          <div className="w-52 border-r border-slate-700/50 flex flex-col shrink-0 overflow-hidden">
+            <OptimizerTimeline onSelectRun={handleSelectRun} selectedId={selectedId} />
+          </div>
+
+          {/* Decision browser — garage tree + per-SA decision page */}
+          <div className="flex-1 flex overflow-hidden border-r border-slate-700/50">
+            <OptimizerDecisionBrowser run={selectedRun} onAskAI={handleAskAI} />
+          </div>
+
+          {/* AI Chat */}
+          <div className="w-80 flex flex-col overflow-hidden shrink-0">
+            <OptimizerChat runContext={chatContext} />
+          </div>
+        </div>
+      ) : (
+        <div style={{ height: `calc(100vh - ${heightOffset}px - 48px)` }}>
+          <OptimizerFileBrowser />
+        </div>
+      )}
     </div>
   )
 }

@@ -46,7 +46,7 @@ function NodeSA({ data }) {
       )}
       {data.run_at && (
         <div style={{ color: '#3f3f70', fontSize: 10, marginTop: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
-          <Clock size={9} /> {new Date(data.run_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+          <Clock size={9} /> {new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(data.run_at) ? data.run_at : data.run_at + 'Z').toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
         </div>
       )}
       <Handle type="source" position={Position.Bottom} style={{ background: '#6366f1', width: 8, height: 8 }} />
@@ -65,10 +65,13 @@ function NodeRule({ data }) {
     <div
       style={{
         padding: '8px 14px 10px', borderRadius: 10,
-        background: 'rgba(15,23,42,0.95)',
+        background: 'rgba(15,23,42,0.98)',
         border: open ? '1px solid #475569' : '1px solid #1e293b',
-        minWidth: 190, boxShadow: open ? '0 4px 20px rgba(0,0,0,0.6)' : '0 2px 12px rgba(0,0,0,0.4)',
+        minWidth: 190, boxShadow: open ? '0 4px 24px rgba(0,0,0,0.8)' : '0 2px 12px rgba(0,0,0,0.4)',
         cursor: 'pointer', transition: 'border-color 0.15s, box-shadow 0.15s',
+        // When expanded, lift above sibling rule nodes so the pass/fail list isn't hidden
+        position: 'relative',
+        zIndex: open ? 100 : 1,
       }}
       title="Click to see who passed and who failed"
     >
@@ -101,46 +104,11 @@ function NodeRule({ data }) {
         {data.failed > 0 && <div style={{ fontSize: 10, color: '#ef4444' }}>✗ {data.failed} fail</div>}
       </div>
 
-      {/* Expandable detail — drivers who passed and who failed */}
+      {/* Detail rendered BELOW funnel — no inline overlap. Just visual hint here. */}
       {open && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(71,85,105,0.3)',
-                       display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {passDrivers.length > 0 && (
-            <div>
-              <div style={{ fontSize: 9, color: '#22c55e', fontWeight: 700, textTransform: 'uppercase',
-                            letterSpacing: '0.06em', marginBottom: 3 }}>
-                ✓ Pass ({passDrivers.length})
-              </div>
-              {passDrivers.map((d, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
-                                       fontSize: 10, color: '#cbd5e1', padding: '1px 0' }}>
-                  <span>{d.driver_name}</span>
-                  <span style={{ color: '#475569', fontFamily: 'monospace', fontSize: 9 }}>
-                    {d.driver_territory || ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {failDrivers.length > 0 && (
-            <div>
-              <div style={{ fontSize: 9, color: '#ef4444', fontWeight: 700, textTransform: 'uppercase',
-                            letterSpacing: '0.06em', marginBottom: 3 }}>
-                ✗ Fail ({failDrivers.length})
-              </div>
-              {failDrivers.map((d, i) => (
-                <div key={i} style={{ display: 'flex', flexDirection: 'column', padding: '1px 0' }}>
-                  <span style={{ fontSize: 10, color: '#fca5a5' }}>{d.driver_name}</span>
-                  <span style={{ fontSize: 9, color: '#7f1d1d', fontFamily: 'monospace', paddingLeft: 8 }}>
-                    {data.rule === 'territory' && `home: ${d.driver_territory || '?'}`}
-                    {data.rule === 'skill' && `has: ${(d.driver_skills || '').split(',').slice(0, 3).join(', ')}…`}
-                    {data.rule === 'absent' && 'on approved leave'}
-                    {data.rule === 'capacity' && 'shift full'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+        <div style={{ marginTop: 6, paddingTop: 4, borderTop: '1px dashed #475569',
+                       fontSize: 9, color: '#94a3b8', textAlign: 'center' }}>
+          ↓ details below funnel ↓
         </div>
       )}
 
@@ -393,6 +361,88 @@ function buildGraph(data) {
   return { nodes, edges, totalHeight: y + 180 }
 }
 
+// ── Gate detail panel — pass/fail drivers for the currently selected gate ───
+
+function GateDetailPanel({ gateNode }) {
+  if (!gateNode) {
+    return (
+      <div style={{
+        padding: '14px', textAlign: 'center', color: '#475569', fontSize: 11,
+        background: 'rgba(15,23,42,0.4)', border: '1px dashed #1e293b', borderRadius: 8, marginTop: 8,
+      }}>
+        Click a gate above to see which drivers passed and failed it.
+      </div>
+    )
+  }
+  const { label, rule, passed, failed, total, passDrivers = [], failDrivers = [] } = gateNode.data
+  const reasonCfg = REASON[rule] || { color: '#94a3b8', label: rule }
+  return (
+    <div style={{
+      marginTop: 8, padding: '10px 14px', borderRadius: 8,
+      background: 'rgba(15,23,42,0.7)', border: '1px solid #334155',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                     marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #1e293b' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#cbd5e1', fontWeight: 700, fontSize: 12,
+                          textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {label}
+          </span>
+          <span style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace' }}>
+            {passed}/{total} passed · {failed} failed
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {/* Pass column */}
+        <div>
+          <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.06em', marginBottom: 6 }}>
+            ✓ Passed ({passDrivers.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 240, overflowY: 'auto' }}>
+            {passDrivers.length === 0 && <div style={{ fontSize: 10, color: '#475569' }}>(none)</div>}
+            {passDrivers.map((d, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
+                                     fontSize: 11, color: '#cbd5e1', padding: '3px 6px',
+                                     background: 'rgba(34,197,94,0.05)', borderRadius: 4 }}>
+                <span>{d.driver_name}</span>
+                <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 10 }}>
+                  {d.driver_territory || ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Fail column */}
+        <div>
+          <div style={{ fontSize: 10, color: reasonCfg.color, fontWeight: 700,
+                          textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+            ✗ Failed: {reasonCfg.label} ({failDrivers.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 240, overflowY: 'auto' }}>
+            {failDrivers.length === 0 && <div style={{ fontSize: 10, color: '#475569' }}>(none — all passed)</div>}
+            {failDrivers.map((d, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', padding: '3px 6px',
+                                     background: `${reasonCfg.color}10`, borderRadius: 4 }}>
+                <span style={{ fontSize: 11, color: '#fca5a5' }}>{d.driver_name}</span>
+                <span style={{ fontSize: 9, color: '#7f1d1d', fontFamily: 'monospace', marginTop: 1 }}>
+                  {rule === 'territory' && `home: ${d.driver_territory || '?'}`}
+                  {rule === 'skill' && `has: ${(d.driver_skills || '').split(',').slice(0, 3).join(', ')}…`}
+                  {rule === 'absent' && 'on approved leave'}
+                  {rule === 'capacity' && 'shift full'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Driver detail grid (every considered driver with full data) ──────────────
 
 function DriverDetailGrid({ verdicts }) {
@@ -557,7 +607,8 @@ export default function OptDecisionTree({ data }) {
               <Background color="#1e293b" gap={24} size={1} />
             </ReactFlow>
           </div>
-          <div style={{ padding: '0 20px 20px', maxHeight: '40%', overflow: 'auto' }}>
+          <div style={{ padding: '0 20px 20px', maxHeight: '50%', overflow: 'auto' }}>
+            <GateDetailPanel gateNode={expandedGateNode} />
             <DriverDetailGrid verdicts={data.all_verdicts} />
           </div>
         </div>
@@ -567,6 +618,7 @@ export default function OptDecisionTree({ data }) {
 
   // Inline (embedded in table expand row)
   const inlineH = Math.min(totalHeight, 520)
+  const expandedGateNode = expandedGateId ? nodes.find(n => n.id === expandedGateId) : null
 
   return (
     <div style={{ marginTop: 4 }}>
@@ -593,7 +645,10 @@ export default function OptDecisionTree({ data }) {
         </div>
       </div>
 
-      {/* Detail grid — every driver considered, with full data */}
+      {/* Gate detail — drivers who passed/failed the selected gate (no overlap) */}
+      <GateDetailPanel gateNode={expandedGateNode} />
+
+      {/* All drivers considered (full table) */}
       <DriverDetailGrid verdicts={data.all_verdicts} />
     </div>
   )

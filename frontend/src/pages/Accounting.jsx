@@ -7,6 +7,7 @@ import {
 import { fetchWOAdjustments } from '../api'
 import AccountingAuditPanel from '../components/AccountingAuditPanel'
 import AccountingAnalytics from '../components/AccountingAnalytics'
+import HelpAccounting from '../components/HelpAccounting'
 import { productCode, formatQty } from '../utils/formatting'
 
 const PRODUCTS = [
@@ -196,7 +197,7 @@ export default function Accounting() {
           </p>
           <p className="text-slate-600 text-[10px] mt-0.5">
             {statusFilter === 'open'
-              ? 'Showing adjustments not yet reviewed by accounting (CreatedBy = LastModifiedBy, excluding accounting staff)'
+              ? 'Showing open adjustments (Status = New)'
               : 'Showing all adjustments including already reviewed'}
           </p>
         </div>
@@ -217,7 +218,7 @@ export default function Accounting() {
 
       {/* Tab Bar */}
       <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60 -mx-0">
-        {[{ id: 'woa', label: 'WO Adjustments' }, { id: 'analytics', label: 'Analytics' }].map(t => (
+        {[{ id: 'woa', label: 'WO Adjustments' }, { id: 'analytics', label: 'Analytics' }, { id: 'help', label: 'Help & Guide' }].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
             className={clsx('px-4 py-2 text-xs font-medium border-b-2 transition-colors -mb-px',
               activeTab === t.id
@@ -230,6 +231,8 @@ export default function Accounting() {
 
       {activeTab === 'analytics' && <AccountingAnalytics status={statusFilter}
         onDrillDown={(prod) => { setProduct(prod); setActiveTab('woa'); setPage(0); }} />}
+
+      {activeTab === 'help' && <HelpAccounting />}
 
       {activeTab === 'woa' && <>
       {/* KPIs */}

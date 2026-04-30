@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   BookOpen, Calculator, Database, Target, ChevronDown, ChevronUp,
-  ShieldCheck, AlertTriangle, Truck, HelpCircle, Workflow, ArrowLeft,
+  ShieldCheck, AlertTriangle, Truck, HelpCircle, Workflow, ArrowLeft, DollarSign,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -12,6 +12,7 @@ import { HowItWorksTopics567 } from '../components/HelpGuides'
 import { OverviewSection, ScoringSection } from '../components/HelpGuides'
 import { MetricsSection, RulesSection, OpsRecommendationsSection, QualitySection } from '../components/HelpContent'
 import DataSection from '../components/HelpData'
+import HelpAccounting from '../components/HelpAccounting'
 
 /* ── Framer Motion helpers ── */
 const fadeUp = { hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0 } }
@@ -33,13 +34,14 @@ const SECTIONS = [
   { id: 'quality',    label: 'Data Quality',         icon: ShieldCheck,    desc: 'Live field-level quality audit with severity ratings and recommendations.' },
   { id: 'rules',      label: 'Business Rules',       icon: AlertTriangle,  desc: 'Key filters, guardrails, and exclusions that affect metric calculations.' },
   { id: 'ops',        label: 'Ops Recommendations',   icon: Truck,          desc: 'How to improve driver assignment — Fleet vs Towbook challenges and actionable fixes.' },
+  { id: 'accounting', label: 'Accounting Guide',      icon: DollarSign,     desc: 'How to use the Accounting module — WOA audit, AI analysis, fraud signals, analytics tab, and full PDF guide.' },
 ]
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LANDING CARDS — shown when no section is selected
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function LandingCards({ onSelect }) {
+function LandingCards({ onSelect, sections }) {
   return (
     <div>
       <motion.div className="text-center mb-8" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
@@ -51,7 +53,7 @@ function LandingCards({ onSelect }) {
       </motion.div>
       <motion.div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-w-5xl mx-auto"
         variants={stagger(0.07)} initial="hidden" animate="show">
-        {SECTIONS.map(s => (
+        {sections.map(s => (
           <motion.button key={s.id} onClick={() => onSelect(s.id)} variants={fadeUp}
             transition={{ type: 'spring', stiffness: 260, damping: 22 }}
             whileHover={{ scale: 1.03, y: -3 }} whileTap={{ scale: 0.97 }}
@@ -83,6 +85,8 @@ export default function Help() {
       .catch(() => {})
   }, [])
 
+  const visibleSections = SECTIONS
+
   const renderSection = () => {
     switch (activeSection) {
       case 'howitworks': return (
@@ -99,7 +103,8 @@ export default function Help() {
       case 'quality':    return <QualitySection />
       case 'rules':      return <RulesSection />
       case 'ops':        return <OpsRecommendationsSection />
-      default:           return <LandingCards onSelect={setActiveSection} />
+      case 'accounting': return <HelpAccounting />
+      default:           return <LandingCards onSelect={setActiveSection} sections={visibleSections} />
     }
   }
 
@@ -114,7 +119,7 @@ export default function Help() {
             <span className="text-xs">All Topics</span>
           </button>
           <div className="w-px h-5 bg-slate-800 mr-1" />
-          {SECTIONS.map(s => (
+          {visibleSections.map(s => (
             <button key={s.id} onClick={() => setActiveSection(s.id)}
               className={clsx(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap shrink-0',

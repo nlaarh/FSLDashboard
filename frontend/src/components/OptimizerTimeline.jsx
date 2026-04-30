@@ -14,14 +14,19 @@ function statusDot(run) {
   return 'bg-emerald-500'
 }
 
+// SF/DuckDB timestamps come without a TZ suffix but represent UTC.
+function parseUtc(iso) {
+  if (!iso) return null
+  return new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z')
+}
+
 function fmtTime(iso) {
-  if (!iso) return '?'
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const d = parseUtc(iso); if (!d) return '?'
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function fmtDate(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
+  const d = parseUtc(iso); if (!d) return ''
   const today = new Date()
   const yest  = new Date(today); yest.setDate(today.getDate() - 1)
   if (d.toDateString() === today.toDateString()) return 'Today'

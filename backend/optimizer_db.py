@@ -111,6 +111,36 @@ _MIGRATIONS = [
     # Driver verdict enrichment — seed/sync populate, UI renders per driver
     "ALTER TABLE opt_driver_verdicts ADD COLUMN IF NOT EXISTS driver_skills VARCHAR",
     "ALTER TABLE opt_driver_verdicts ADD COLUMN IF NOT EXISTS driver_territory VARCHAR",
+    # Batch grouping — when FSL splits one big optimization into N parallel chunks,
+    # all share the same batch_id; chunk_num distinguishes them (1, 2, 3, …).
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS batch_id VARCHAR",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS chunk_num INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS fsl_type VARCHAR",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS fsl_status VARCHAR",
+    # Parser v2 — policy + extended KPIs
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS objectives_count INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS work_rules_count INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS skills_count INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS daily_optimization BOOLEAN",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS commit_mode VARCHAR",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS post_response_appt_s DOUBLE",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS post_extraneous_time_s INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS post_start_commute_dist INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS post_end_commute_dist INTEGER",
+    "ALTER TABLE opt_runs ADD COLUMN IF NOT EXISTS post_resources_unscheduled INTEGER",
+    # Per-SA enrichments
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS priority DOUBLE",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS duration_min DOUBLE",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS sa_status VARCHAR",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS sa_lat DOUBLE",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS sa_lon DOUBLE",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS earliest_start TIMESTAMP",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS due_date TIMESTAMP",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS sched_start TIMESTAMP",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS sched_end TIMESTAMP",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS required_skills VARCHAR",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN",
+    "ALTER TABLE opt_sa_decisions ADD COLUMN IF NOT EXISTS seats_required DOUBLE",
 ]
 
 def init_db():
@@ -130,20 +160,25 @@ def init_db():
 
 @contextmanager
 def get_conn(read_only: bool = False, _retries: int = 3):
-    # DuckDB WAL allows concurrent reads alongside a write connection, but adds
-    # retry logic as a safety net for the rare lock collision during sync writes.
+    # NOTE: read_only is accepted but IGNORED in-process. DuckDB requires all
+    # connections in the same process to have the same configuration, and the
+    # blob_sync background thread holds a write connection. Forcing read-only
+    # here would raise "Can't open a connection ... with a different
+    # configuration". We rely on query-level safety in callers (SELECT only).
     last_err = None
     for attempt in range(_retries):
         try:
-            conn = duckdb.connect(DB_PATH, read_only=read_only)
+            conn = duckdb.connect(DB_PATH, read_only=False)
             try:
                 yield conn
                 return
             finally:
                 conn.close()
         except duckdb.IOException as e:
-            if 'locked' in str(e).lower() and attempt < _retries - 1:
-                _time.sleep(0.1 * (attempt + 1))
+            msg = str(e).lower()
+            transient = ('lock' in msg) or ('conflict' in msg) or ('busy' in msg)
+            if transient and attempt < _retries - 1:
+                _time.sleep(0.2 * (attempt + 1))
                 last_err = e
                 continue
             raise
@@ -170,7 +205,13 @@ def list_runs(from_dt: str, to_dt: str, territory: str | None = None) -> list[di
                resources_count, services_count,
                pre_scheduled, post_scheduled, unscheduled_count,
                pre_travel_time_s, post_travel_time_s,
-               pre_response_avg_s, post_response_avg_s
+               pre_response_avg_s, post_response_avg_s,
+               batch_id, chunk_num, fsl_type, fsl_status,
+               objectives_count, work_rules_count, skills_count,
+               daily_optimization, commit_mode,
+               post_response_appt_s, post_extraneous_time_s,
+               post_start_commute_dist, post_end_commute_dist,
+               post_resources_unscheduled
         FROM opt_runs
         WHERE run_at BETWEEN ? AND ?
     """
@@ -188,28 +229,47 @@ def get_run_detail(run_id: str) -> dict | None:
         run_rows = _rows(conn.execute("SELECT * FROM opt_runs WHERE id = ?", [run_id]))
         if not run_rows:
             return None
+        # ORDER BY priority DESC NULLS LAST so high-priority SAs surface first
         decisions = _rows(conn.execute(
-            "SELECT * FROM opt_sa_decisions WHERE run_id = ? ORDER BY action", [run_id]
+            """SELECT * FROM opt_sa_decisions
+               WHERE run_id = ?
+               ORDER BY action,
+                        CASE WHEN priority IS NULL THEN 1 ELSE 0 END,
+                        priority DESC""", [run_id]
         ))
         return {'run': run_rows[0], 'decisions': decisions}
 
 
-def get_sa_decision(sa_number: str, limit: int = 5) -> list[dict]:
-    """Return the last `limit` runs that touched this SA, with full driver verdicts."""
+def get_sa_decision(sa_number: str, limit: int = 5, run_id: str | None = None) -> list[dict]:
+    """Return the last `limit` runs that touched this SA, with full driver verdicts.
+
+    When `run_id` is provided, returns only that specific run (or empty list if no
+    match) — used by the per-run SA decision page so we don't have to page through
+    dozens of recent runs to find the one the user is looking at.
+    """
     # Normalize SA number format
     sa_num = sa_number.strip()
     if not sa_num.upper().startswith('SA-'):
         sa_num = 'SA-' + sa_num.zfill(8)
 
     with get_conn(read_only=True) as conn:
-        decisions = _rows(conn.execute(
-            """SELECT d.*, r.territory_name, r.policy_name
-               FROM opt_sa_decisions d
-               JOIN opt_runs r ON r.id = d.run_id
-               WHERE d.sa_number = ?
-               ORDER BY d.run_at DESC LIMIT ?""",
-            [sa_num, limit]
-        ))
+        if run_id:
+            decisions = _rows(conn.execute(
+                """SELECT d.*, r.territory_name, r.policy_name
+                   FROM opt_sa_decisions d
+                   JOIN opt_runs r ON r.id = d.run_id
+                   WHERE d.sa_number = ? AND d.run_id = ?""",
+                [sa_num, run_id]
+            ))
+        else:
+            decisions = _rows(conn.execute(
+                """SELECT d.*, r.territory_name, r.policy_name
+                   FROM opt_sa_decisions d
+                   JOIN opt_runs r ON r.id = d.run_id
+                   WHERE d.sa_number = ?
+                   ORDER BY d.run_at DESC LIMIT ?""",
+                [sa_num, limit]
+            ))
         for dec in decisions:
             dec['verdicts'] = _rows(conn.execute(
                 """SELECT driver_name, driver_id, status, exclusion_reason,

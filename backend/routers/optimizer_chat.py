@@ -185,7 +185,7 @@ _TOOLS = [
     },
     {
         "name": "query_optimizer",
-        "description": "Run a read-only SQL query against DuckDB. Tables: opt_runs, opt_sa_decisions, opt_driver_verdicts. Use for novel analytical questions not covered by other tools.",
+        "description": "Run a read-only SQL query against DuckDB. Tables: opt_runs, opt_sa_decisions, opt_driver_verdicts. Use for novel analytical questions not covered by other tools. opt_runs has policy_name, batch_id, chunk_num, fsl_type, daily_optimization, commit_mode, post_extraneous_time_s, post_resources_unscheduled. opt_sa_decisions has priority, duration_min, sa_status, required_skills, sa_lat, sa_lon. opt_driver_verdicts has driver_skills, driver_territory.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -194,7 +194,120 @@ _TOOLS = [
             "required": ["sql"],
         },
     },
+    {
+        "name": "find_idle_drivers",
+        "description": "For a given run, find drivers who got 0 SAs but had no absence — they had availability but lost out. Useful when admin asks 'why isn't driver X getting work?'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "OptimizationRequest SF Id"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "find_overloaded_drivers",
+        "description": "For a given run, return top drivers by # of SAs assigned, with comparison to median. Surfaces workload imbalance.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "OptimizationRequest SF Id"},
+                "top_n": {"type": "integer", "description": "How many top drivers to show (default 10)"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "compare_runs",
+        "description": "Compare two optimizer runs side-by-side: scheduled count, travel time, response time, unscheduled count, extraneous time. Use for 'did anything change?' or 'compare today's 9pm to yesterday's 9pm' questions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_a_id": {"type": "string", "description": "First run ID (the 'newer' one)"},
+                "run_b_id": {"type": "string", "description": "Second run ID (the 'baseline')"},
+            },
+            "required": ["run_a_id", "run_b_id"],
+        },
+    },
 ]
+
+
+def _find_idle_drivers(run_id: str) -> list:
+    """Drivers in this run with 0 SAs assigned but no absence (had availability, lost out)."""
+    sql = """
+        WITH per_driver AS (
+            SELECT driver_id, driver_name, driver_skills, driver_territory,
+                   COUNT(*) FILTER (WHERE status = 'winner')   AS won,
+                   COUNT(*) FILTER (WHERE status = 'eligible') AS eligible_for,
+                   COUNT(*) FILTER (WHERE exclusion_reason = 'absent')   AS absent_excl,
+                   COUNT(*) FILTER (WHERE exclusion_reason = 'territory') AS territory_excl,
+                   COUNT(*) FILTER (WHERE exclusion_reason = 'skill')    AS skill_excl
+            FROM opt_driver_verdicts
+            WHERE run_id = ?
+            GROUP BY driver_id, driver_name, driver_skills, driver_territory
+        )
+        SELECT * FROM per_driver
+        WHERE won = 0 AND absent_excl = 0
+        ORDER BY eligible_for DESC, driver_name
+    """
+    return optimizer_db.query_optimizer_sql(sql.replace('?', f"'{run_id}'"))
+
+
+def _find_overloaded_drivers(run_id: str, top_n: int = 10) -> dict:
+    """Top drivers by SA count with median comparison."""
+    sql_top = f"""
+        SELECT driver_name, driver_id, driver_territory,
+               COUNT(*) FILTER (WHERE status = 'winner')   AS sa_count,
+               COUNT(*) FILTER (WHERE status = 'eligible') AS also_eligible_for
+        FROM opt_driver_verdicts
+        WHERE run_id = '{run_id}'
+        GROUP BY driver_name, driver_id, driver_territory
+        HAVING sa_count > 0
+        ORDER BY sa_count DESC
+        LIMIT {int(top_n)}
+    """
+    top = optimizer_db.query_optimizer_sql(sql_top)
+    sql_median = f"""
+        SELECT MEDIAN(sa_count)::INT AS median_sa, MAX(sa_count) AS max_sa, MIN(sa_count) AS min_sa
+        FROM (
+            SELECT COUNT(*) AS sa_count
+            FROM opt_driver_verdicts
+            WHERE run_id = '{run_id}' AND status = 'winner'
+            GROUP BY driver_id
+        )
+    """
+    stats = optimizer_db.query_optimizer_sql(sql_median)
+    return {
+        'top_drivers': top,
+        'distribution': stats[0] if stats else {},
+        'outlier_threshold': '2.5x median',
+        'note': 'A driver above 2.5× median is considered overloaded.',
+    }
+
+
+def _compare_runs(run_a_id: str, run_b_id: str) -> dict:
+    """Side-by-side KPI comparison of two runs."""
+    sql = f"""
+        SELECT id, name, run_at, services_count, post_scheduled, unscheduled_count,
+               pre_travel_time_s, post_travel_time_s,
+               pre_response_avg_s, post_response_avg_s,
+               post_extraneous_time_s, post_resources_unscheduled,
+               policy_name, fsl_type, batch_id, chunk_num
+        FROM opt_runs
+        WHERE id IN ('{run_a_id}', '{run_b_id}')
+    """
+    rows = optimizer_db.query_optimizer_sql(sql)
+    by_id = {r['id']: r for r in rows}
+    a, b = by_id.get(run_a_id), by_id.get(run_b_id)
+    if not a or not b:
+        return {'error': 'one or both run IDs not found in DuckDB',
+                'found': list(by_id.keys())}
+    deltas = {}
+    for k in ('post_scheduled', 'unscheduled_count', 'post_travel_time_s',
+              'post_response_avg_s', 'post_extraneous_time_s', 'post_resources_unscheduled'):
+        if a.get(k) is not None and b.get(k) is not None:
+            deltas[k] = {'a': a[k], 'b': b[k], 'delta_a_minus_b': a[k] - b[k]}
+    return {'run_a': a, 'run_b': b, 'deltas': deltas}
 
 
 def _execute_tool(name: str, inputs: dict) -> str:
@@ -217,6 +330,12 @@ def _execute_tool(name: str, inputs: dict) -> str:
             result = optimizer_db.get_exclusion_patterns(inputs.get('territory'), inputs.get('days', 7))
         elif name == 'query_optimizer':
             result = optimizer_db.query_optimizer_sql(inputs['sql'])
+        elif name == 'find_idle_drivers':
+            result = _find_idle_drivers(inputs['run_id'])
+        elif name == 'find_overloaded_drivers':
+            result = _find_overloaded_drivers(inputs['run_id'], inputs.get('top_n', 10))
+        elif name == 'compare_runs':
+            result = _compare_runs(inputs['run_a_id'], inputs['run_b_id'])
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
         return json.dumps(result, default=str)

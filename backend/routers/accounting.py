@@ -25,11 +25,12 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
                        product_filter: str = Query(''), rec_filter: str = Query(''), q: str = Query(''),
                        sort_col: str = Query('created_date'), sort_dir: str = Query('desc'),
                        start_date: str = Query(''), end_date: str = Query('')):
-    cache_key = f'accounting_woa_list_{status}'
-    def _compute():
-        return _build_woa_list(status)
-    full = cache.stale_while_revalidate(cache_key, _compute, ttl=900, stale_ttl=3600)
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
     items = full.get('items', [])
+
+    # Status filter applied in memory — same as all other filters
+    if status == 'open':
+        items = [r for r in items if r.get('status') == 'New']
 
     # Server-side filtering
     if product_filter and product_filter != 'All':
@@ -83,9 +84,12 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
         },
     }
 
-def _build_woa_list(status_filter: str) -> dict:
+def _build_woa_list() -> dict:
     woa_rows = sf_query_all("""
-        SELECT Id, Name, Quantity__c, CreatedDate, CreatedById, LastModifiedById,
+        SELECT Id, Name, Quantity__c, Status__c, Description__c, Internal_Notes__c,
+               Product__c, Product__r.Name,
+               Work_Order_Line_Item__c,
+               CreatedDate, CreatedById, LastModifiedById,
                OwnerId, Owner.Name, CreatedBy.Name, LastModifiedBy.Name,
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
@@ -112,17 +116,10 @@ def _build_woa_list(status_filter: str) -> dict:
     """)
 
     if not woa_rows:
-        return {'items': [], 'total': 0, 'status_filter': status_filter}
+        return {'items': [], 'total': 0}
 
     import time as _time
     _t0 = _time.time()
-
-    # Filter BEFORE WOLI query to reduce SF load (open = ~2500 vs all = ~15000)
-    _ACCT_REVIEWERS = {'Paul Nigro', 'Kerry Smeal', 'Jessica Nunez'}
-    if status_filter == 'open':
-        woa_rows = [r for r in woa_rows
-                    if r.get('CreatedById') == r.get('LastModifiedById')
-                    and (r.get('CreatedBy') or {}).get('Name', '') not in _ACCT_REVIEWERS]
 
     wo_ids = list({r.get('Work_Order__c') for r in woa_rows if r.get('Work_Order__c')})
     log.info(f"WOA list: {len(woa_rows)} rows, {len(wo_ids)} unique WOs to query WOLIs")
@@ -165,17 +162,40 @@ def _build_woa_list(status_filter: str) -> dict:
         wo = r.get('Work_Order__r') or {}
         wo_id = r.get('Work_Order__c', '')
         req_qty = _safe_float(r.get('Quantity__c'))
-        woli = _best_woli(wo_id, req_qty, wo=wo)
-        is_open = r.get('CreatedById') == r.get('LastModifiedById')
+        woa_description = r.get('Description__c') or ''
+        woa_internal_notes = r.get('Internal_Notes__c') or ''
 
-        product = woli.get('product') or ''
-        code = woli.get('code') or ''
-        paid = _safe_float(woli.get('quantity'))
-        # When WO has multiple named non-BA WOLIs, build a comma-separated list for display
+        # Use Product__r.Name from the WOA directly — this is the authoritative product.
+        # Fall back to WOLI quantity-matching only when Product__c is not set.
+        woa_product_name = (r.get('Product__r') or {}).get('Name') or ''
+        woa_woli_id = r.get('Work_Order_Line_Item__c') or ''
+
+        if woa_product_name:
+            # WOA has an explicit product — use it directly
+            pbe_name = woa_product_name
+            pbe_code = pbe_name.split(' - ')[0].strip() if ' - ' in pbe_name else pbe_name.split(' ')[0]
+            # Find the matching WOLI by direct ID link or by product code
+            if woa_woli_id and woa_woli_id in {w.get('id') for w in wo_wolis.get(wo_id, [])}:
+                woli = next(w for w in wo_wolis[wo_id] if w.get('id') == woa_woli_id)
+            else:
+                woli = next((w for w in wo_wolis.get(wo_id, []) if w.get('code') == pbe_code), {})
+            product = pbe_name
+            code = pbe_code
+            paid = _safe_float(woli.get('quantity')) if woli else None
+        else:
+            woli = _best_woli(wo_id, req_qty, wo=wo)
+            product = woli.get('product') or ''
+            code = woli.get('code') or ''
+            paid = _safe_float(woli.get('quantity'))
+
+        # Build comma-separated list of all non-BA WOLIs on the WO.
+        # Always shown when the WOA product is not on the WO, or when multiple WOLIs exist.
         all_named_non_ba = [w for w in wo_wolis.get(wo_id, []) if w.get('product') and w.get('code') != 'BA']
+        _no_match = woli.get('_no_match', False) if isinstance(woli, dict) else False
+        _product_not_on_wo = bool(woa_product_name) and not any(w.get('code') == code for w in wo_wolis.get(wo_id, []))
         all_products_str = ', '.join(
             f"{w['code']}={w.get('quantity')}" for w in all_named_non_ba if w.get('code')
-        ) if len(all_named_non_ba) > 1 else ''
+        ) if (len(all_named_non_ba) > 1 or _no_match or _product_not_on_wo) else ''
         sf_er = _safe_float(wo.get('ERS_En_Route_Miles__c'))
         sf_est_er = _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c'))
         sf_tow = _safe_float(wo.get('Tow_Miles__c'))
@@ -254,6 +274,7 @@ def _build_woa_list(status_filter: str) -> dict:
         items.append({
             'id': woa_id,
             'woa_number': r.get('Name', ''),
+            'status': r.get('Status__c') or '',
             'product': product,
             'code': code,
             'all_products': all_products_str,
@@ -269,7 +290,10 @@ def _build_woa_list(status_filter: str) -> dict:
             'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
             'wo_number': wo.get('WorkOrderNumber', ''),
             'wo_id': wo_id,
-            'woli_id': woli.get('id') or '',
+            'woli_id': woli.get('id') or '' if isinstance(woli, dict) else '',
+            'woa_description': woa_description,
+            'internal_notes': woa_internal_notes,
+            'product_not_on_wo': _product_not_on_wo,
             'created_date': _fmt_date_et(r.get('CreatedDate')),
             '_sort_date': (r.get('CreatedDate') or '')[:10],
             'created_by': (r.get('CreatedBy') or {}).get('Name', ''),
@@ -312,15 +336,16 @@ def _build_woa_list(status_filter: str) -> dict:
             item['is_multi_same_product'] = False
 
     log.info(f"WOA list built: {len(items)} items in {_time.time() - _t0:.1f}s")
-    return {'items': items, 'total': len(items), 'status_filter': status_filter}
+    return {'items': items, 'total': len(items)}
 
 @router.get("/api/accounting/wo-adjustments/export")
 def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
                    rec_filter: str = Query(''), q: str = Query(''),
                    start_date: str = Query(''), end_date: str = Query('')):
-    cache_key = f'accounting_woa_list_{status}'
-    full = cache.stale_while_revalidate(cache_key, lambda: _build_woa_list(status), ttl=900, stale_ttl=3600)
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
     items = full.get('items', [])
+    if status == 'open':
+        items = [r for r in items if r.get('status') == 'New']
     if product_filter:
         items = [r for r in items if product_filter.lower() in (r.get('product') or '').lower()]
     if rec_filter == 'Approve':
@@ -432,6 +457,13 @@ def api_woa_recalculate(woa_id: str):
     return result
 
 
+@router.post("/api/accounting/refresh")
+def api_accounting_refresh():
+    """Bust the WOA list caches so the next request rebuilds from Salesforce."""
+    cache.invalidate('accounting_woa_list')
+    return {'status': 'ok', 'message': 'WOA list caches cleared'}
+
+
 @router.get("/api/accounting/rates")
 def api_accounting_rates():
     """Public read-only: return accounting reference rates for the audit panel."""
@@ -441,9 +473,11 @@ def api_accounting_rates():
 
 @router.get("/api/accounting/analytics")
 def api_accounting_analytics(status: str = Query('open')):
-    cache_key = f'accounting_woa_list_{status}'
-    full = cache.stale_while_revalidate(cache_key, lambda: _build_woa_list(status), ttl=900, stale_ttl=3600)
-    return _compute_analytics(full.get('items', []))
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
+    items = full.get('items', [])
+    if status == 'open':
+        items = [r for r in items if r.get('status') == 'New']
+    return _compute_analytics(items)
 
 
 def _compute_analytics(items: list) -> dict:
@@ -543,9 +577,10 @@ def api_batch_audit(body: BatchAuditRequest):
     woa_ids = [sanitize_soql(wid) for wid in body.woa_ids[:50]]
 
     if not woa_ids and body.product_filter:
-        full = cache.stale_while_revalidate('accounting_woa_list_open', lambda: _build_woa_list('open'), ttl=900, stale_ttl=3600)
+        full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
         woa_ids = [r['id'] for r in full.get('items', [])
-                   if body.product_filter.lower() in (r.get('product') or '').lower()][:50]
+                   if r.get('status') == 'New'
+                   and body.product_filter.lower() in (r.get('product') or '').lower()][:50]
 
     def _audit_one(woa_id):
         ck = f'accounting_woa_audit_{woa_id}'
