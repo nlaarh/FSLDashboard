@@ -24,7 +24,10 @@ def _build_woa_data(woa_id: str) -> dict:
     import database
 
     woa_rows = sf_query_all(f"""
-        SELECT Id, Name, Quantity__c, CreatedDate, CreatedById, LastModifiedById,
+        SELECT Id, Name, Quantity__c, Description__c, Internal_Notes__c,
+               Product__c, Product__r.Name,
+               Work_Order_Line_Item__c,
+               CreatedDate, CreatedById, LastModifiedById,
                CreatedBy.Name, LastModifiedBy.Name,
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
@@ -158,14 +161,39 @@ def _build_woa_data(woa_id: str) -> dict:
             'status': wl.get('Status') or '',
         })
 
-    # Match WOA to best WOLI — identical logic to list endpoint (including synthetic TW detection)
+    # Resolve product — use Product__c from WOA as authoritative source.
+    # Fall back to WOLI quantity-matching only when Product__c is not set.
     req_qty = _safe_float(woa.get('Quantity__c'))
+    woa_product_name = (woa.get('Product__r') or {}).get('Name') or ''
+    woa_woli_id = woa.get('Work_Order_Line_Item__c') or ''
+    woa_description = woa.get('Description__c') or ''
+    woa_internal_notes = woa.get('Internal_Notes__c') or ''
+
     _wm = [{'id': w.get('Id') or '', 'product': (w.get('PricebookEntry') or {}).get('Name') or '',
              'code': (w.get('PricebookEntry') or {}).get('ProductCode') or '',
              'quantity': w.get('Quantity'), 'description': w.get('Description')} for w in woli_rows]
-    _best = match_best_woli(_wm, req_qty, wo=wo)
+
+    if woa_product_name:
+        pbe_code = woa_product_name.split(' - ')[0].strip() if ' - ' in woa_product_name else woa_product_name.split(' ')[0]
+        # Use directly linked WOLI if available, else match by product code
+        if woa_woli_id:
+            _best = next((w for w in _wm if w['id'] == woa_woli_id), {})
+        else:
+            _best = next((w for w in _wm if w.get('code') == pbe_code), {})
+        if not _best:
+            _best = {'product': woa_product_name, 'code': pbe_code, 'quantity': None, 'id': '', '_no_match': True}
+        else:
+            _best['product'] = woa_product_name  # ensure product name from WOA takes precedence
+            _best['code'] = pbe_code
+    else:
+        _best = match_best_woli(_wm, req_qty, wo=wo)
+
     _woli_sf = next((w for w in woli_rows if w.get('Id') == _best.get('id')), None)
     woli = _woli_sf or (woli_rows[0] if woli_rows else {})
+    _product_not_on_wo = bool(woa_product_name) and not any(
+        (w.get('PricebookEntry') or {}).get('Name', '').startswith(pbe_code if woa_product_name else '~')
+        for w in woli_rows
+    )
 
     # SA — use direct WO lookup (parallel above); fall back to WOLI IDs if needed
     sa = {}
@@ -415,10 +443,13 @@ def _build_woa_data(woa_id: str) -> dict:
     data_context = {
         'woa_number': woa.get('Name', ''),
         'product': _best.get('product') or (woli.get('PricebookEntry') or {}).get('Name', ''),
+        'product_not_on_wo': _product_not_on_wo,
+        'woa_description': woa_description,
+        'internal_notes': woa_internal_notes,
         'requested_qty': req_qty_audit,
         'currently_paid': paid_qty_audit,
         'qty_interpretation': qty_interpretation,
-        'description': woli_desc[:500],
+        'description': woa_description[:500] if woa_description else woli_desc[:500],
         'description_keywords': description_keywords,
         'claimed_minutes_from_description': claimed_minutes,
         'long_tow_used': long_tow_used,
