@@ -13,7 +13,7 @@ _ET = ZoneInfo("America/New_York")
 from routers.accounting_calc import (
     _to_et, _fmt_et, _safe_float, _google_distance, _calc_recommendation, match_best_woli,
     _google_toll_check, _google_nearby_places, _scan_keywords, _parse_claimed_minutes,
-    _SF_BASE,
+    _SF_BASE, _TIME_CODES, _TOW_CODES,
 )
 from routers.accounting_audit_ai import call_audit_ai
 
@@ -507,8 +507,7 @@ def _build_woa_data(woa_id: str) -> dict:
                      'truck_prev_location')
     _TOW_FIELDS   = ('sf_tow_miles', 'sf_estimated_tow_miles', 'google_tow_distance_miles',
                      'tow_destination')
-    from routers.accounting_calc import _TIME_CODES as _TC, _TOW_CODES as _TWC
-    if _woli_code_upper in _TC:
+    if _woli_code_upper in _TIME_CODES:
         # Time product (E1/E2/MI/Z8): remove all miles data — only on_location_minutes matters
         for _k in _MILES_FIELDS + _TOW_FIELDS:
             data_context.pop(_k, None)
@@ -517,7 +516,7 @@ def _build_woa_data(woa_id: str) -> dict:
         for _k in _TOW_FIELDS:
             data_context.pop(_k, None)
         data_context.pop('on_location_minutes', None)
-    elif _woli_code_upper in _TWC:
+    elif _woli_code_upper in _TOW_CODES:
         # Tow product: remove enroute data (irrelevant for tow)
         for _k in _MILES_FIELDS:
             data_context.pop(_k, None)
