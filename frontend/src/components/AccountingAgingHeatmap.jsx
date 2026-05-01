@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
-import { ChevronDown, ChevronRight, AlertTriangle, Clock } from 'lucide-react'
+import { ChevronDown, ChevronRight, AlertTriangle, Clock, ArrowUp, ArrowDown } from 'lucide-react'
 import { fetchAccountingAging } from '../api'
 
 const BUCKET_COLORS = {
@@ -87,12 +87,21 @@ function HeatCell({ bucket, cell, facility }) {
   )
 }
 
+function SortIcon({ col, sortCol, sortDir }) {
+  if (col !== sortCol) return <span className="text-slate-700 ml-0.5">↕</span>
+  return sortDir === 'asc'
+    ? <ArrowUp size={9} className="inline ml-0.5 text-slate-300" />
+    : <ArrowDown size={9} className="inline ml-0.5 text-slate-300" />
+}
+
 export default function AccountingAgingHeatmap({ status = 'open' }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [collapsed, setCollapsed] = useState(false)
   const [search, setSearch] = useState('')
+  const [sortCol, setSortCol] = useState('oldest_days')
+  const [sortDir, setSortDir] = useState('desc')
 
   useEffect(() => {
     setLoading(true)
@@ -104,14 +113,27 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
   }, [status])
 
   const buckets = data?.buckets || []
-  const facilities = (data?.facilities || []).filter(f =>
-    !search || f.facility.toLowerCase().includes(search.toLowerCase())
-  )
+
+  const allFacilities = data?.facilities || []
+  const totalOpenWoas = allFacilities.reduce((s, f) => s + f.total, 0)
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  const facilities = allFacilities
+    .filter(f => !search || f.facility.toLowerCase().includes(search.toLowerCase()))
+    .slice()
+    .sort((a, b) => {
+      const v = sortCol === 'total' ? a.total - b.total : a.oldest_days - b.oldest_days
+      return sortDir === 'asc' ? v : -v
+    })
 
   // Summary stats
   const has90plus = facilities.filter(f => f.cells['90+d']?.count > 0).length
-  const oldest = facilities[0]?.oldest_days || 0
-  const totalWarning = facilities.reduce((s, f) =>
+  const oldest = allFacilities[0] ? Math.max(...allFacilities.map(f => f.oldest_days)) : 0
+  const totalWarning = allFacilities.reduce((s, f) =>
     s + (f.cells['61–90d']?.count || 0) + (f.cells['90+d']?.count || 0), 0)
 
   return (
@@ -126,7 +148,7 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
           <span className="text-xs font-semibold text-slate-200">WOA Aging by Garage</span>
           {!loading && data && (
             <span className="text-[10px] text-slate-500">
-              {facilities.length} garages · as of {data.as_of}
+              {allFacilities.length} garages · as of {data.as_of}
             </span>
           )}
           {totalWarning > 0 && (
@@ -151,8 +173,12 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
 
           {!loading && !error && data && (
             <>
-              {/* Summary strip */}
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              {/* Summary strip — 4 cards */}
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="glass rounded-lg border border-slate-700/30 p-3 text-center">
+                  <div className="text-[10px] text-slate-500 mb-0.5">Total Open WOAs</div>
+                  <div className="text-lg font-bold text-slate-200">{totalOpenWoas}</div>
+                </div>
                 <div className="glass rounded-lg border border-slate-700/30 p-3 text-center">
                   <div className="text-[10px] text-slate-500 mb-0.5">Oldest WOA</div>
                   <div className={clsx('text-lg font-bold', oldest > 90 ? 'text-rose-400' : oldest > 60 ? 'text-red-400' : oldest > 30 ? 'text-orange-400' : 'text-slate-200')}>
@@ -199,8 +225,18 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
                   <thead>
                     <tr className="border-b border-slate-800/60">
                       <th className="text-left px-3 py-2 text-slate-400 font-medium min-w-[200px]">Garage</th>
-                      <th className="text-right px-2 py-2 text-slate-400 font-medium">Total</th>
-                      <th className="text-right px-2 py-2 text-slate-400 font-medium">Oldest</th>
+                      <th
+                        className="text-right px-2 py-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none"
+                        onClick={() => handleSort('total')}
+                      >
+                        Total <SortIcon col="total" sortCol={sortCol} sortDir={sortDir} />
+                      </th>
+                      <th
+                        className="text-right px-2 py-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none"
+                        onClick={() => handleSort('oldest_days')}
+                      >
+                        Oldest <SortIcon col="oldest_days" sortCol={sortCol} sortDir={sortDir} />
+                      </th>
                       {buckets.map(b => (
                         <th key={b} className={clsx('text-center px-2 py-2 font-semibold', BUCKET_COLORS[b]?.text)}>
                           {b}
