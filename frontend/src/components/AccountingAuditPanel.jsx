@@ -31,7 +31,7 @@ const SkeletonCard = () => (
   </div>
 )
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -69,7 +69,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   if (!audit) return null
 
   const recRaw = (audit.recommendation || initRec || 'REVIEW').toUpperCase()
-  const rec = recRaw === 'APPROVE' ? 'PAY' : recRaw
+  // If low-materiality override was applied in the list, honour it here too
+  const displayRec = (isLowMateriality && recRaw === 'REVIEW') ? 'APPROVE' : recRaw
+  const rec = displayRec === 'APPROVE' ? 'PAY' : displayRec
   // AI recommendation is stored separately (ai_recommendation) — rule engine owns 'recommendation'
   const aiRecRaw = audit.ai_recommendation ? audit.ai_recommendation.toUpperCase() : null
   const aiRec = aiRecRaw === 'APPROVE' ? 'PAY' : aiRecRaw
@@ -195,6 +197,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </a>
       </div>
       {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
+      {isLowMateriality && recRaw === 'REVIEW' && (
+        <div className="text-[9px] text-slate-500 px-1">Auto-approved: below materiality threshold</div>
+      )}
       {aiRecDiffers && (
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/30">
           <span className="text-[9px] text-slate-500">AI assessed:</span>
@@ -315,6 +320,25 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </div>
       )}
 
+      {/* ── Call location pin for time products (MI/E1/E2/Z8) — no route to verify, but show where the job was ── */}
+      {audit && !isStale && isTime && (ev.call_location_city || destLat) && (
+        <div className="px-4 py-2 rounded-xl bg-slate-800/30 border border-slate-700/20 text-[10px] flex items-center gap-3">
+          <span className="text-slate-600">Call Location:</span>
+          <span className="text-slate-200 font-medium">
+            {[ev.call_location_city, ev.call_location_state].filter(Boolean).join(', ') || 'Unknown'}
+          </span>
+          {destLat && (
+            <>
+              <span className="text-slate-600 font-mono">({destLat.toFixed(4)}, {destLon.toFixed(4)})</span>
+              <a href={`https://www.google.com/maps?q=${destLat},${destLon}`} target="_blank" rel="noopener noreferrer"
+                className="text-brand-400 hover:text-brand-300 underline flex items-center gap-0.5 text-[9px]">
+                <MapPin className="w-2.5 h-2.5" />Map ↗
+              </a>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ── Multi-WOA combined exposure warning ── */}
       {audit && hasSiblings && (
         <div className={clsx(
@@ -375,6 +399,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           timeRatio={timeRatio} timeColor={timeColor}
           woliItems={audit.woli_items}
           rates={rates}
+          allWoSiblings={allWoSiblings}
         />
 
         {/* Right: WO Context — everything the auditor needs to know about this WO */}

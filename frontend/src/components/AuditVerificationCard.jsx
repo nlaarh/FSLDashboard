@@ -10,7 +10,7 @@ export default function AuditVerificationCard({
   googleMi, googleTowMi, towDestLat, origin,
   trueTotal, baseline, baselineLabel,
   mileRatio, mileColor, mileBg, timeRatio, timeColor,
-  woliItems, rates,
+  woliItems, rates, allWoSiblings,
 }) {
   // Thresholds from admin reference data (with sensible fallbacks)
   const payPct    = rv(rates, 'mileage_pay_pct',    130)
@@ -342,6 +342,34 @@ export default function AuditVerificationCard({
               {kw}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Other WOAs on the same Work Order */}
+      {allWoSiblings?.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-slate-700/20">
+          <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Other WOAs — Same Work Order</div>
+          <div className="space-y-0.5">
+            {allWoSiblings.map(s => (
+              <div key={s.id || s.woa_number} className="flex items-center gap-2 text-[10px]">
+                <a
+                  href={`https://aaawcny.my.salesforce.com/${s.id}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 font-mono underline"
+                >
+                  {s.woa_number}
+                </a>
+                <span className="text-slate-500">{s.product || s.code}</span>
+                {s.estimated_usd != null && (
+                  <span className="text-slate-400">${s.estimated_usd.toFixed(2)}</span>
+                )}
+                <span className={clsx('text-[9px] font-semibold',
+                  s.recommendation === 'approve' ? 'text-emerald-400' : 'text-amber-400')}>
+                  {s.recommendation === 'approve' ? '✓' : '⚠'}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

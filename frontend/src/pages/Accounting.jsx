@@ -116,10 +116,11 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason, siblingWoas, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
+function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
   return (
     <div>
       <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
+        allWoSiblings={allWoSiblings}
         isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec} rowConf={rowConf} />
     </div>
   )
@@ -236,7 +237,7 @@ export default function Accounting() {
 
       {activeTab === 'woa' && <>
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-4 gap-3 mb-4">
         <div className="glass rounded-xl border border-slate-700/30 p-4">
           <div className="text-[10px] text-slate-500 uppercase tracking-wider">Total WOAs</div>
           <div className="text-2xl font-bold text-white">{total}</div>
@@ -377,6 +378,10 @@ export default function Accounting() {
                   (row.id || row.woa_number) !== rowKey &&
                   row.wo_id && row.wo_id === r.wo_id &&
                   productCode(row.product) === code
+                )
+                const allWoSiblings = rows.filter(row =>
+                  (row.id || row.woa_number) !== rowKey &&
+                  row.wo_id && row.wo_id === r.wo_id
                 )
                 return (
                   <Fragment key={rowKey}>
@@ -540,6 +545,7 @@ export default function Accounting() {
                       <tr>
                         <td colSpan={13} className="p-0 border-b border-slate-700/30">
                           <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
+                            allWoSiblings={allWoSiblings}
                             isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}
                             rowRec={r.recommendation} rowConf={r.confidence} />
                         </td>
