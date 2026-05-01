@@ -153,10 +153,12 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const combinedColor = combinedPct == null ? 'text-amber-300'
     : combinedPct <= payPct ? 'text-emerald-400' : combinedPct <= reviewPct ? 'text-amber-400' : 'text-red-400'
 
-  // Google Maps link: TW = call→tow destination, ER = truck→call
+  // Google Maps link: TW = call→tow destination, ER = truck→call (requires both GPS)
   const googleMapsLink = isTow
     ? (destLat && towDestLat ? `https://www.google.com/maps/dir/${destLat},${destLon}/${towDestLat},${towDestLon}` : null)
     : (originLat && destLat ? `https://www.google.com/maps/dir/${originLat},${originLon}/${destLat},${destLon}` : null)
+  // Fallback pin link — when we have destination but no origin GPS
+  const destPinLink = !googleMapsLink && destLat ? `https://www.google.com/maps?q=${destLat},${destLon}` : null
 
   const localSummary = buildLocalSummary(ev, audit?.woli_items, rates)
   const aiText = audit.ai_summary
@@ -278,8 +280,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
                   : <span className="text-amber-500">no tow destination on WO</span>}
               </div>
             </div>
-          ) : (
-            /* ER / other: show truck origin → call location */
+          ) : originLat ? (
+            /* ER with GPS origin — show full truck → call route */
             <div className="flex items-center gap-4">
               <div className="min-w-0 flex-1">
                 <span className="text-slate-600">From:</span>{' '}
@@ -290,8 +292,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
                 {origin?.source === 'previous_job' && <span className="text-slate-600"> (estimated — last known job)</span>}
                 {origin?.source === 'garage_location' && <span className="text-slate-600"> (garage location)</span>}
                 {origin?.source === 'home_address' && <span className="text-slate-600"> (home)</span>}
-                {originLat ? <span className="text-slate-600 font-mono ml-1">({originLat.toFixed(4)}, {originLon.toFixed(4)})</span>
-                  : <span className="text-amber-500 ml-1">no GPS</span>}
+                <span className="text-slate-600 font-mono ml-1">({originLat.toFixed(4)}, {originLon.toFixed(4)})</span>
               </div>
               <ArrowRight className="w-3.5 h-3.5 text-slate-600 shrink-0" />
               <div className="min-w-0 flex-1">
@@ -300,6 +301,15 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
                 {destLat ? <span className="text-slate-600 font-mono ml-1">({destLat.toFixed(4)}, {destLon.toFixed(4)})</span>
                   : <span className="text-amber-500 ml-1">no GPS on WO</span>}
               </div>
+            </div>
+          ) : (
+            /* ER no origin GPS — show call location only, no From→To */
+            <div>
+              <span className="text-slate-600">Call location:</span>{' '}
+              <span className="text-slate-200 font-medium">{destCity || 'Unknown'}</span>
+              {destLat ? <span className="text-slate-600 font-mono ml-1">({destLat.toFixed(4)}, {destLon.toFixed(4)})</span>
+                : <span className="text-amber-500 ml-1">no GPS on WO</span>}
+              <span className="text-amber-500 ml-2">· truck origin GPS unavailable</span>
             </div>
           )}
           {/* On-location GPS from SA (Fleet FSL app tap) */}
@@ -319,6 +329,12 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
             <a href={googleMapsLink} target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 underline">
               <MapPin className="w-3 h-3" />{isTow ? 'Verify tow route on Google Maps' : 'Verify route on Google Maps'}
+            </a>
+          )}
+          {destPinLink && (
+            <a href={destPinLink} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-300 underline">
+              <MapPin className="w-3 h-3" />View call location on Google Maps
             </a>
           )}
           {/* Note when SF Recorded is much higher than our Google calc */}
