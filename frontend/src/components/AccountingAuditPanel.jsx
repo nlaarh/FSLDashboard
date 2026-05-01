@@ -156,8 +156,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   // Google Maps link: TW = call→tow destination, ER = truck→call
   const googleMapsLink = isTow
     ? (destLat && towDestLat ? `https://www.google.com/maps/dir/${destLat},${destLon}/${towDestLat},${towDestLon}` : null)
-    : (originLat && destLat ? `https://www.google.com/maps/dir/${originLat},${originLon}/${destLat},${destLon}`
-      : destLat ? `https://www.google.com/maps/dir/${originCity || 'garage'}/${destLat},${destLon}` : null)
+    : (originLat && destLat ? `https://www.google.com/maps/dir/${originLat},${originLon}/${destLat},${destLon}` : null)
 
   const localSummary = buildLocalSummary(ev, audit?.woli_items, rates)
   const aiText = audit.ai_summary
