@@ -146,8 +146,13 @@ export default function Accounting() {
   const [expanded, setExpanded] = useState(null)
   const [page, setPage] = useState(0)
   const [activeTab, setActiveTab] = useState('woa')
+  const [auditOverrides, setAuditOverrides] = useState({})
   const PAGE_SIZE = 50
-  const handleAuditComplete = useCallback(() => {}, [])
+  const handleAuditComplete = useCallback((woaId, { recommendation, confidence }) => {
+    if (woaId && recommendation) {
+      setAuditOverrides(prev => ({ ...prev, [woaId]: { recommendation, confidence } }))
+    }
+  }, [])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -498,18 +503,26 @@ export default function Accounting() {
                         </span>
                       </td>
 
-                      {/* Recommendation */}
+                      {/* Recommendation — use audit result once opened, fall back to pre-computed */}
                       <td className="px-3 py-2.5">
                         <div className="flex flex-col gap-0.5">
-                          {r.recommendation === 'approve'
-                            ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                                className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
-                                title={isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
-                                ✓ Approve
-                              </a>
-                            : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
-                                className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300">⚠ Review</a>
-                          }
+                          {(() => {
+                            const audited = !!auditOverrides[rowKey]
+                            const effectiveRec = auditOverrides[rowKey]?.recommendation || r.recommendation
+                            const isTimeProduct = ['MI','E1','E2','Z8'].includes(code)
+                            const provisional = !audited && isTimeProduct
+                            return effectiveRec === 'approve'
+                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                  className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
+                                  title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
+                                  ✓ Approve{provisional ? '*' : ''}
+                                </a>
+                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                                  className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300"
+                                  title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : undefined}>
+                                  ⚠ Review{provisional ? '*' : ''}
+                                </a>
+                          })()}
                           {r.estimated_usd != null && (
                             <span className="text-[9px] text-slate-600 font-mono"
                               title="Estimated dollar impact if approved (requested qty × WOLI unit rate)">
