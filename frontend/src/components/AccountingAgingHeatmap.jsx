@@ -103,8 +103,6 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
       .finally(() => setLoading(false))
   }, [status])
 
-  if (error) return null
-
   const buckets = data?.buckets || []
   const facilities = (data?.facilities || []).filter(f =>
     !search || f.facility.toLowerCase().includes(search.toLowerCase())
@@ -147,7 +145,11 @@ export default function AccountingAgingHeatmap({ status = 'open' }) {
             <div className="text-center py-8 text-slate-500 text-xs">Loading aging data…</div>
           )}
 
-          {!loading && data && (
+          {!loading && error && (
+            <div className="text-center py-8 text-red-400 text-xs">{error}</div>
+          )}
+
+          {!loading && !error && data && (
             <>
               {/* Summary strip */}
               <div className="grid grid-cols-3 gap-3 mb-4">
