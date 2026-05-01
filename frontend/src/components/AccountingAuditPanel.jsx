@@ -460,6 +460,12 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
                   <span className="text-right font-mono font-semibold text-slate-200">{wl.grand_total != null ? `$${wl.grand_total.toFixed(2)}` : ''}</span>
                 </div>
               ))}
+              {audit.wo_pricing?.total_invoiced != null && (
+                <div className="flex justify-between items-center border-t border-slate-700/40 pt-1 mt-1">
+                  <span className="text-[9px] text-slate-500 uppercase tracking-wider">Total Invoiced (WO)</span>
+                  <span className="font-mono font-bold text-emerald-400 text-[11px]">${audit.wo_pricing.total_invoiced.toFixed(2)}</span>
+                </div>
+              )}
             </div>
           )}
           {/* WO Pricing (from WorkOrder, not WOLI) */}

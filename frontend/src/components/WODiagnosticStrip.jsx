@@ -44,8 +44,9 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
   const membership = ev.membership_level_coverage
   const axles = ev.axle_count
   const isX002 = ev.is_cancel_en_route
+  const woType = ev.wo_type
 
-  const hasAny = tc || rc || cc || coverage || contract || entitlement || facilityId || isTowCall || membership || axles > 0
+  const hasAny = tc || rc || cc || coverage || contract || entitlement || facilityId || isTowCall || membership || axles > 0 || woType
 
   if (!hasAny) return null
 
@@ -128,6 +129,12 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
               <span className="text-[10px] font-mono text-slate-200">{facilityId}</span>
             </div>
           )}
+          {woType && (
+            <div className="flex items-baseline gap-1" title="Work Type from the Service Appointment linked to this WO (SA.WorkType.Name). Describes the service category performed.">
+              <span className="text-[9px] text-slate-600 uppercase">WO Type:</span>
+              <span className="text-[10px] font-semibold text-slate-200">{woType}</span>
+            </div>
+          )}
           {axles > 0 && (
             <div className="flex items-baseline gap-1" title="Number of Axles from vehicle record (WorkOrder.Number_of_Axles__c — formula from vehicle asset). 3+ axles typically qualifies for MH rate.">
               <span className="text-[9px] text-slate-600 uppercase">Axles:</span>
@@ -175,6 +182,7 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
             <Row label="Facility_Contract__r.Name (WO)" value={contract} />
             <Row label="Entitlement_Master__r.Name (WO)" value={entitlement} />
             <Row label="ERS_Membership_Level_Coverage__c (SA formula)" value={membership} />
+            <Row label="WorkType.Name (SA)" value={woType} />
           </div>
           {sfUrls?.wo && (
             <a href={sfUrls.wo} target="_blank" rel="noopener noreferrer"
