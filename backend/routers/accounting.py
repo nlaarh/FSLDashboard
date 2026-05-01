@@ -201,10 +201,10 @@ def _build_woa_list() -> dict:
         sf_tow = _safe_float(wo.get('Tow_Miles__c'))
         sf_est_tow = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c'))
 
-        # Calculate on-location time from WO timestamps (for E1/MI)
-        enroute_dt = _parse_dt(wo.get('ERS_En_Route_Date_Time__c'))
-        onloc_dt = _parse_dt(wo.get('ERS_On_Location_Date_Time__c'))
-        on_loc_min = round((onloc_dt - enroute_dt).total_seconds() / 60, 1) if enroute_dt and onloc_dt and onloc_dt > enroute_dt else None
+        # List has no SA history access — cannot compute actual on-scene time.
+        # Time codes (E1/MI/Z8/E2) get on_loc_min=None → rule engine returns 'review' provisional.
+        # The audit panel fetches SA history and computes the real on-scene time.
+        on_loc_min = None
 
         v_make = wo.get('Vehicle_Make__c') or ''
         v_model = wo.get('Vehicle_Model__c') or ''
@@ -370,9 +370,12 @@ def api_woa_audit(woa_id: str):
     full_key = f'accounting_woa_audit_{woa_id}'
     data_key = f'accounting_woa_data_{woa_id}'
 
-    # Return full cached result (includes AI) if available
+    # Return full cached result (includes AI) if available.
+    # Normalize recommendation to lowercase — old caches may have uppercase from AI.
     full = cache.get(full_key) or cache.disk_get(full_key, ttl=1800)
     if full:
+        if isinstance(full.get('recommendation'), str):
+            full['recommendation'] = full['recommendation'].lower()
         return full
 
     # Return data-only from cache (already built, AI not yet run)
@@ -429,16 +432,20 @@ def api_woa_ai_analysis(woa_id: str):
     ai = call_audit_ai(ctx, gh)
 
     ai_fields = {
-        'recommendation': ai['recommendation'], 'confidence': ai['confidence'],
+        'ai_recommendation': ai['recommendation'], 'confidence': ai['confidence'],
         'ai_summary': ai['ai_summary'], 'ai_headline': ai.get('headline'),
         'ai_story': ai.get('story'), 'ai_fraud_signals': ai.get('fraud_signals') or [],
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],
         'ask_garage': ai.get('ask_garage') or [],
     }
 
-    # Merge into full result and cache
+    # Merge into full result and cache — rule engine's recommendation is authoritative.
+    # AI assessment goes in ai_recommendation so the UI can show it alongside (aiRecDiffers).
     full_result = {k: v for k, v in data.items() if not k.startswith('_')}
     full_result.update(ai_fields)
+    # Ensure rule engine recommendation stays lowercase (belt-and-suspenders vs stale caches)
+    if 'recommendation' in full_result:
+        full_result['recommendation'] = (full_result['recommendation'] or 'review').lower()
     cache.put(full_key, full_result, ttl=1800)
     cache.disk_put(full_key, full_result, ttl=1800)
     return ai_fields

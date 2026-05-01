@@ -43,7 +43,13 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
 
   const handleResult = (data) => {
     setAudit(data)
-    if (data?.recommendation) onComplete?.(woaId, { recommendation: data.recommendation, confidence: data.confidence, summary: data.ai_summary || '' })
+    if (data?.recommendation) {
+      // Normalize to lowercase — audit cache may return uppercase from AI ('APPROVE'/'REVIEW').
+      // Apply the same low-materiality override the panel will show, so badge stays in sync.
+      const rawRec = (data.recommendation || '').toLowerCase()
+      const effRec = (isLowMateriality && rawRec === 'review') ? 'approve' : rawRec
+      onComplete?.(woaId, { recommendation: effRec, confidence: data.confidence, summary: data.ai_summary || '' })
+    }
     // If AI not yet loaded (data-only response), fetch it separately
     if (!data?.ai_headline && !data?.ai_story) {
       setAiLoading(true)

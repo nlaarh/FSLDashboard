@@ -508,7 +508,7 @@ export default function Accounting() {
                         <div className="flex flex-col gap-0.5">
                           {(() => {
                             const audited = !!auditOverrides[rowKey]
-                            const effectiveRec = auditOverrides[rowKey]?.recommendation || r.recommendation
+                            const effectiveRec = (auditOverrides[rowKey]?.recommendation || r.recommendation || '').toLowerCase()
                             const isTimeProduct = ['MI','E1','E2','Z8'].includes(code)
                             const provisional = !audited && isTimeProduct
                             return effectiveRec === 'approve'
