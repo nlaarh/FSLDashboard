@@ -116,12 +116,13 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
+function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf, onOpenWoa }) {
   return (
     <div>
       <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
         allWoSiblings={allWoSiblings}
-        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec} rowConf={rowConf} />
+        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec} rowConf={rowConf}
+        onOpenWoa={onOpenWoa} />
     </div>
   )
 }
@@ -547,7 +548,8 @@ export default function Accounting() {
                           <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
                             allWoSiblings={allWoSiblings}
                             isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}
-                            rowRec={r.recommendation} rowConf={r.confidence} />
+                            rowRec={r.recommendation} rowConf={r.confidence}
+                            onOpenWoa={(targetKey) => setExpanded(targetKey)} />
                         </td>
                       </tr>
                     )}

@@ -31,7 +31,7 @@ const SkeletonCard = () => (
   </div>
 )
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf }) {
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf, onOpenWoa }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -400,6 +400,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           woliItems={audit.woli_items}
           rates={rates}
           allWoSiblings={allWoSiblings}
+          onOpenWoa={onOpenWoa}
         />
 
         {/* Right: WO Context — everything the auditor needs to know about this WO */}

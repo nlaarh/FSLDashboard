@@ -10,7 +10,7 @@ export default function AuditVerificationCard({
   googleMi, googleTowMi, towDestLat, origin,
   trueTotal, baseline, baselineLabel,
   mileRatio, mileColor, mileBg, timeRatio, timeColor,
-  woliItems, rates, allWoSiblings,
+  woliItems, rates, allWoSiblings, onOpenWoa,
 }) {
   // Thresholds from admin reference data (with sensible fallbacks)
   const payPct    = rv(rates, 'mileage_pay_pct',    130)
@@ -352,13 +352,12 @@ export default function AuditVerificationCard({
           <div className="space-y-0.5">
             {allWoSiblings.map(s => (
               <div key={s.id || s.woa_number} className="flex items-center gap-2 text-[10px]">
-                <a
-                  href={`https://aaawcny.my.salesforce.com/${s.id}`}
-                  target="_blank" rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 font-mono underline"
+                <button
+                  onClick={() => onOpenWoa?.(s.id || s.woa_number)}
+                  className="text-blue-400 hover:text-blue-300 font-mono underline text-left cursor-pointer"
                 >
                   {s.woa_number}
-                </a>
+                </button>
                 <span className="text-slate-500">{s.product || s.code}</span>
                 {s.estimated_usd != null && (
                   <span className="text-slate-400">${s.estimated_usd.toFixed(2)}</span>
