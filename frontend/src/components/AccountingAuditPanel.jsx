@@ -242,7 +242,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       {audit && <WODiagnosticStrip ev={ev} sfUrls={urls} />}
 
       {!audit && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
         </div>
       )}
@@ -387,7 +387,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       )}
 
       {/* ── 4-column: Verification | WO Context | SA Timeline | Auditor Summary ── */}
-      {audit && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+      {audit && <div className="grid grid-cols-4 gap-3">
 
         {/* Left: Verification — product-specific, extracted to AuditVerificationCard */}
         <AuditVerificationCard
