@@ -92,7 +92,14 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const originCity = [origin?.city, origin?.state].filter(Boolean).join(', ')
   const destCity = [ev.call_location_city, ev.call_location_state].filter(Boolean).join(', ')
   const originLat = origin?.lat, originLon = origin?.lon
-  const destLat = ev.call_location_lat, destLon = ev.call_location_lon
+  // WO.Latitude is null for some calls (not geocoded in SF).
+  // Fall back to SA on-location GPS (driver's tap = same spot as breakdown).
+  const _saLat = ev.sa_on_location_lat > 0 ? ev.sa_on_location_lat : null
+  const _saLon = ev.sa_on_location_lat > 0 ? ev.sa_on_location_lon : null
+  const _rflibLat = ev.rflib_on_location?.lat > 0 ? ev.rflib_on_location.lat : null
+  const _rflibLon = ev.rflib_on_location?.lat > 0 ? ev.rflib_on_location.lon : null
+  const destLat = ev.call_location_lat || _saLat || _rflibLat || null
+  const destLon = ev.call_location_lon || _saLon || _rflibLon || null
 
   const isTow = TOW_CODES.has(code)
   const isMileage = code === 'ER' || isTow || (!code && ev.sf_enroute_miles != null)
@@ -280,6 +287,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
                 <span className="text-slate-200 font-medium">{originCity || 'Unknown'}</span>
                 {origin?.source === 'driver_gps_enroute' && <span className="text-emerald-500"> (driver GPS at En Route)</span>}
                 {origin?.source === 'towbook_gps_enroute' && <span className="text-emerald-500"> (Towbook GPS at En Route)</span>}
+                {origin?.source === 'towbook_gps_dispatched' && <span className="text-emerald-500"> (Towbook GPS at Dispatch)</span>}
                 {origin?.source === 'previous_job' && <span className="text-slate-600"> (estimated — last known job)</span>}
                 {origin?.source === 'garage_location' && <span className="text-slate-600"> (garage location)</span>}
                 {origin?.source === 'home_address' && <span className="text-slate-600"> (home)</span>}

@@ -64,7 +64,13 @@ export default function WOAAuditMap({ ev }) {
   const mapConfig = getMapConfig()
 
   const truck = ev?.truck_prev_location
-  const callLat  = ev?.call_location_lat,  callLon  = ev?.call_location_lon
+  // Fall back to SA on-location GPS when WO.Latitude is not geocoded
+  const _saLat = ev?.sa_on_location_lat > 0 ? ev.sa_on_location_lat : null
+  const _saLon = ev?.sa_on_location_lat > 0 ? ev.sa_on_location_lon : null
+  const _rflibLat = ev?.rflib_on_location?.lat > 0 ? ev.rflib_on_location.lat : null
+  const _rflibLon = ev?.rflib_on_location?.lat > 0 ? ev.rflib_on_location.lon : null
+  const callLat  = ev?.call_location_lat || _saLat || _rflibLat || null
+  const callLon  = ev?.call_location_lon || _saLon || _rflibLon || null
   const towLat   = ev?.tow_destination_lat, towLon   = ev?.tow_destination_lon
 
   const hasCall  = callLat != null && callLon != null

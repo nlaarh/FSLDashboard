@@ -339,8 +339,11 @@ def _build_woa_data(woa_id: str) -> dict:
     driver_name = (ar_rows[0].get('ServiceResource') or {}).get('Name', '') if ar_rows else ''
     truck_prev = None
 
-    # Parse Towbook rflib GPS — EN_ROUTE and ON_LOCATION from parallel query.
+    # Parse Towbook rflib GPS — DISPATCHED, EN_ROUTE, and ON_LOCATION from parallel query.
     # ERS_Request__c is not filterable in SOQL, so we fetch all logs and filter here.
+    # DISPATCHED = driver's last known location when the call was assigned (best origin for mileage calc).
+    # EN_ROUTE = driver tapped En Route in Towbook app (may be missing if driver skipped tap).
+    rflib_dispatched_gps = None
     rflib_enroute_gps = None
     rflib_onloc_gps = None
     for rlog in parallel_data.get('rflib_gps', []):
@@ -352,7 +355,15 @@ def _build_woa_data(woa_id: str) -> dict:
             lon = _safe_float(drv.get('longitude'))
             if not (lat and lon):
                 continue
-            if status == 'EN_ROUTE' and not rflib_enroute_gps:
+            if status == 'DISPATCHED' and not rflib_dispatched_gps:
+                rflib_dispatched_gps = {
+                    'lat': lat, 'lon': lon,
+                    'driver_name': drv.get('name', ''),
+                    'truck': drv.get('truckName', ''),
+                    'timestamp': rlog.get('CreatedDate'),
+                    'source': 'towbook_gps_dispatched',
+                }
+            elif status == 'EN_ROUTE' and not rflib_enroute_gps:
                 rflib_enroute_gps = {
                     'lat': lat, 'lon': lon,
                     'driver_name': drv.get('name', ''),
@@ -382,9 +393,13 @@ def _build_woa_data(woa_id: str) -> dict:
         if dist_check > 0.1:  # Real GPS — more than 500ft from call
             truck_prev = {'lat': er_lat, 'lon': er_lon, 'city': '', 'state': '', 'source': 'driver_gps_enroute'}
 
-    # Priority 2: Towbook rflib EN_ROUTE GPS (actual driver position from Towbook app)
+    # Priority 2: Towbook rflib EN_ROUTE GPS (driver tapped En Route in Towbook app)
     if not truck_prev and rflib_enroute_gps:
         truck_prev = rflib_enroute_gps
+
+    # Priority 3: Towbook rflib DISPATCHED GPS (last known location when call was assigned)
+    if not truck_prev and rflib_dispatched_gps:
+        truck_prev = rflib_dispatched_gps
 
     # Fallback: garage/territory location (no extra query — use data already fetched)
     if not truck_prev and territory_id:
