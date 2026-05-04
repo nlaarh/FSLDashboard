@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Optimizer Decoder — Sample Preview (076DO)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #020617; color: #e2e8f0; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+  .page { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── Timeline ── */
+  .timeline { width: 208px; border-right: 1px solid #1e293b; display: flex; flex-direction: column; overflow: hidden; background: #0f172a; flex-shrink: 0; }
+  .timeline-hdr { padding: 10px 12px; font-size: 11px; font-weight: 600; color: #94a3b8; border-bottom: 1px solid #1e293b; background: rgba(30,41,59,.7); }
+  .timeline-body { flex: 1; overflow-y: auto; }
+  .tl-date { padding: 6px 12px 3px; font-size: 10px; font-weight: 600; color: #475569; letter-spacing: .04em; text-transform: uppercase; }
+  .tl-run { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; border-left: 2px solid transparent; transition: all .15s; }
+  .tl-run:hover { background: rgba(30,41,59,.5); }
+  .tl-run.active { background: rgba(99,102,241,.1); border-left-color: #6366f1; }
+  .tl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-green  { background: #10b981; box-shadow: 0 0 6px #10b981; }
+  .dot-amber  { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+  .dot-red    { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+  .tl-info { flex: 1; min-width: 0; }
+  .tl-name { font-size: 11px; color: #cbd5e1; truncate: clip; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tl-time { font-size: 10px; color: #475569; }
+  .tl-terr { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .terr-blue   { background: #3b82f6; }
+  .terr-purple { background: #a78bfa; }
+  .terr-emerald{ background: #10b981; }
+
+  /* ── Run Detail ── */
+  .detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #1e293b; }
+  .detail-hdr { padding: 10px 14px; background: rgba(30,41,59,.6); border-bottom: 1px solid #1e293b; flex-shrink: 0; }
+  .detail-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .detail-title span.name { font-weight: 600; font-size: 13px; color: #fff; }
+  .detail-title span.terr { font-size: 11px; color: #94a3b8; }
+  .detail-title span.time { font-size: 11px; color: #64748b; margin-left: auto; }
+  .ask-ai { display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 3px 9px; border-radius: 7px; background: rgba(99,102,241,.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,.25); cursor: pointer; }
+  .kpi-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .kpi-chip { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 7px; background: rgba(30,41,59,.5); border: 1px solid rgba(51,65,85,.4); font-size: 11px; }
+  .kpi-label { color: #64748b; }
+  .kpi-before { color: #64748b; font-family: monospace; }
+  .kpi-arrow { color: #334155; }
+  .kpi-after.green { color: #34d399; font-weight: 600; font-family: monospace; }
+  .kpi-after.red   { color: #f87171; font-weight: 600; font-family: monospace; }
+  .kpi-after.neu   { color: #94a3b8; font-weight: 600; font-family: monospace; }
+  .kpi-diff.green  { color: #34d399; opacity: .7; }
+  .kpi-diff.red    { color: #f87171; opacity: .7; }
+
+  .detail-table { flex: 1; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead { position: sticky; top: 0; z-index: 10; }
+  thead tr { border-bottom: 1px solid rgba(30,41,59,.6); background: rgba(2,6,23,.9); backdrop-filter: blur(4px); }
+  th { text-align: left; padding: 7px 8px; color: #64748b; font-weight: 500; font-size: 11px; }
+  th:first-child { padding-left: 14px; }
+  th:last-child  { padding-right: 14px; text-align: right; }
+  tbody tr.main-row { border-bottom: 1px solid rgba(30,41,59,.4); cursor: pointer; transition: background .12s; }
+  tbody tr.main-row:hover { background: rgba(30,41,59,.25); }
+  tbody tr.main-row.open  { background: rgba(30,41,59,.5); }
+  td { padding: 8px 8px; }
+  td:first-child { padding-left: 14px; }
+  td:last-child  { padding-right: 14px; }
+  .sa-num { display: flex; align-items: center; gap: 5px; font-family: monospace; color: #a5b4fc; }
+  .chev { color: #64748b; font-size: 10px; }
+  .tag-sched   { color: #34d399; }
+  .tag-unsched { color: #fbbf24; }
+  .unsched-reason { font-size: 10px; color: #475569; margin-top: 2px; max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .winner-name { color: #cbd5e1; }
+  .travel-val  { font-family: monospace; color: #94a3b8; text-align: right; display: block; }
+  .expand-row td { padding: 6px 14px 14px; background: rgba(2,6,23,.4); }
+
+  /* ── Decision Tree ── */
+  .dtree { background: rgba(15,23,42,.5); border: 1px solid rgba(51,65,85,.4); border-radius: 12px; padding: 12px; }
+  .dtree-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .dtree-sa { font-family: monospace; font-size: 12px; color: #a5b4fc; font-weight: 600; }
+  .dtree-wt { font-size: 11px; color: #64748b; }
+  .dtree-result { font-size: 11px; padding: 2px 8px; border-radius: 5px; margin-left: auto; }
+  .dtree-result.sched   { background: rgba(16,185,129,.15); color: #34d399; border: 1px solid rgba(16,185,129,.2); }
+  .dtree-result.unsched { background: rgba(245,158,11,.15); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+  .dtree-section { margin-bottom: 8px; }
+  .dtree-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin-bottom: 4px; }
+  .driver-card { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; margin-bottom: 4px; font-size: 12px; }
+  .driver-winner   { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.25); }
+  .driver-eligible { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2); }
+  .driver-excl-territory { background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.18); }
+  .driver-excl-skill    { background: rgba(168,85,247,.07); border: 1px solid rgba(168,85,247,.18); }
+  .driver-excl-absent   { background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.18); }
+  .driver-excl-capacity { background: rgba(100,116,139,.1); border: 1px solid rgba(100,116,139,.25); }
+  .driver-icon { width: 20px; height: 20px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+  .icon-winner   { background: rgba(16,185,129,.2); color: #34d399; }
+  .icon-eligible { background: rgba(59,130,246,.15); color: #60a5fa; }
+  .icon-excl     { background: rgba(239,68,68,.12); color: #f87171; }
+  .driver-name-text { flex: 1; color: #cbd5e1; }
+  .driver-travel { font-family: monospace; font-size: 11px; }
+  .travel-exact { color: #34d399; }
+  .travel-est   { color: #64748b; }
+  .excl-badge { font-size: 10px; padding: 1px 7px; border-radius: 4px; margin-left: auto; }
+  .badge-territory { background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+  .badge-skill     { background: rgba(168,85,247,.15); color: #c084fc; border: 1px solid rgba(168,85,247,.2); }
+  .badge-absent    { background: rgba(245,158,11,.15); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+  .badge-capacity  { background: rgba(100,116,139,.15); color: #94a3b8; border: 1px solid rgba(100,116,139,.2); }
+  .excl-group { margin-bottom: 6px; }
+  .excl-group-label { font-size: 10px; color: #64748b; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+  .excl-names { display: flex; flex-wrap: wrap; gap: 4px; }
+  .excl-name-pill { font-size: 10px; padding: 2px 7px; border-radius: 4px; color: #94a3b8; background: rgba(30,41,59,.6); border: 1px solid rgba(51,65,85,.4); }
+
+  /* ── Chat ── */
+  .chat { width: 320px; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; background: #0f172a; }
+  .chat-hdr { padding: 8px 14px; background: rgba(30,41,59,.6); border-bottom: 1px solid rgba(51,65,85,.5); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .chat-hdr-title { font-size: 13px; font-weight: 600; color: #fff; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { display: flex; gap: 10px; }
+  .msg.user { flex-direction: row-reverse; }
+  .msg-avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; font-size: 11px; }
+  .avatar-ai   { background: rgba(99,102,241,.25); border: 1px solid rgba(99,102,241,.3); color: #a5b4fc; }
+  .avatar-user { background: #334155; border: 1px solid rgba(100,116,139,.3); color: #94a3b8; }
+  .msg-bubble { max-width: 88%; border-radius: 14px; padding: 10px 13px; font-size: 12px; line-height: 1.55; }
+  .bubble-ai   { background: rgba(30,41,59,.7); border: 1px solid rgba(51,65,85,.4); color: #cbd5e1; border-radius: 14px 14px 14px 4px; }
+  .bubble-user { background: rgba(99,102,241,.18); border: 1px solid rgba(99,102,241,.2); color: #c7d2fe; border-radius: 14px 14px 4px 14px; }
+  .chat-viz { margin-top: 8px; }
+  .chat-input { padding: 10px 12px; border-top: 1px solid rgba(30,41,59,.6); display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0; }
+  .chat-textarea { flex: 1; background: rgba(30,41,59,.6); border: 1px solid rgba(51,65,85,.5); border-radius: 10px; padding: 8px 11px; font-size: 12px; color: #cbd5e1; resize: none; outline: none; }
+  .chat-send { width: 34px; height: 34px; border-radius: 9px; background: #6366f1; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border: none; }
+
+  /* ── Mini KPI tree inside chat ── */
+  .mini-dtree { background: rgba(15,23,42,.6); border: 1px solid rgba(51,65,85,.4); border-radius: 10px; padding: 10px; margin-top: 8px; font-size: 11px; }
+  .mini-dtree-hdr { font-weight: 600; color: #a5b4fc; font-family: monospace; margin-bottom: 7px; }
+  .mini-driver { display: flex; align-items: center; gap: 6px; padding: 4px 7px; border-radius: 6px; margin-bottom: 3px; }
+  .mini-winner   { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.2); }
+  .mini-eligible { background: rgba(59,130,246,.07); border: 1px solid rgba(59,130,246,.15); }
+  .mini-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .dot-w { background: #10b981; }
+  .dot-e { background: #3b82f6; }
+  .mini-name { flex: 1; color: #cbd5e1; }
+  .mini-travel { font-family: monospace; color: #34d399; }
+
+  /* footer */
+  .detail-footer { padding: 6px 14px; border-top: 1px solid rgba(30,41,59,.6); background: rgba(2,6,23,.3); display: flex; gap: 14px; font-size: 11px; flex-shrink: 0; }
+  .foot-sched   { color: #34d399; font-weight: 500; }
+  .foot-unsched { color: #fbbf24; font-weight: 500; }
+  .foot-total   { color: #64748b; }
+
+  strong { font-weight: 600; color: #f1f5f9; }
+  em { font-style: italic; color: #cbd5e1; }
+  code { font-family: monospace; font-size: 11px; padding: 1px 5px; border-radius: 4px; background: #0f172a; color: #fbbf24; border: 1px solid rgba(51,65,85,.4); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── TIMELINE ── -->
+  <div class="timeline">
+    <div class="timeline-hdr">Optimization Runs</div>
+    <div class="timeline-body">
+      <div class="tl-date">Today · Apr 28</div>
+
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">100 – WNY Fleet</div>
+          <div class="tl-time">1:00 AM</div>
+        </div>
+        <div class="tl-terr terr-blue"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-amber"></div>
+        <div class="tl-info">
+          <div class="tl-name">800 – Central Fleet</div>
+          <div class="tl-time">1:00 AM</div>
+        </div>
+        <div class="tl-terr terr-purple"></div>
+      </div>
+      <div class="tl-run active">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">076DO – Transit Auto</div>
+          <div class="tl-time">1:00 AM</div>
+        </div>
+        <div class="tl-terr terr-emerald"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">100 – WNY Fleet</div>
+          <div class="tl-time">12:45 AM</div>
+        </div>
+        <div class="tl-terr terr-blue"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">076DO – Transit Auto</div>
+          <div class="tl-time">12:45 AM</div>
+        </div>
+        <div class="tl-terr terr-emerald"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-amber"></div>
+        <div class="tl-info">
+          <div class="tl-name">800 – Central Fleet</div>
+          <div class="tl-time">12:45 AM</div>
+        </div>
+        <div class="tl-terr terr-purple"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">100 – WNY Fleet</div>
+          <div class="tl-time">12:30 AM</div>
+        </div>
+        <div class="tl-terr terr-blue"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">076DO – Transit Auto</div>
+          <div class="tl-time">12:30 AM</div>
+        </div>
+        <div class="tl-terr terr-emerald"></div>
+      </div>
+
+      <div class="tl-date">Yesterday · Apr 27</div>
+      <div class="tl-run">
+        <div class="tl-dot dot-red"></div>
+        <div class="tl-info">
+          <div class="tl-name">100 – WNY Fleet</div>
+          <div class="tl-time">11:45 PM</div>
+        </div>
+        <div class="tl-terr terr-blue"></div>
+      </div>
+      <div class="tl-run">
+        <div class="tl-dot dot-green"></div>
+        <div class="tl-info">
+          <div class="tl-name">076DO – Transit Auto</div>
+          <div class="tl-time">11:45 PM</div>
+        </div>
+        <div class="tl-terr terr-emerald"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RUN DETAIL ── -->
+  <div class="detail">
+    <div class="detail-hdr">
+      <div class="detail-title">
+        <span class="name">OR-2026-04-127715</span>
+        <span class="terr">076DO – Transit Auto Detail</span>
+        <span class="time">Apr 28 · 1:00 AM</span>
+        <button class="ask-ai">✦ Ask AI</button>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-chip">
+          <span class="kpi-label">Scheduled</span>
+          <span class="kpi-before">6</span>
+          <span class="kpi-arrow">→</span>
+          <span class="kpi-after green">8</span>
+          <span class="kpi-diff green">(+2)</span>
+        </div>
+        <div class="kpi-chip">
+          <span class="kpi-label">Unscheduled</span>
+          <span class="kpi-after neu">1</span>
+        </div>
+        <div class="kpi-chip">
+          <span class="kpi-label">Total travel</span>
+          <span class="kpi-before">187m</span>
+          <span class="kpi-arrow">→</span>
+          <span class="kpi-after green">164m</span>
+          <span class="kpi-diff green">(-23m)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-table">
+      <table>
+        <thead>
+          <tr>
+            <th>SA #</th>
+            <th>Work Type</th>
+            <th>Result</th>
+            <th>Winner</th>
+            <th style="text-align:right">Travel</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- SA-779531 Battery — expanded -->
+          <tr class="main-row open" onclick="toggleExpand('sa1')">
+            <td><span class="sa-num"><span class="chev" id="chev-sa1">▼</span>SA-779531</span></td>
+            <td style="color:#94a3b8">Battery</td>
+            <td><span class="tag-sched">Scheduled</span></td>
+            <td class="winner-name">Brandon Hadley 076DO</td>
+            <td><span class="travel-val">19m</span></td>
+          </tr>
+          <tr id="expand-sa1">
+            <td colspan="5" class="expand-row">
+              <div class="dtree">
+                <div class="dtree-hdr">
+                  <span class="dtree-sa">SA-779531</span>
+                  <span class="dtree-wt">Battery</span>
+                  <span class="dtree-result sched">Scheduled</span>
+                </div>
+
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Winner</div>
+                  <div class="driver-card driver-winner">
+                    <div class="driver-icon icon-winner">★</div>
+                    <span class="driver-name-text">Brandon Hadley 076DO</span>
+                    <span class="driver-travel travel-exact">19m · 15.1mi</span>
+                  </div>
+                </div>
+
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Eligible (passed all rules)</div>
+                  <div class="driver-card driver-eligible">
+                    <div class="driver-icon icon-eligible">○</div>
+                    <span class="driver-name-text">Raymond Rohauer 076DO</span>
+                    <span class="driver-travel travel-est">~38m · 30.8mi</span>
+                  </div>
+                  <div class="driver-card driver-eligible">
+                    <div class="driver-icon icon-eligible">○</div>
+                    <span class="driver-name-text">Ryan Burns 076DO</span>
+                    <span class="driver-travel travel-est">~32m · 26.5mi</span>
+                  </div>
+                  <div class="driver-card driver-eligible">
+                    <div class="driver-icon icon-eligible">○</div>
+                    <span class="driver-name-text">Adam Lucas</span>
+                    <span class="driver-travel travel-est">~41m · 33.2mi</span>
+                  </div>
+                </div>
+
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Excluded</div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-absent">Absent</span> Resource absence overlaps window</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Anthony Mickiewicz</span>
+                      <span class="excl-name-pill">Austin Dobucki</span>
+                    </div>
+                  </div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-capacity">Capacity</span> Shift fully booked</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Ben Tremblay</span>
+                      <span class="excl-name-pill">Daniel Rohauer</span>
+                      <span class="excl-name-pill">Hunter Mitchell</span>
+                    </div>
+                  </div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-skill">Skill</span> Missing required skill</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">CONNOR KURDZIEL</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- SA-779544 Tow Pick-Up -->
+          <tr class="main-row" onclick="toggleExpand('sa2')">
+            <td><span class="sa-num"><span class="chev" id="chev-sa2">▶</span>SA-779544</span></td>
+            <td style="color:#94a3b8">Tow Pick-Up</td>
+            <td><span class="tag-sched">Scheduled</span></td>
+            <td class="winner-name">Raymond Rohauer 076DO</td>
+            <td><span class="travel-val">42m</span></td>
+          </tr>
+          <tr id="expand-sa2" style="display:none">
+            <td colspan="5" class="expand-row">
+              <div class="dtree">
+                <div class="dtree-hdr">
+                  <span class="dtree-sa">SA-779544</span>
+                  <span class="dtree-wt">Tow Pick-Up</span>
+                  <span class="dtree-result sched">Scheduled</span>
+                </div>
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Winner</div>
+                  <div class="driver-card driver-winner">
+                    <div class="driver-icon icon-winner">★</div>
+                    <span class="driver-name-text">Raymond Rohauer 076DO</span>
+                    <span class="driver-travel travel-exact">42m · 33.7mi</span>
+                  </div>
+                </div>
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Eligible</div>
+                  <div class="driver-card driver-eligible">
+                    <div class="driver-icon icon-eligible">○</div>
+                    <span class="driver-name-text">Brandon Hadley 076DO</span>
+                    <span class="driver-travel travel-est">~47m · 37.9mi</span>
+                  </div>
+                </div>
+                <div class="dtree-section">
+                  <div class="dtree-section-label">Excluded</div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-capacity">Capacity</span> Shift fully booked</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Adam Lucas</span><span class="excl-name-pill">Ryan Burns 076DO</span>
+                      <span class="excl-name-pill">Ben Tremblay</span><span class="excl-name-pill">Jacob Geisler</span>
+                    </div>
+                  </div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-absent">Absent</span> Resource absence overlaps window</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Austin Dobucki</span><span class="excl-name-pill">Anthony Mickiewicz</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- SA-779534 Winch Out — unscheduled -->
+          <tr class="main-row" onclick="toggleExpand('sa3')">
+            <td><span class="sa-num"><span class="chev" id="chev-sa3">▶</span>SA-779534</span></td>
+            <td style="color:#94a3b8">Winch Out</td>
+            <td>
+              <span class="tag-unsched">Unscheduled</span>
+              <div class="unsched-reason" title="Failed to reschedule a rule violating task">Failed to reschedule a rule violating task</div>
+            </td>
+            <td style="color:#475569">—</td>
+            <td><span style="color:#475569; font-family:monospace; display:block; text-align:right">—</span></td>
+          </tr>
+          <tr id="expand-sa3" style="display:none">
+            <td colspan="5" class="expand-row">
+              <div class="dtree">
+                <div class="dtree-hdr">
+                  <span class="dtree-sa">SA-779534</span>
+                  <span class="dtree-wt">Winch Out</span>
+                  <span class="dtree-result unsched">Unscheduled</span>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-bottom:10px;padding:6px 10px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);border-radius:7px;">
+                  Reason: Failed to reschedule a rule violating task
+                </div>
+                <div class="dtree-section">
+                  <div class="dtree-section-label">No winner — all drivers excluded</div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-skill">Skill</span> Missing Winch Out certification</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Brandon Hadley 076DO</span>
+                      <span class="excl-name-pill">Raymond Rohauer 076DO</span>
+                      <span class="excl-name-pill">Adam Lucas</span>
+                      <span class="excl-name-pill">Ryan Burns 076DO</span>
+                    </div>
+                  </div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-absent">Absent</span> Resource absence overlaps window</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Austin Dobucki</span>
+                      <span class="excl-name-pill">Anthony Mickiewicz</span>
+                    </div>
+                  </div>
+                  <div class="excl-group">
+                    <div class="excl-group-label"><span class="excl-badge badge-capacity">Capacity</span> Shift fully booked</div>
+                    <div class="excl-names">
+                      <span class="excl-name-pill">Ben Tremblay</span>
+                      <span class="excl-name-pill">Daniel Rohauer</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- SA-779532 Tow Pick-Up -->
+          <tr class="main-row" onclick="toggleExpand('sa4')">
+            <td><span class="sa-num"><span class="chev" id="chev-sa4">▶</span>SA-779532</span></td>
+            <td style="color:#94a3b8">Tow Pick-Up</td>
+            <td><span class="tag-sched">Scheduled</span></td>
+            <td class="winner-name">Ryan Burns 076DO</td>
+            <td><span class="travel-val">32m</span></td>
+          </tr>
+          <tr id="expand-sa4" style="display:none">
+            <td colspan="5" class="expand-row">
+              <div class="dtree" style="font-size:11px;color:#94a3b8;padding:10px">Loading driver verdicts…</div>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-footer">
+      <span class="foot-sched">3 scheduled</span>
+      <span class="foot-unsched">1 unscheduled</span>
+      <span class="foot-total">4 total decisions</span>
+    </div>
+  </div>
+
+  <!-- ── CHAT ── -->
+  <div class="chat">
+    <div class="chat-hdr">
+      <span style="font-size:13px">✦</span>
+      <span class="chat-hdr-title">AI Chat</span>
+    </div>
+    <div class="chat-body">
+      <div class="msg user">
+        <div class="msg-avatar avatar-user">U</div>
+        <div class="msg-bubble bubble-user">
+          Tell me about run OR-2026-04-127715 (076DO, 1:00 AM). What were the key decisions and any unscheduled SAs?
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="msg-avatar avatar-ai">✦</div>
+        <div style="flex:1;max-width:88%">
+          <div class="msg-bubble bubble-ai">
+            Run <code>OR-127715</code> (076DO – Transit Auto Detail, 1:00 AM) optimized <strong>4 SAs</strong> and improved the schedule from 6 → <strong>8 scheduled</strong>, cutting total travel by 23 minutes.<br><br>
+            <strong>Key decisions:</strong><br>
+            • <strong>SA-779531</strong> (Battery) → <strong>Brandon Hadley</strong> at 19m. Closest by a wide margin — Ryan Burns was 32m, Raymond Rohauer 38m.<br>
+            • <strong>SA-779544</strong> (Tow Pick-Up) → <strong>Raymond Rohauer</strong> at 42m. Only 2 eligible drivers; Hadley was already committed.<br>
+            • <strong>SA-779534</strong> (Winch Out) → <em>Unscheduled.</em> All drivers with Winch Out certification were either absent or at capacity. This is a skill gap — only 2 drivers in 076DO are certified, and neither was available.<br><br>
+            <strong>Pattern to watch:</strong> Winch Out is failing to schedule in 4 of the last 7 runs in this territory. You may want to certify 1–2 more drivers.
+          </div>
+          <div class="chat-viz">
+            <div class="mini-dtree">
+              <div class="mini-dtree-hdr">SA-779531 · Battery</div>
+              <div class="mini-driver mini-winner">
+                <div class="mini-dot dot-w"></div>
+                <span class="mini-name">Brandon Hadley 076DO</span>
+                <span class="mini-travel">19m ★</span>
+              </div>
+              <div class="mini-driver mini-eligible">
+                <div class="mini-dot dot-e"></div>
+                <span class="mini-name">Ryan Burns 076DO</span>
+                <span class="mini-travel" style="color:#60a5fa">~32m</span>
+              </div>
+              <div class="mini-driver mini-eligible">
+                <div class="mini-dot dot-e"></div>
+                <span class="mini-name">Raymond Rohauer 076DO</span>
+                <span class="mini-travel" style="color:#60a5fa">~38m</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg user">
+        <div class="msg-avatar avatar-user">U</div>
+        <div class="msg-bubble bubble-user">
+          Why does Winch Out keep failing?
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="msg-avatar avatar-ai">✦</div>
+        <div style="flex:1;max-width:88%">
+          <div class="msg-bubble bubble-ai">
+            In 076DO, only <strong>2 drivers</strong> hold the Winch Out skill. Over the last 7 days, every failed Winch Out SA shows the same pattern: both certified drivers are either on an absence or already at capacity when the SA comes up.<br><br>
+            <strong>Certified drivers:</strong> Brandon Healy, Dylan Dobucki<br>
+            <strong>Recommendation:</strong> Certify 2–3 more drivers (e.g. Adam Lucas, Hunter Mitchell) — this single skill gap is causing 100% of the territory's unscheduled SAs.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input">
+      <textarea class="chat-textarea" rows="1" placeholder="Ask about a driver, SA, or run…"></textarea>
+      <button class="chat-send">➤</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleExpand(id) {
+  const row = document.getElementById('expand-' + id)
+  const chev = document.getElementById('chev-' + id)
+  const isOpen = row.style.display !== 'none'
+  row.style.display = isOpen ? 'none' : ''
+  chev.textContent = isOpen ? '▶' : '▼'
+  // toggle open class on main row
+  const mainRow = row.previousElementSibling
+  mainRow.classList.toggle('open', !isOpen)
+}
+</script>
+</body>
+</html>

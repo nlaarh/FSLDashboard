@@ -15,6 +15,7 @@ import Issues from './pages/Issues'
 import OnRoute from './pages/OnRoute'
 import Accounting from './pages/Accounting'
 import OptimizerDecoder from './pages/OptimizerDecoder'
+import Reporting from './pages/Reporting'
 
 export default function App() {
   const [department, setDepartment] = useState(null)
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />
         <Route path="/admin" element={isFinance ? <Navigate to="/accounting" replace /> : <Admin />} />
         <Route path="/optimizer" element={isFinance ? <Navigate to="/accounting" replace /> : <OptimizerDecoder />} />
+        <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

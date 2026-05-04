@@ -215,73 +215,23 @@ def process_run(run_id: str, slot: dict) -> str:
         return 'parse_error'
 
     # Insert with PK-based dedup. Pull batch grouping fields from metadata.
-    batch_id  = meta.get('batch_id')
-    chunk_num = meta.get('chunk_num')
-    fsl_type  = meta.get('fsl_type')
-    fsl_status = meta.get('fsl_status')
-    with optimizer_db.get_conn() as conn:
-        conn.execute("""
-            INSERT OR REPLACE INTO opt_runs (
-                id, name, territory_id, territory_name, policy_id, policy_name,
-                run_at, horizon_start, horizon_end,
-                resources_count, services_count,
-                pre_scheduled, post_scheduled, unscheduled_count,
-                pre_travel_time_s, post_travel_time_s,
-                pre_response_avg_s, post_response_avg_s,
-                batch_id, chunk_num, fsl_type, fsl_status,
-                objectives_count, work_rules_count, skills_count,
-                daily_optimization, commit_mode,
-                post_response_appt_s, post_extraneous_time_s,
-                post_start_commute_dist, post_end_commute_dist,
-                post_resources_unscheduled
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, [
-            run_row['id'], run_row['name'], run_row['territory_id'],
-            run_row['territory_name'], run_row['policy_id'], run_row['policy_name'],
-            run_row['run_at'], run_row['horizon_start'], run_row['horizon_end'],
-            run_row['resources_count'], run_row['services_count'],
-            run_row['pre_scheduled'], run_row['post_scheduled'], run_row['unscheduled_count'],
-            run_row['pre_travel_time_s'], run_row['post_travel_time_s'],
-            run_row['pre_response_avg_s'], run_row['post_response_avg_s'],
-            batch_id, chunk_num, fsl_type, fsl_status,
-            run_row.get('objectives_count'), run_row.get('work_rules_count'),
-            run_row.get('skills_count'), run_row.get('daily_optimization'),
-            run_row.get('commit_mode'),
-            run_row.get('post_response_appt_s'), run_row.get('post_extraneous_time_s'),
-            run_row.get('post_start_commute_dist'), run_row.get('post_end_commute_dist'),
-            run_row.get('post_resources_unscheduled'),
-        ])
-        if sa_decisions:
-            conn.executemany("""
-                INSERT OR REPLACE INTO opt_sa_decisions
-                    (id, run_id, sa_id, sa_number, sa_work_type, action,
-                     unscheduled_reason, winner_driver_id, winner_driver_name,
-                     winner_travel_time_min, winner_travel_dist_mi, run_at,
-                     priority, duration_min, sa_status, sa_lat, sa_lon,
-                     earliest_start, due_date, sched_start, sched_end,
-                     required_skills, is_pinned, seats_required)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, [[d['id'], d['run_id'], d['sa_id'], d['sa_number'], d['sa_work_type'],
-                   d['action'], d['unscheduled_reason'], d['winner_driver_id'],
-                   d['winner_driver_name'], d['winner_travel_time_min'],
-                   d['winner_travel_dist_mi'], d['run_at'],
-                   d.get('priority'), d.get('duration_min'), d.get('sa_status'),
-                   d.get('sa_lat'), d.get('sa_lon'),
-                   d.get('earliest_start'), d.get('due_date'),
-                   d.get('sched_start'), d.get('sched_end'),
-                   d.get('required_skills'), d.get('is_pinned'),
-                   d.get('seats_required')] for d in sa_decisions])
-        if driver_verdicts:
-            conn.executemany("""
-                INSERT OR REPLACE INTO opt_driver_verdicts
-                    (id, run_id, sa_id, driver_id, driver_name,
-                     status, exclusion_reason, travel_time_min, travel_dist_mi,
-                     driver_skills, driver_territory, run_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            """, [[v['id'], v['run_id'], v['sa_id'], v['driver_id'], v['driver_name'],
-                   v['status'], v['exclusion_reason'], v['travel_time_min'],
-                   v['travel_dist_mi'], v.get('driver_skills', ''),
-                   v.get('driver_territory', ''), v['run_at']] for v in driver_verdicts])
+    # Backend-aware: optimizer_db.upsert_* dispatches to DuckDB's INSERT OR REPLACE
+    # or Postgres's INSERT … ON CONFLICT DO UPDATE based on OPT_DB_BACKEND.
+    run_row['batch_id']   = meta.get('batch_id')
+    run_row['chunk_num']  = meta.get('chunk_num')
+    run_row['fsl_type']   = meta.get('fsl_type')
+    run_row['fsl_status'] = meta.get('fsl_status')
+
+    optimizer_db.upsert_run(run_row)
+    if sa_decisions:
+        optimizer_db.bulk_upsert_decisions(sa_decisions)
+    if driver_verdicts:
+        # Default driver_skills/driver_territory to empty string for back-compat with
+        # the original DuckDB schema where these columns were added later.
+        for v in driver_verdicts:
+            v.setdefault('driver_skills', '')
+            v.setdefault('driver_territory', '')
+        optimizer_db.bulk_upsert_verdicts(driver_verdicts)
 
     optimizer_db.upsert_resource_names([{'id': k, 'name': v} for k, v in name_map.items()])
     _mark_processed(run_id, slot['prefix'], slot['last_modified'], 'ok')

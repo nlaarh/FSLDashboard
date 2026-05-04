@@ -175,16 +175,12 @@ def _insights_garage_data():
         tid = r.get('ServiceTerritoryId', '')
         g = garages.setdefault(tid, {
             'name': name, 'total': 0, 'completed': 0,
-            'ata_sum': 0, 'ata_count': 0, 'fleet': 0, 'towbook': 0,
+            'ata_sum': 0, 'ata_count': 0,
         })
         g['total'] += 1
         if r.get('Status') == 'Completed':
             g['completed'] += 1
         method = (r.get('ERS_Dispatch_Method__c') or '').lower()
-        if 'field services' in method:
-            g['fleet'] += 1
-        elif 'towbook' in method:
-            g['towbook'] += 1
         # ATA: only use ActualStartTime for Fleet SAs (Towbook ActualStartTime is bulk-updated at midnight)
         created = r.get('CreatedDate')
         actual = r.get('ActualStartTime')
@@ -245,8 +241,6 @@ def _insights_garage_data():
         top_reasons = sorted(decl.items(), key=lambda x: -x[1])[:3]
         csat = csat_map.get(name, {})
         drivers = driver_map.get(tid, 0)
-        fleet_pct = round(100 * g['fleet'] / max(total, 1), 1)
-        towbook_pct = round(100 * g['towbook'] / max(total, 1), 1)
 
         # Fleet = territory 100*/800*. Everything else = contractor.
         is_contractor = not is_fleet_territory(name)
@@ -275,8 +269,6 @@ def _insights_garage_data():
             'csat_avg': round(csat.get('avg', 0), 2),
             'csat_responses': csat.get('count', 0),
             'driver_count': effective_drivers,
-            'fleet_pct': fleet_pct,
-            'towbook_pct': towbook_pct,
             'is_contractor': is_contractor,
             'problem_score': round(score, 1),
         })

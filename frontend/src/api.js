@@ -213,6 +213,8 @@ export const optimizerGetUnscheduled = (runId) => api.get(`/optimizer/runs/${run
 export const optimizerGetPatterns = (territory, days = 7) => api.get('/optimizer/patterns', { params: { territory, days } }).then(r => r.data)
 export const optimizerListFiles = (date = null) =>
   api.get('/optimizer/files', { params: date ? { date } : {} }).then(r => r.data)
+export const optimizerLatestDate = () =>
+  api.get('/optimizer/files/latest-date').then(r => r.data)
 export const optimizerRunHealth = (runId) => api.get(`/optimizer/runs/${runId}/health`).then(r => r.data)
 export const optimizerDriverDay = (runId, driverId) =>
   api.get(`/optimizer/runs/${runId}/driver/${driverId}/day`).then(r => r.data)
@@ -221,3 +223,25 @@ export const optimizerRunZipUrl = (runId) => `/api/optimizer/files/${runId}/down
 export const optimizerDateZipUrl = (date) => `/api/optimizer/files/by-date/${date}/download`
 export const optimizerChat = (messages, runContext = null) =>
   api.post('/optimizer/chat', { messages, run_context: runContext }).then(r => r.data)
+
+// Reporting
+export const fetchReportSummary = (garageIds, startDate, endDate) => {
+  const params = new URLSearchParams()
+  garageIds.forEach(id => params.append('garage_ids', id))
+  params.set('start_date', startDate)
+  params.set('end_date', endDate)
+  return api.get(`/reporting/garage-summary?${params}`).then(r => r.data)
+}
+
+export const exportReportSummary = (garageIds, startDate, endDate) => {
+  const params = new URLSearchParams()
+  garageIds.forEach(id => params.append('garage_ids', id))
+  params.set('start_date', startDate)
+  params.set('end_date', endDate)
+  const a = document.createElement('a')
+  a.href = `/api/reporting/garage-summary/export?${params}`
+  a.download = `garage_report_${startDate}_to_${endDate}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}

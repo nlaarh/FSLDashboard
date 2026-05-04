@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "serverName":          { "value": "fslapp-pg" },
+    "location":            { "value": "eastus2" },
+    "postgresVersion":     { "value": "16" },
+    "skuName":             { "value": "Standard_B2s" },
+    "storageSizeGB":       { "value": 64 },
+    "backupRetentionDays": { "value": 7 },
+    "devFirewallStartIp":  { "value": "0.0.0.0" },
+    "devFirewallEndIp":    { "value": "255.255.255.255" },
+    "aadAdminObjectId":    { "value": "FILL-IN-FROM-deploy.sh" },
+    "aadAdminPrincipalName": { "value": "nlaaroubi@nyaaa.com" },
+    "aadAdminPrincipalType": { "value": "User" },
+    "tags": {
+      "value": {
+        "app": "fslapp",
+        "env": "sandbox",
+        "owner": "nlaaroubi",
+        "costCenter": "data-platform"
+      }
+    }
+  }
+}

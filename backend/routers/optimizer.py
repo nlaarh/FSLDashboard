@@ -145,6 +145,20 @@ def _blob_container():
     return BlobServiceClient.from_connection_string(conn).get_container_client(container_name)
 
 
+@router.get('/api/optimizer/files/latest-date')
+def latest_date():
+    """Return the most recent date that has blobs in Azure storage."""
+    container = _blob_container()
+    seen = set()
+    for b in container.list_blobs():
+        parts = b.name.split('/')
+        if len(parts) >= 1 and parts[0]:
+            seen.add(parts[0])
+    if not seen:
+        raise HTTPException(404, "No optimizer runs found in Azure Blob")
+    return {'date': sorted(seen)[-1]}
+
+
 @router.get('/api/optimizer/files')
 def list_files(date: str = Query(None, description="YYYY-MM-DD; default = today")):
     """List runs available in Azure Blob, enriched with batch grouping from DuckDB.

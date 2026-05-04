@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, RefreshCw, FileJson, Calendar, Layers, ChevronDown, ChevronRight } from 'lucide-react'
-import { optimizerListFiles, optimizerRunZipUrl, optimizerDateZipUrl } from '../api'
+import { optimizerListFiles, optimizerLatestDate, optimizerRunZipUrl, optimizerDateZipUrl } from '../api'
 
 function fmtSize(bytes) {
   if (bytes == null) return '—'
@@ -149,7 +149,12 @@ export default function OptimizerFileBrowser() {
     }
   }
 
-  useEffect(() => { load(date) }, [date])
+  // On mount, auto-select the latest date that has data
+  useEffect(() => {
+    optimizerLatestDate()
+      .then(({ date: latest }) => { setDate(latest); return load(latest) })
+      .catch(() => load(todayIso()))
+  }, [])
 
   const totalSize = runs.reduce((s, r) => s + (r.total_size || 0), 0)
   const totalFiles = runs.reduce((s, r) => s + (r.blobs?.length || 0), 0)
