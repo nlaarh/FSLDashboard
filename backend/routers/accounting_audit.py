@@ -69,6 +69,9 @@ def _build_woa_data(woa_id: str) -> dict:
     wo = woa.get('Work_Order__r') or {}
     wo_id = woa.get('Work_Order__c', '')
     territory_id = wo.get('ServiceTerritoryId', '')
+    # Fleet = Facility_ID__c starts with '100' or '800'. Skip Towbook-only rflib query for Fleet.
+    _fac_id = (wo.get('Facility_ID__c') or '').strip()
+    _is_fleet = _fac_id.startswith(('100', '800'))
 
     # Parallel: WOLI + Costs + SA — all need only wo_id (from Round 1)
     _SA_FIELDS = """Id, AppointmentNumber, Status, SchedStartTime,
@@ -244,6 +247,8 @@ def _build_woa_data(woa_id: str) -> dict:
         """Towbook driver GPS from rflib_Log__c. Covers full job lifecycle:
         DISPATCHED → EN_ROUTE → ON_LOCATION. ERS_Request__c is not filterable
         in SOQL WHERE, so we fetch all logs for the WO and filter in Python."""
+        if _is_fleet:
+            return []  # Fleet drivers use FSL mobile GPS on SA — rflib is Towbook-only
         wo_number = wo.get('WorkOrderNumber', '')
         if not wo_number:
             return []

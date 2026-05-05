@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, Fragment, useCallback } from 'react'
+import { useState, useEffect, useMemo, Fragment, useCallback, useRef } from 'react'
 import { clsx } from 'clsx'
 import {
   Search, ChevronUp, ChevronDown, RefreshCw,
   AlertTriangle, HelpCircle, X, Download,
 } from 'lucide-react'
-import { fetchWOAdjustments } from '../api'
+import { fetchWOAdjustments, fetchWOAAudit } from '../api'
 import AccountingAuditPanel from '../components/AccountingAuditPanel'
 import AccountingAnalytics from '../components/AccountingAnalytics'
 import HelpAccounting from '../components/HelpAccounting'
@@ -147,7 +147,20 @@ export default function Accounting() {
   const [page, setPage] = useState(0)
   const [activeTab, setActiveTab] = useState('woa')
   const [auditOverrides, setAuditOverrides] = useState({})
+  const _prefetchTimer = useRef(null)
+  const _prefetching = useRef(new Set())
   const PAGE_SIZE = 50
+
+  const prefetchAudit = useCallback((woaId) => {
+    if (!woaId || _prefetching.current.has(woaId)) return
+    _prefetchTimer.current = setTimeout(() => {
+      _prefetching.current.add(woaId)
+      fetchWOAAudit(woaId).catch(() => {}).finally(() => _prefetching.current.delete(woaId))
+    }, 400)
+  }, [])
+  const cancelPrefetch = useCallback(() => {
+    clearTimeout(_prefetchTimer.current)
+  }, [])
   const handleAuditComplete = useCallback((woaId, { recommendation, confidence }) => {
     if (woaId && recommendation) {
       setAuditOverrides(prev => ({ ...prev, [woaId]: { recommendation, confidence } }))
@@ -394,6 +407,8 @@ export default function Accounting() {
                   <Fragment key={rowKey}>
                     <tr
                       onClick={() => setExpanded(isExpanded ? null : rowKey)}
+                      onMouseEnter={() => !isExpanded && prefetchAudit(r.id)}
+                      onMouseLeave={cancelPrefetch}
                       className={clsx(
                         'cursor-pointer transition-colors group',
                         isExpanded ? 'bg-slate-800/70' : 'hover:bg-slate-800/40',

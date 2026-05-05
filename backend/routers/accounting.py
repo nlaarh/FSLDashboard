@@ -400,15 +400,17 @@ def api_woa_audit(woa_id: str):
             full['recommendation'] = full['recommendation'].lower()
         return full
 
-    # Return data-only from cache (already built, AI not yet run)
-    cached_data = cache.get(data_key)
+    # Return data-only from cache (L1 memory, then L2 disk)
+    cached_data = cache.get(data_key) or cache.disk_get(data_key, ttl=3600)
     if cached_data:
+        cache.put(data_key, cached_data, ttl=1800)  # promote to L1
         return {k: v for k, v in cached_data.items() if not k.startswith('_')}
 
-    # Fresh build — cache for both this request and the AI step
+    # Fresh build — cache in both L1 memory and L2 disk
     result = _build_woa_data(woa_id)
     to_return = {k: v for k, v in result.items() if not k.startswith('_')}
     cache.put(data_key, result, ttl=1800)
+    cache.disk_put(data_key, result, ttl=3600)
     return to_return
 
 
