@@ -131,7 +131,7 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
           )}
           {woType && (
             <div className="flex items-baseline gap-1" title="Work Type from the Service Appointment linked to this WO (SA.WorkType.Name). Describes the service category performed.">
-              <span className="text-[9px] text-slate-600 uppercase">WO Type:</span>
+              <span className="text-[9px] text-slate-600 uppercase">Service Type:</span>
               <span className="text-[10px] font-semibold text-slate-200">{woType}</span>
             </div>
           )}

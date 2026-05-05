@@ -192,9 +192,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
           {rec || 'UNKNOWN'}
         </span>
-        {ev.woa_type && (
+        {ev.program && (
           <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/60 text-slate-300 border border-slate-600/40 shrink-0">
-            {ev.woa_type}
+            {ev.program}
           </span>
         )}
         <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">

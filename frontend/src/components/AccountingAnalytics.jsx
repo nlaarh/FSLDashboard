@@ -509,13 +509,13 @@ export default function AccountingAnalytics({ status, onDrillDown }) {
         <ProductChart byProduct={data.by_product} onDrillDown={onDrillDown} />
       </div>
 
-      {/* WO Type + Service Type breakdown */}
-      {(data.by_woa_type?.length > 0 || data.by_service_type?.length > 0) && (
+      {/* Program + Service Type breakdown */}
+      {(data.by_program?.length > 0 || data.by_service_type?.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <BreakdownChart
-            title="WOAs by WO Type"
+            title="WOAs by Program"
             subtitle="Standard, RAP, Reciprocal, Thruway, etc. (WorkOrder.Type__c) — green = auto-approved · amber = needs review"
-            data={data.by_woa_type}
+            data={data.by_program}
           />
           <BreakdownChart
             title="WOAs by Service Type"

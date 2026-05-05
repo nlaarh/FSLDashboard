@@ -601,7 +601,7 @@ def _build_woa_data(woa_id: str) -> dict:
             'sa_completed_lon': _safe_float(sa.get('ERS_Completed_Geolocation__Longitude__s')),
             'membership_level_coverage': sa.get('ERS_Membership_Level_Coverage__c'),
             'wo_type': (sa.get('WorkType') or {}).get('Name') or None,
-            'woa_type': (wo.get('Type__c') or '').strip() or None,
+            'program': (wo.get('Type__c') or '').strip() or None,
             # Derived flags
             'is_cancel_en_route': wo.get('Resolution_Code__c') == 'X002',
             'same_member_same_day': same_day_calls,

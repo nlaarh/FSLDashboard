@@ -343,7 +343,7 @@ export default function Accounting() {
                 <th className="px-1 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-5">#</th>
                 <Th label="WOA #"      col="woa_number"    sort={sort} onSort={onSort} />
                 <Th label="Facility"   col="facility"      sort={sort} onSort={onSort} />
-                <Th label="WO Type" col="woa_type" sort={sort} onSort={onSort} />
+                <Th label="Program" col="program" sort={sort} onSort={onSort} />
                 <Th label="WO #"       col="wo_number"     sort={sort} onSort={onSort} />
                 <Th label="Product"    col="product"       sort={sort} onSort={onSort} />
                 <Th label="Requested"  col="requested_qty" sort={sort} onSort={onSort} right />
@@ -428,20 +428,20 @@ export default function Accounting() {
                         <span className="text-slate-300 font-medium truncate max-w-[180px] block">{r.facility || '--'}</span>
                       </td>
 
-                      {/* WO Type */}
+                      {/* Program */}
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        {r.woa_type ? (
+                        {r.program ? (
                           <span className={clsx(
                             'px-1.5 py-0.5 rounded text-[9px] font-semibold border',
-                            r.woa_type === 'Standard'       && 'bg-slate-700/40 text-slate-300 border-slate-600/40',
-                            r.woa_type === 'RAP'            && 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-                            r.woa_type === 'Reciprocal'     && 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-                            r.woa_type === 'Thruway'        && 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-                            r.woa_type === 'Private Service' && 'bg-slate-600/30 text-slate-400 border-slate-600/30',
-                            r.woa_type === 'Authorization'  && 'bg-sky-500/15 text-sky-400 border-sky-500/30',
-                            !['Standard','RAP','Reciprocal','Thruway','Private Service','Authorization'].includes(r.woa_type) && 'bg-slate-700/40 text-slate-400 border-slate-600/40',
+                            r.program === 'Standard'       && 'bg-slate-700/40 text-slate-300 border-slate-600/40',
+                            r.program === 'RAP'            && 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+                            r.program === 'Reciprocal'     && 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+                            r.program === 'Thruway'        && 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+                            r.program === 'Private Service' && 'bg-slate-600/30 text-slate-400 border-slate-600/30',
+                            r.program === 'Authorization'  && 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+                            !['Standard','RAP','Reciprocal','Thruway','Private Service','Authorization'].includes(r.program) && 'bg-slate-700/40 text-slate-400 border-slate-600/40',
                           )}>
-                            {r.woa_type}
+                            {r.program}
                           </span>
                         ) : (
                           <span className="text-slate-600">--</span>
