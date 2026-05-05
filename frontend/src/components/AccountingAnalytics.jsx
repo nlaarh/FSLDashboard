@@ -352,6 +352,45 @@ function ProductChart({ byProduct, onDrillDown }) {
   )
 }
 
+function BreakdownChart({ title, subtitle, data }) {
+  const chartData = useMemo(() =>
+    (data || []).map(d => ({
+      name: d.type,
+      approve: d.approve || 0,
+      review: d.review || 0,
+      total: d.count,
+    }))
+  , [data])
+
+  const CustomTick = ({ x, y, payload }) => (
+    <text x={x} y={y} dy={4} textAnchor="end" fill="#94a3b8" fontSize={9}>
+      {payload.value.length > 22 ? payload.value.slice(0, 22) + '…' : payload.value}
+    </text>
+  )
+
+  if (!chartData.length) return null
+  const height = Math.max(160, chartData.length * 28 + 40)
+
+  return (
+    <div className="glass rounded-xl border border-slate-700/30 p-4">
+      <div className="text-xs font-semibold text-slate-300 mb-1">{title}</div>
+      <div className="text-[10px] text-slate-500 mb-3">{subtitle}</div>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }} barSize={10}>
+          <XAxis type="number" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" tick={<CustomTick />} width={140} interval={0} axisLine={false} tickLine={false} />
+          <Tooltip {...CHART_TOOLTIP_STYLE}
+            formatter={(val, name) => [val, name === 'approve' ? '✓ Auto-Approved' : '⚠ Needs Review']} />
+          <Bar dataKey="approve" stackId="a" fill="#10b981" name="approve" />
+          <Bar dataKey="review" stackId="a" fill="#f59e0b" name="review" radius={[0, 3, 3, 0]}
+            label={{ position: 'right', fill: '#64748b', fontSize: 9,
+              formatter: (val, entry) => entry ? (entry.approve + val) : val }} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function AccountingAnalytics({ status, onDrillDown }) {
@@ -469,6 +508,22 @@ export default function AccountingAnalytics({ status, onDrillDown }) {
         <SubmitterChart byCreator={data.by_creator} />
         <ProductChart byProduct={data.by_product} onDrillDown={onDrillDown} />
       </div>
+
+      {/* WO Type + Service Type breakdown */}
+      {(data.by_membership_type?.length > 0 || data.by_service_type?.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <BreakdownChart
+            title="WOAs by WO Type"
+            subtitle="Standard, RAP, Reciprocal, Thruway, etc. (WorkOrder.Type__c) — green = auto-approved · amber = needs review"
+            data={data.by_membership_type}
+          />
+          <BreakdownChart
+            title="WOAs by Service Type"
+            subtitle="Tow, Battery, Lockout, etc. — which call types drive the most disputes"
+            data={data.by_service_type}
+          />
+        </div>
+      )}
 
       {/* Leaderboard + Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

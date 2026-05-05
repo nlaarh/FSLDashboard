@@ -45,7 +45,8 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
         ql = q.lower()
         items = [r for r in items if ql in (r.get('woa_number') or '').lower()
                  or ql in (r.get('wo_number') or '').lower()
-                 or ql in (r.get('facility') or '').lower()]
+                 or ql in (r.get('facility') or '').lower()
+                 or ql in (r.get('membership_type') or '').lower()]
     if start_date:
         items = [r for r in items if (r.get('_sort_date') or '') >= start_date]
     if end_date:
@@ -109,7 +110,8 @@ def _build_woa_list() -> dict:
                Work_Order__r.ERS_En_Route_Date_Time__c,
                Work_Order__r.ERS_On_Location_Date_Time__c,
                Work_Order__r.Long_Tow_Used__c,
-               Work_Order__r.Long_Tow_Miles__c
+               Work_Order__r.Long_Tow_Miles__c,
+               Work_Order__r.Type__c
         FROM ERS_Work_Order_Adjustment__c
         ORDER BY CreatedDate DESC
         LIMIT 15000
@@ -152,6 +154,24 @@ def _build_woa_list() -> dict:
                 'unit_rate': unit_rate,
                 'description': wl.get('Description'),
             })
+
+    # Secondary: fetch WorkType per WO via SA.
+    # SAs link to WOLI (not WO) via ParentRecordId — must use WOLI IDs.
+    woli_ids = [w['id'] for wolis in wo_wolis.values() for w in wolis if w.get('id')]
+    woli_to_wo = {w['id']: woid for woid, wolis in wo_wolis.items() for w in wolis if w.get('id')}
+    sa_type_rows = batch_soql_parallel("""
+        SELECT ParentRecordId, WorkType.Name
+        FROM ServiceAppointment
+        WHERE ParentRecordId IN ('{id_list}')
+        AND WorkType.Name != 'Tow Drop-Off'
+    """, woli_ids, chunk_size=500) if woli_ids else []
+    wo_service_type: dict = {}
+    for _sa in sa_type_rows:
+        _woli_id = _sa.get('ParentRecordId')
+        _wt = (_sa.get('WorkType') or {}).get('Name') or ''
+        _woid = woli_to_wo.get(_woli_id)
+        if _woid and _wt and _woid not in wo_service_type:
+            wo_service_type[_woid] = _wt
 
     def _best_woli(wo_id, requested_qty, wo=None):
         return match_best_woli(wo_wolis.get(wo_id, []), requested_qty, wo)
@@ -302,6 +322,8 @@ def _build_woa_list() -> dict:
             'woli_summary': woli_summary,
             'estimated_usd': estimated_usd,
             'is_low_materiality': is_low_materiality,
+            'membership_type': (wo.get('Type__c') or '').strip(),
+            'service_type': wo_service_type.get(wo_id, ''),
         })
 
     # Post-process: per-WO WOA counts and same-product duplicate detection
@@ -356,7 +378,7 @@ def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
         items = [r for r in items if (r.get('requested_qty') or 0) < 0]
     if q:
         ql = q.lower()
-        items = [r for r in items if ql in (r.get('woa_number') or '').lower() or ql in (r.get('wo_number') or '').lower() or ql in (r.get('facility') or '').lower()]
+        items = [r for r in items if ql in (r.get('woa_number') or '').lower() or ql in (r.get('wo_number') or '').lower() or ql in (r.get('facility') or '').lower() or ql in (r.get('membership_type') or '').lower()]
     if start_date:
         items = [r for r in items if (r.get('_sort_date') or '') >= start_date]
     if end_date:
@@ -499,6 +521,8 @@ def _compute_analytics(items: list) -> dict:
     prod_rec: dict = defaultdict(lambda: {'approve': 0, 'review': 0})
     creator_stats: Counter = Counter()
     creator_rec: dict = defaultdict(lambda: {'approve': 0, 'review': 0})
+    mem_stats: dict = defaultdict(lambda: {'count': 0, 'approve': 0, 'review': 0})
+    svc_stats: dict = defaultdict(lambda: {'count': 0, 'approve': 0, 'review': 0})
     approve_total = review_total = 0
     total_est_usd = 0.0
     _STOP = {'the','a','an','and','or','for','of','to','in','is','was','it','this','that',
@@ -528,6 +552,13 @@ def _compute_analytics(items: list) -> dict:
         creator_stats[creator] += 1
         creator_rec[creator]['approve' if rec == 'approve' else 'review'] += 1
         total_est_usd += est
+
+        mem_type = item.get('membership_type') or 'Unknown'
+        svc_type = item.get('service_type') or 'Unknown'
+        mem_stats[mem_type]['count'] += 1
+        mem_stats[mem_type]['approve' if rec == 'approve' else 'review'] += 1
+        svc_stats[svc_type]['count'] += 1
+        svc_stats[svc_type]['approve' if rec == 'approve' else 'review'] += 1
 
         desc = (item.get('description') or '').lower()
         if desc:
@@ -568,6 +599,14 @@ def _compute_analytics(items: list) -> dict:
             for n, c in creator_stats.most_common(20)
         ],
         'keywords': [{'word': w, 'count': c} for w, c in kw_counter.most_common(30)],
+        'by_membership_type': sorted([
+            {'type': t, 'count': s['count'], 'approve': s['approve'], 'review': s['review']}
+            for t, s in mem_stats.items()
+        ], key=lambda x: x['count'], reverse=True),
+        'by_service_type': sorted([
+            {'type': t, 'count': s['count'], 'approve': s['approve'], 'review': s['review']}
+            for t, s in svc_stats.items()
+        ], key=lambda x: x['count'], reverse=True),
     }
 
 

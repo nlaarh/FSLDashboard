@@ -192,6 +192,11 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
           {rec || 'UNKNOWN'}
         </span>
+        {ev.membership_type && (
+          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/60 text-slate-300 border border-slate-600/40 shrink-0">
+            {ev.membership_type}
+          </span>
+        )}
         <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">
           {audit ? headerSummary(ev, code) : (recReason || <span className="text-slate-600 italic">Loading details…</span>)}
         </span>
@@ -494,6 +499,13 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
               {ev.vehicle_weight > 0 && <span className="text-slate-500 ml-2">({ev.vehicle_weight} lbs)</span>}
             </div>
           </div>
+
+          {ev.wo_type && (
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">Service Type</div>
+              <div className="text-[10px] font-semibold text-slate-300">{ev.wo_type}</div>
+            </div>
+          )}
 
           {/* On-scene + Status */}
           <div className="grid grid-cols-2 gap-3">

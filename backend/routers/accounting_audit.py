@@ -56,7 +56,8 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order__r.Facility_Contract__r.Name,
                Work_Order__r.Entitlement_Master__r.Name,
                Work_Order__r.Long_Tow_Used__c,
-               Work_Order__r.Long_Tow_Miles__c
+               Work_Order__r.Long_Tow_Miles__c,
+               Work_Order__r.Type__c
         FROM ERS_Work_Order_Adjustment__c
         WHERE Id = '{woa_id}'
         LIMIT 1
@@ -600,6 +601,7 @@ def _build_woa_data(woa_id: str) -> dict:
             'sa_completed_lon': _safe_float(sa.get('ERS_Completed_Geolocation__Longitude__s')),
             'membership_level_coverage': sa.get('ERS_Membership_Level_Coverage__c'),
             'wo_type': (sa.get('WorkType') or {}).get('Name') or None,
+            'membership_type': (wo.get('Type__c') or '').strip() or None,
             # Derived flags
             'is_cancel_en_route': wo.get('Resolution_Code__c') == 'X002',
             'same_member_same_day': same_day_calls,
