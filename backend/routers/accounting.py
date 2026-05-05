@@ -46,7 +46,7 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
         items = [r for r in items if ql in (r.get('woa_number') or '').lower()
                  or ql in (r.get('wo_number') or '').lower()
                  or ql in (r.get('facility') or '').lower()
-                 or ql in (r.get('membership_type') or '').lower()]
+                 or ql in (r.get('woa_type') or '').lower()]
     if start_date:
         items = [r for r in items if (r.get('_sort_date') or '') >= start_date]
     if end_date:
@@ -322,7 +322,7 @@ def _build_woa_list() -> dict:
             'woli_summary': woli_summary,
             'estimated_usd': estimated_usd,
             'is_low_materiality': is_low_materiality,
-            'membership_type': (wo.get('Type__c') or '').strip(),
+            'woa_type': (wo.get('Type__c') or '').strip(),
             'service_type': wo_service_type.get(wo_id, ''),
         })
 
@@ -378,7 +378,7 @@ def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
         items = [r for r in items if (r.get('requested_qty') or 0) < 0]
     if q:
         ql = q.lower()
-        items = [r for r in items if ql in (r.get('woa_number') or '').lower() or ql in (r.get('wo_number') or '').lower() or ql in (r.get('facility') or '').lower() or ql in (r.get('membership_type') or '').lower()]
+        items = [r for r in items if ql in (r.get('woa_number') or '').lower() or ql in (r.get('wo_number') or '').lower() or ql in (r.get('facility') or '').lower() or ql in (r.get('woa_type') or '').lower()]
     if start_date:
         items = [r for r in items if (r.get('_sort_date') or '') >= start_date]
     if end_date:
@@ -553,7 +553,7 @@ def _compute_analytics(items: list) -> dict:
         creator_rec[creator]['approve' if rec == 'approve' else 'review'] += 1
         total_est_usd += est
 
-        mem_type = item.get('membership_type') or 'Unknown'
+        mem_type = item.get('woa_type') or 'Unknown'
         svc_type = item.get('service_type') or 'Unknown'
         mem_stats[mem_type]['count'] += 1
         mem_stats[mem_type]['approve' if rec == 'approve' else 'review'] += 1
@@ -599,7 +599,7 @@ def _compute_analytics(items: list) -> dict:
             for n, c in creator_stats.most_common(20)
         ],
         'keywords': [{'word': w, 'count': c} for w, c in kw_counter.most_common(30)],
-        'by_membership_type': sorted([
+        'by_woa_type': sorted([
             {'type': t, 'count': s['count'], 'approve': s['approve'], 'review': s['review']}
             for t, s in mem_stats.items()
         ], key=lambda x: x['count'], reverse=True),
