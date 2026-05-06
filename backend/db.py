@@ -19,6 +19,17 @@ os.makedirs(_LOCAL_DIR, exist_ok=True)
 _DB_PATH = os.path.join(_LOCAL_DIR, 'fsl_data.duckdb')
 _local = threading.local()  # thread-local storage for connections
 
+# Archive corrupted DuckDB on startup so it doesn't block the app.
+if os.path.exists(_DB_PATH):
+    try:
+        _test = duckdb.connect(_DB_PATH)
+        _test.execute("SELECT 1").fetchone()
+        _test.close()
+    except Exception as _e:
+        import shutil as _shutil
+        _bak = _DB_PATH + f".bak.{int(_time.time())}"
+        _shutil.move(_DB_PATH, _bak)
+
 
 def get_con() -> duckdb.DuckDBPyConnection:
     """Get or create a thread-local DuckDB connection.

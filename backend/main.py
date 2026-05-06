@@ -268,9 +268,9 @@ async def startup():
     # The refresher handles leader election — safe to call from all workers
     refresher.start()
 
-    # Optimizer blob sync — Azure Blob → DuckDB poll loop (replaces old ContentVersion sync)
-    import optimizer_blob_sync
-    optimizer_blob_sync.start()
+    # Optimizer blob sync — disabled until DuckDB is re-enabled
+    # import optimizer_blob_sync
+    # optimizer_blob_sync.start()
 
     # Nightly heavy trends refresh (too heavy for regular refresher)
     threading.Thread(target=_nightly_trends_refresh, daemon=True).start()

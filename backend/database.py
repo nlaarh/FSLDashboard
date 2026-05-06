@@ -74,8 +74,73 @@ def get_db():
         conn.close()
 
 
+def _recover_db():
+    """Recover a corrupted SQLite DB. Archives the corrupted file as .bak, puts recovered data in place.
+    Returns True if recovery succeeded (even partially), False if unrecoverable."""
+    import shutil
+    recovered_path = DB_PATH + ".recovering"
+    bak_path = DB_PATH + f".corrupted.{int(time.time())}"
+    try:
+        src = sqlite3.connect(f"file:{DB_PATH}?mode=ro&immutable=1", uri=True, timeout=5)
+        dst = sqlite3.connect(recovered_path, timeout=10)
+        dst.row_factory = sqlite3.Row
+        try:
+            tables = src.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+            ).fetchall()
+            for name, create_sql in tables:
+                try:
+                    dst.execute(create_sql)
+                    rows = src.execute(f'SELECT * FROM "{name}"').fetchall()
+                    if rows:
+                        cols = len(rows[0])
+                        dst.executemany(
+                            f'INSERT OR IGNORE INTO "{name}" VALUES ({",".join(["?"]*cols)})', rows
+                        )
+                    log.info(f"Recovered table {name}: {len(rows)} rows")
+                except Exception as e:
+                    log.warning(f"Could not recover table {name}: {e}")
+            for (idx_sql,) in src.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+            ).fetchall():
+                try:
+                    dst.execute(idx_sql)
+                except Exception:
+                    pass
+            dst.commit()
+        finally:
+            src.close()
+            dst.close()
+        shutil.move(DB_PATH, bak_path)
+        shutil.move(recovered_path, DB_PATH)
+        log.info(f"SQLite recovery complete. Corrupted file archived to {bak_path}")
+        return True
+    except Exception as e:
+        log.error(f"SQLite recovery failed: {e}")
+        try:
+            os.remove(recovered_path)
+        except Exception:
+            pass
+        return False
+
+
 def init_db():
     """Create tables if they don't exist. Called once at startup."""
+    # Guard against corrupted DB — try to recover data before falling back to empty.
+    if os.path.exists(DB_PATH):
+        try:
+            with sqlite3.connect(DB_PATH, timeout=5) as _probe:
+                result = _probe.execute("PRAGMA integrity_check").fetchone()
+                if result and result[0] != 'ok':
+                    raise sqlite3.DatabaseError(f"integrity_check: {result[0]}")
+        except sqlite3.DatabaseError as e:
+            log.error(f"SQLite DB corrupted ({e}) — attempting data recovery...")
+            if not _recover_db():
+                import shutil
+                bak = DB_PATH + f".unrecoverable.{int(time.time())}"
+                shutil.move(DB_PATH, bak)
+                log.error(f"Recovery failed. Archived to {bak}, starting with empty DB.")
+
     with get_db() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS settings (
