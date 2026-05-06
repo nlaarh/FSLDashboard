@@ -74,13 +74,29 @@ def get_db():
         conn.close()
 
 
+def _clear_wal_files():
+    """Remove SQLite WAL/SHM sidecar files that can block a fresh open."""
+    for ext in ['-wal', '-shm']:
+        try:
+            os.remove(DB_PATH + ext)
+            log.info(f"Removed sidecar: {DB_PATH + ext}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.warning(f"Could not remove {DB_PATH + ext}: {e}")
+
+
 def _recover_db():
-    """Recover a corrupted SQLite DB. Copies corrupted file to .bak, atomically replaces with recovered data.
-    Returns True if recovery succeeded (even partially), False if unrecoverable."""
+    """Recover a corrupted SQLite DB using SQLite's backup API.
+    Archives corrupted file as .bak. Returns True if recovery succeeded."""
     import shutil
     tmp_path = DB_PATH + ".recovering"
     bak_path = DB_PATH + f".corrupted.{int(time.time())}"
     try:
+        # Archive the corrupted file first (keep original in place during recovery)
+        shutil.copy2(DB_PATH, bak_path)
+
+        # Extract whatever data is readable into a temp DB
         src = sqlite3.connect(f"file:{DB_PATH}?mode=ro&immutable=1", uri=True, timeout=5)
         dst = sqlite3.connect(tmp_path, timeout=10)
         try:
@@ -112,17 +128,27 @@ def _recover_db():
             except Exception: pass
             try: dst.close()
             except Exception: pass
-        # Archive corrupted (copy, keep original in place during recovery)
-        shutil.copy2(DB_PATH, bak_path)
-        # Atomically replace corrupted with recovered
-        os.replace(tmp_path, DB_PATH)
+
+        # Remove corrupted DB + any WAL/SHM sidecars so they don't interfere
+        for path in [DB_PATH, DB_PATH + '-wal', DB_PATH + '-shm']:
+            try: os.remove(path)
+            except Exception: pass
+
+        # Use SQLite backup API to write recovered data cleanly into DB_PATH
+        src_conn = sqlite3.connect(tmp_path)
+        dst_conn = sqlite3.connect(DB_PATH)
+        src_conn.backup(dst_conn)
+        src_conn.close()
+        dst_conn.close()
+        try: os.remove(tmp_path)
+        except Exception: pass
+
         log.info(f"SQLite recovery complete. Corrupted archived to {bak_path}")
         return True
     except Exception as e:
         log.error(f"SQLite recovery failed: {e}")
         try: os.remove(tmp_path)
         except Exception: pass
-        # DB_PATH still has the corrupted file (we only copied to bak)
         return False
 
 
@@ -138,18 +164,18 @@ def init_db():
         except sqlite3.DatabaseError as e:
             log.error(f"SQLite DB corrupted ({e}) — attempting data recovery...")
             if not _recover_db():
-                # Recovery failed — archive corrupted and start fresh
+                # Recovery failed — clear everything so SQLite can create a fresh DB
                 import shutil
                 bak = DB_PATH + f".unrecoverable.{int(time.time())}"
-                try:
-                    shutil.copy2(DB_PATH, bak)
-                except Exception:
-                    pass
-                try:
-                    os.remove(DB_PATH)
-                except Exception:
-                    pass
+                try: shutil.copy2(DB_PATH, bak)
+                except Exception: pass
+                for path in [DB_PATH, DB_PATH + '-wal', DB_PATH + '-shm']:
+                    try: os.remove(path)
+                    except Exception: pass
                 log.error(f"Recovery failed. Archived to {bak}, starting with empty DB.")
+    else:
+        # Fresh start — clear any orphaned WAL/SHM files
+        _clear_wal_files()
 
     with get_db() as conn:
         conn.executescript("""
