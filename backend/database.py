@@ -75,15 +75,14 @@ def get_db():
 
 
 def _recover_db():
-    """Recover a corrupted SQLite DB. Archives the corrupted file as .bak, puts recovered data in place.
+    """Recover a corrupted SQLite DB. Copies corrupted file to .bak, atomically replaces with recovered data.
     Returns True if recovery succeeded (even partially), False if unrecoverable."""
     import shutil
-    recovered_path = DB_PATH + ".recovering"
+    tmp_path = DB_PATH + ".recovering"
     bak_path = DB_PATH + f".corrupted.{int(time.time())}"
     try:
         src = sqlite3.connect(f"file:{DB_PATH}?mode=ro&immutable=1", uri=True, timeout=5)
-        dst = sqlite3.connect(recovered_path, timeout=10)
-        dst.row_factory = sqlite3.Row
+        dst = sqlite3.connect(tmp_path, timeout=10)
         try:
             tables = src.execute(
                 "SELECT name, sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
@@ -95,7 +94,7 @@ def _recover_db():
                     if rows:
                         cols = len(rows[0])
                         dst.executemany(
-                            f'INSERT OR IGNORE INTO "{name}" VALUES ({",".join(["?"]*cols)})', rows
+                            f'INSERT OR IGNORE INTO "{name}" VALUES ({",".join(["?"] * cols)})', rows
                         )
                     log.info(f"Recovered table {name}: {len(rows)} rows")
                 except Exception as e:
@@ -109,18 +108,21 @@ def _recover_db():
                     pass
             dst.commit()
         finally:
-            src.close()
-            dst.close()
-        shutil.move(DB_PATH, bak_path)
-        shutil.move(recovered_path, DB_PATH)
-        log.info(f"SQLite recovery complete. Corrupted file archived to {bak_path}")
+            try: src.close()
+            except Exception: pass
+            try: dst.close()
+            except Exception: pass
+        # Archive corrupted (copy, keep original in place during recovery)
+        shutil.copy2(DB_PATH, bak_path)
+        # Atomically replace corrupted with recovered
+        os.replace(tmp_path, DB_PATH)
+        log.info(f"SQLite recovery complete. Corrupted archived to {bak_path}")
         return True
     except Exception as e:
         log.error(f"SQLite recovery failed: {e}")
-        try:
-            os.remove(recovered_path)
-        except Exception:
-            pass
+        try: os.remove(tmp_path)
+        except Exception: pass
+        # DB_PATH still has the corrupted file (we only copied to bak)
         return False
 
 
@@ -136,9 +138,17 @@ def init_db():
         except sqlite3.DatabaseError as e:
             log.error(f"SQLite DB corrupted ({e}) — attempting data recovery...")
             if not _recover_db():
+                # Recovery failed — archive corrupted and start fresh
                 import shutil
                 bak = DB_PATH + f".unrecoverable.{int(time.time())}"
-                shutil.move(DB_PATH, bak)
+                try:
+                    shutil.copy2(DB_PATH, bak)
+                except Exception:
+                    pass
+                try:
+                    os.remove(DB_PATH)
+                except Exception:
+                    pass
                 log.error(f"Recovery failed. Archived to {bak}, starting with empty DB.")
 
     with get_db() as conn:
