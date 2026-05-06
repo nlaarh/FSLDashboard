@@ -254,6 +254,8 @@ def _sync_ai_keys_from_env():
 
 @app.on_event("startup")
 async def startup():
+    import db_backup
+
     # Initialize SQLite database (settings, cache, bonus_tiers, users)
     database.init_db()
     database.migrate_settings_json()
@@ -261,8 +263,17 @@ async def startup():
     users.migrate_json_users()
     users.seed_users()
 
+    # If the DB is empty (fresh after corruption), restore from latest Azure Blob backup
+    if not database.get_all_settings() and not users.list_users():
+        log.info("Empty DB detected — attempting restore from backup")
+        db_backup.restore_latest()
+        users.seed_users()
+
     # Sync AI API keys from .env → DB so they survive container restarts without re-entry
     _sync_ai_keys_from_env()
+
+    # Start automatic DB backup (every 6h → Azure Blob db-backups/)
+    db_backup.start()
 
     # Start proactive cache refresher (replaces _warmup_cache)
     # The refresher handles leader election — safe to call from all workers
