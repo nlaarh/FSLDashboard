@@ -876,7 +876,7 @@
       "entity": "ServiceTerritoryMember",
       "entityLabel": "Territory Membership",
       "apiName": "TerritoryType",
-      "label": "Program",
+      "label": "Membership Type",
       "type": "Picklist",
       "custom": false,
       "description": "Whether this driver is a Primary or Secondary/Relocation member of the territory. Primary members are the garage's main drivers. Secondary members may serve multiple territories. Affects fleet size calculations and dispatch priority.",

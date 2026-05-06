@@ -15,7 +15,6 @@ import {
 } from 'lucide-react'
 import { StatChip, Div, LegendDot, LegendSmall, fmtPhone, fmtWait } from '../components/CommandCenterUtils'
 import DispatchInsightsFullView, { SuggestionCard } from '../components/DispatchInsights'
-import LiveDispatchBoard from '../components/LiveDispatchBoard'
 import SAWatchlist from '../components/SAWatchlist'
 import useCommandCenterData from '../hooks/useCommandCenterData'
 import {
@@ -55,13 +54,6 @@ export default function CommandCenter() {
               ? 'border-indigo-500 text-indigo-300 bg-indigo-600/10'
               : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Zap className="w-4 h-4" /> Dispatch Insights
-        </button>
-        <button onClick={() => setViewMode('live')}
-          className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
-            viewMode === 'live'
-              ? 'border-emerald-500 text-emerald-300 bg-emerald-600/10'
-              : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
-          <Radio className="w-4 h-4" /> ERS Live Board
         </button>
         <button onClick={() => setViewMode('watchlist')}
           className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
@@ -108,13 +100,6 @@ export default function CommandCenter() {
       {viewMode === 'watchlist' && (
         <div className="flex-1 overflow-hidden">
           <SAWatchlist />
-        </div>
-      )}
-
-      {/* ── ERS LIVE DISPATCH BOARD ── */}
-      {viewMode === 'live' && (
-        <div className="flex-1 overflow-hidden">
-          <LiveDispatchBoard />
         </div>
       )}
 

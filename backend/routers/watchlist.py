@@ -17,6 +17,7 @@ import cache
 from sf_client import sf_query_all, sf_parallel
 from utils import parse_dt as _parse_dt, _ET
 from sf_batch import batch_soql_parallel
+from routers.watchlist_alerts import build_operational_alerts, fetch_wo_data
 
 router = APIRouter()
 log = logging.getLogger('watchlist')
@@ -139,7 +140,9 @@ def _build_watchlist() -> dict:
         SELECT Id, AppointmentNumber, Status, StatusCategory,
                ServiceTerritoryId, ServiceTerritory.Name,
                WorkType.Name, ERS_PTA__c, Description,
-               ERS_Tow_Pick_Up_Drop_off__c,
+               ERS_Tow_Pick_Up_Drop_off__c, ParentRecordId,
+               WO_Priority_Code__c, FSL__GanttLabel__c,
+               AAA_ERS_Account_Facility__c, AAA_ERS_Account_Facility__r.Name,
                CreatedDate, SchedStartTime, ActualStartTime, ActualEndTime,
                LastModifiedDate, Street, City, Latitude, Longitude
         FROM ServiceAppointment
@@ -262,9 +265,31 @@ def _build_watchlist() -> dict:
     # ── Sort: active flagged first, then by reassignment count, completed last ──
     watchlist.sort(key=_sort_key)
 
+    # ── Operational Alerts (new flag-based table) ──
+    operational_alerts = build_operational_alerts(sas, sa_map, hist_by_sa, now_utc)
+
+    # ── Enrich alerts with WO data + phases for timeline hover ──
+    if operational_alerts:
+        woli_ids = list({sa_map[a['sa_id']].get('ParentRecordId')
+                        for a in operational_alerts
+                        if a['sa_id'] in sa_map and sa_map[a['sa_id']].get('ParentRecordId')})
+        wo_data = fetch_wo_data(woli_ids) if woli_ids else {}
+        for alert in operational_alerts:
+            sa = sa_map.get(alert['sa_id'], {})
+            woli_id = sa.get('ParentRecordId', '')
+            wo_info = wo_data.get(woli_id, {})
+            alert['wo_number'] = wo_info.get('wo_number', '')
+            alert['wo_id'] = wo_info.get('wo_id', '')
+            alert['current_wait'] = wo_info.get('current_wait')
+            # Add phases for SAWithTimeline hover
+            hist_list = hist_by_sa.get(alert['sa_id'], [])
+            alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
+            alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
+
     return {
         'watchlist': watchlist,
         'total': len(watchlist),
+        'operational_alerts': operational_alerts,
         'manual_followed': list(manual_sa_numbers),
         'last_updated': now_utc.isoformat(),
     }
