@@ -140,7 +140,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
               <th className="px-3 py-2 text-left font-semibold">Current Wait</th>
               <th className="px-3 py-2 text-left font-semibold">Territory</th>
               <th className="px-3 py-2 text-left font-semibold">City</th>
-              <th className="px-3 py-2 text-left font-semibold">Work Type ID</th>
+              <th className="px-3 py-2 text-left font-semibold">Work Type</th>
               <th className="px-3 py-2 text-left font-semibold">Flag</th>
             </tr>
           </thead>
@@ -204,14 +204,9 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                     <MapPin className="w-2.5 h-2.5 text-slate-500" title={`${alert.latitude}, ${alert.longitude}`} />
                   )}
                 </td>
-                {/* Work Type ID */}
-                <td className="px-3 py-2 text-slate-300 font-mono text-[10px] relative group/wt">
-                  {alert.work_type_id || '—'}
-                  {alert.work_type && (
-                    <span className="absolute bottom-full left-0 mb-1 hidden group-hover/wt:block text-[10px] text-slate-200 bg-slate-900 border border-slate-700 rounded px-2 py-1 shadow-xl z-50 whitespace-nowrap">
-                      {alert.work_type}
-                    </span>
-                  )}
+                {/* Work Type */}
+                <td className="px-3 py-2 text-slate-300 text-xs">
+                  {alert.work_type || '—'}
                 </td>
                 {/* Flag */}
                 <td className="px-3 py-2">
