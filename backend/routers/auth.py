@@ -26,6 +26,27 @@ def _get_department(username: str) -> str:
     return (u or {}).get('department', '') or ''
 
 
+def _get_role(username: str) -> str:
+    """Return the user's role string, '' if not set or not found."""
+    u = users.get_user(username)
+    return (u or {}).get('role', '') or ''
+
+
+# Paths that ers-supervisor role is blocked from
+_SUPERVISOR_BLOCKED = ('/api/accounting/', '/api/admin/')
+
+# Roles allowed to access the admin panel
+_ADMIN_ROLES = ('superadmin', 'admin')
+
+
+def _supervisor_blocked(path: str) -> bool:
+    return any(path.startswith(p) for p in _SUPERVISOR_BLOCKED)
+
+
+def _admin_allowed(role: str) -> bool:
+    return role in _ADMIN_ROLES
+
+
 def _sign_cookie(payload: str) -> str:
     sig = hmac.new(_AUTH_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"

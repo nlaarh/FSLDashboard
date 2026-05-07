@@ -19,14 +19,22 @@ import Reporting from './pages/Reporting'
 
 export default function App() {
   const [department, setDepartment] = useState(null)
+  const [role, setRole] = useState(null)
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => setDepartment(d.department || '')).catch(() => setDepartment(''))
+    fetch('/api/auth/me').then(r => r.json()).then(d => {
+      setDepartment(d.department || '')
+      setRole(d.role || '')
+    }).catch(() => { setDepartment(''); setRole('') })
   }, [])
 
   const isFinance = department === 'finance'
+  const isSupervisor = role === 'ers-supervisor'
   // While loading, render null so routes aren't mounted with wrong guard
   if (department === null) return null
+
+  // Finance → accounting only; Supervisor → everything except accounting + admin
+  const blocked = (fallback = '/') => isFinance ? <Navigate to="/accounting" replace /> : <Navigate to={fallback} replace />
 
   return (
     <SAReportProvider>
@@ -40,11 +48,11 @@ export default function App() {
         <Route path="/forecast" element={isFinance ? <Navigate to="/accounting" replace /> : <Forecast />} />
         <Route path="/onroute" element={isFinance ? <Navigate to="/accounting" replace /> : <OnRoute />} />
         <Route path="/matrix" element={isFinance ? <Navigate to="/accounting" replace /> : <MatrixAdvisor />} />
-        <Route path="/accounting" element={<Accounting />} />
+        <Route path="/accounting" element={(isFinance || isSupervisor) ? (isSupervisor ? <Navigate to="/" replace /> : <Accounting />) : <Accounting />} />
         <Route path="/data" element={<Navigate to="/help" replace />} />
         <Route path="/issues" element={isFinance ? <Navigate to="/accounting" replace /> : <Issues />} />
         <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />
-        <Route path="/admin" element={isFinance ? <Navigate to="/accounting" replace /> : <Admin />} />
+        <Route path="/admin" element={(role === 'superadmin' || role === 'admin') ? <Admin /> : <Navigate to="/" replace />} />
         <Route path="/optimizer" element={isFinance ? <Navigate to="/accounting" replace /> : <OptimizerDecoder />} />
         <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
         <Route path="*" element={<Navigate to="/" replace />} />

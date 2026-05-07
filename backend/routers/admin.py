@@ -125,7 +125,7 @@ def admin_create_user(request: Request, body: dict):
         raise HTTPException(status_code=400, detail="username, password, and name are required")
     email = body.get("email", "").strip()
     phone = body.get("phone", "").strip()
-    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive")
+    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor")
     if role not in valid_roles:
         raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(valid_roles)}")
     department = body.get("department", "").strip().lower()

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
-from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _finance_ok
+from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed
 import cache
 import refresher
 import database
@@ -54,11 +54,16 @@ async def auth_middleware(request: Request, call_next):
     cookie = request.cookies.get("fslapp_auth")
     payload = _verify_cookie(cookie) if cookie else None
     if payload:
-        # Department access control: finance can only reach accounting + auth endpoints
+        # Access control by department and role
         username = payload.split(":")[0]
         dept = _get_department(username)
         if dept == 'finance' and path.startswith('/api/') and not _finance_ok(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted to Accounting only"})
+        role = _get_role(username)
+        if role == 'ers-supervisor' and path.startswith('/api/') and _supervisor_blocked(path):
+            return JSONResponse(status_code=403, content={"detail": "Access restricted"})
+        if path.startswith('/api/admin/') and not _admin_allowed(role):
+            return JSONResponse(status_code=403, content={"detail": "Admin access restricted"})
         return await call_next(request)
     # Local dev: no auth needed
     if os.environ.get("WEBSITE_SITE_NAME") is None:

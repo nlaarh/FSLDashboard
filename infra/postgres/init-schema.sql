@@ -178,6 +178,71 @@ CREATE TABLE IF NOT EXISTS opt_sync_cursor (
   updated_at   TIMESTAMPTZ DEFAULT now()
 );
 
+-- ─── Phase 2: core schema — SQLite data migrated to Postgres ────────────────
+\echo '── Creating core.* tables ──'
+
+SET search_path = core, public;
+
+CREATE TABLE IF NOT EXISTS users (
+  username      TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  role          TEXT DEFAULT 'viewer',
+  email         TEXT DEFAULT '',
+  phone         TEXT DEFAULT '',
+  password_hash TEXT NOT NULL,
+  salt          TEXT NOT NULL,
+  active        INTEGER DEFAULT 1,
+  created_at    DOUBLE PRECISION,
+  department    TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bonus_tiers (
+  id            SERIAL PRIMARY KEY,
+  min_pct       DOUBLE PRECISION NOT NULL,
+  bonus_per_sa  DOUBLE PRECISION NOT NULL,
+  label         TEXT,
+  sort_order    INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS accounting_rates (
+  code       TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  value      DOUBLE PRECISION NOT NULL DEFAULT 0,
+  unit       TEXT DEFAULT '',
+  notes      TEXT DEFAULT '',
+  category   TEXT DEFAULT '',
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS woa_reviews (
+  woa_id      TEXT PRIMARY KEY,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  note        TEXT DEFAULT '',
+  reviewer    TEXT DEFAULT '',
+  reviewed_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS watchlist_manual (
+  sa_number TEXT PRIMARY KEY,
+  sa_id     TEXT,
+  added_by  TEXT DEFAULT '',
+  added_at  TIMESTAMPTZ DEFAULT now()
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA core TO "fslapp-nyaaa";
+ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "fslapp-nyaaa";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA core TO "fslapp-nyaaa";
+
+INSERT INTO public.schema_migrations (schema_name, version, description)
+VALUES ('core', '001-sqlite-mirror', 'Core tables mirroring SQLite: users, settings, bonus_tiers, accounting_rates, woa_reviews, watchlist_manual')
+ON CONFLICT DO NOTHING;
+
 -- ─── Reserved for Phase 3 (pgvector RAG) — empty until then ──────────────
 \echo '── Reserving optimizer.opt_narratives for Phase 3 ──'
 CREATE TABLE IF NOT EXISTS opt_narratives (

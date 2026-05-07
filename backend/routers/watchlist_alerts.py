@@ -67,7 +67,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         is_drop_off = _is_tow_drop_off(sa)
         flags_hit = []
 
-        # ── Flag 1: Call At Risk of Missing PTA ──
+        # ── Flag 1: Call At Risk of Missing PTA (within 20 min OR already late) ──
         if not is_drop_off and status not in ('En Route', 'On Location'):
             pta_raw = sa.get('ERS_PTA__c')
             created = _parse_dt(sa.get('CreatedDate'))
@@ -79,7 +79,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                             created = created.replace(tzinfo=timezone.utc)
                         pta_due = created + timedelta(minutes=pta_min)
                         minutes_until_pta = (pta_due - now_utc).total_seconds() / 60
-                        if 0 < minutes_until_pta <= 20:
+                        if minutes_until_pta <= 20:
                             flags_hit.append('Call At Risk of Missing PTA')
                 except (TypeError, ValueError):
                     pass
@@ -123,6 +123,12 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         if not flags_hit:
             continue
 
+        # Only 1 flag per SA — if multiple, drop "At Risk of Missing PTA"
+        if len(flags_hit) > 1 and 'Call At Risk of Missing PTA' in flags_hit:
+            flags_hit.remove('Call At Risk of Missing PTA')
+        # If still multiple, keep only the first (highest priority by insertion order)
+        flags_hit = flags_hit[:1]
+
         # Build alert entry
         territory_name = (sa.get('ServiceTerritory') or {}).get('Name', '')
         created = _parse_dt(sa.get('CreatedDate'))
@@ -151,6 +157,8 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                 'current_wait': None,  # filled later from WO query
                 'territory': territory_name,
                 'city': sa.get('City') or '',
+                'work_type': (sa.get('WorkType') or {}).get('Name', ''),
+                'work_type_id': sa.get('WorkTypeId') or '',
                 'flag': flag,
                 'status': status,
                 'latitude': sa.get('Latitude'),

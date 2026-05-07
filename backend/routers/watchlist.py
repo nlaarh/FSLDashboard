@@ -139,7 +139,7 @@ def _build_watchlist() -> dict:
     sas = sf_query_all(f"""
         SELECT Id, AppointmentNumber, Status, StatusCategory,
                ServiceTerritoryId, ServiceTerritory.Name,
-               WorkType.Name, ERS_PTA__c, Description,
+               WorkType.Name, WorkTypeId, ERS_PTA__c, Description,
                ERS_Tow_Pick_Up_Drop_off__c, ParentRecordId,
                WO_Priority_Code__c, FSL__GanttLabel__c,
                AAA_ERS_Account_Facility__c, AAA_ERS_Account_Facility__r.Name,
@@ -285,6 +285,7 @@ def _build_watchlist() -> dict:
             hist_list = hist_by_sa.get(alert['sa_id'], [])
             alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
             alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
+            alert['work_type_id'] = sa.get('WorkTypeId') or ''
 
     return {
         'watchlist': watchlist,

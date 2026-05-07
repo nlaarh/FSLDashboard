@@ -76,12 +76,15 @@ export default function Layout() {
   const { pathname } = useLocation()
   const [features, setFeatures] = useState({})
   const [department, setDepartment] = useState('')
+  const [role, setRole] = useState('')
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {})
-    fetch('/api/auth/me').then(r => r.json()).then(d => setDepartment(d.department || '')).catch(() => {})
+    fetch('/api/auth/me').then(r => r.json()).then(d => {
+      setDepartment(d.department || '')
+      setRole(d.role || '')
+    }).catch(() => {})
     const handler = (e) => {
-      // Admin passes features directly via CustomEvent — no API roundtrip needed
       if (e.detail) setFeatures(e.detail)
       else fetchFeatures().then(setFeatures).catch(() => {})
     }
@@ -89,8 +92,9 @@ export default function Layout() {
     return () => window.removeEventListener('featuresChanged', handler)
   }, [])
 
-  // finance = accounting only; everyone else sees everything
+  // finance = accounting only; supervisor = no accounting/admin; everyone else = everything
   const isFinance = department === 'finance'
+  const isSupervisor = role === 'ers-supervisor'
 
   const handleLogout = async () => {
     try {
@@ -159,7 +163,7 @@ export default function Layout() {
               </Link>
             )}
             </>)}
-            {features.accounting !== false && (
+            {features.accounting !== false && !isSupervisor && (
             <Link to="/accounting"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/accounting' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -197,12 +201,14 @@ export default function Layout() {
               }`}>
               <HelpCircle className="w-4 h-4" />
             </Link>
+            {!isFinance && (role === 'superadmin' || role === 'admin') && (
             <Link to="/admin" title="Settings"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/admin' ? 'text-brand-400' : 'text-slate-500 hover:text-slate-300'
               }`}>
               <Settings className="w-4 h-4" />
             </Link>
+            )}
             <div className="w-px h-5 bg-slate-700/50 mx-1" />
             <button onClick={handleLogout} title="Log out"
               className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all">

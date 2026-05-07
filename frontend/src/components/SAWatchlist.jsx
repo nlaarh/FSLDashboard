@@ -11,7 +11,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { clsx } from 'clsx'
 import {
   Search, Clock, Lock, AlertTriangle, HelpCircle,
-  Loader2, User, Radio, CheckCircle2, X, ExternalLink, MapPin,
+  Loader2, User, Radio, CheckCircle2, X, ExternalLink, MapPin, Mail,
 } from 'lucide-react'
 import { SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
 import CheckpointTracker from './CheckpointTracker'
@@ -56,6 +56,56 @@ const FLAG_COLORS = {
 function OperationalAlertsTable({ alerts, onShowHelp }) {
   if (!alerts || alerts.length === 0) return null
 
+  const handleEmail = () => {
+    // Build an HTML table for the email body
+    const rows = alerts.map(a =>
+      `<tr>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.wo_number || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.sa_number || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.priority_code || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.gantt_label || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.pta_delta_min != null ? a.pta_delta_min + ' min' : '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.current_wait != null ? Math.round(a.current_wait) + ' min' : '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.territory || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.city || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.work_type || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px;font-family:monospace;font-size:10px">${a.work_type_id || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.flag}</td>
+      </tr>`
+    ).join('')
+
+    const htmlTable = `
+      <h3>Operational Alerts — ${alerts.length} items (${new Date().toLocaleString()})</h3>
+      <table style="border-collapse:collapse;font-family:Calibri,sans-serif;font-size:12px">
+        <thead>
+          <tr style="background:#f0f0f0">
+            <th style="border:1px solid #ccc;padding:4px 8px">Work Order</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">SA #</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Priority</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Gantt Label</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">PTA Delta</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Current Wait</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Territory</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">City</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Work Type</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Work Type ID</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">Flag</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `
+
+    // Copy HTML to clipboard so user can paste into email body
+    const blob = new Blob([htmlTable], { type: 'text/html' })
+    const clipItem = new ClipboardItem({ 'text/html': blob })
+    navigator.clipboard.write([clipItem])
+
+    // Open Outlook compose
+    const subject = encodeURIComponent(`Operational Alerts — ${alerts.length} items (${new Date().toLocaleDateString()})`)
+    window.open(`https://outlook.cloud.microsoft/mail/deeplink/compose?subject=${subject}`, '_blank')
+  }
+
   return (
     <div className="bg-slate-800/50 backdrop-blur border border-red-800/40 rounded-xl overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/50 bg-red-950/20">
@@ -64,8 +114,16 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
         <button onClick={onShowHelp} className="text-slate-500 hover:text-red-300 transition-colors" title="What are Operational Alerts?">
           <HelpCircle className="w-3.5 h-3.5" />
         </button>
-        <span className="ml-auto text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
-          {alerts.length}
+        <span className="ml-auto flex items-center gap-3">
+          <button onClick={handleEmail} className="text-slate-400 hover:text-blue-300 transition-colors group relative" title="Email alerts">
+            <Mail className="w-4 h-4" />
+            <span className="absolute top-full right-0 mt-2 hidden group-hover:block w-52 text-[10px] text-slate-200 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 shadow-xl z-50 whitespace-normal">
+              Click to copy table &amp; open Outlook. Then press ⌘V (Ctrl+V) to paste the alerts into your email.
+            </span>
+          </button>
+          <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
+            {alerts.length}
+          </span>
         </span>
       </div>
 
@@ -82,6 +140,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
               <th className="px-3 py-2 text-left font-semibold">Current Wait</th>
               <th className="px-3 py-2 text-left font-semibold">Territory</th>
               <th className="px-3 py-2 text-left font-semibold">City</th>
+              <th className="px-3 py-2 text-left font-semibold">Work Type ID</th>
               <th className="px-3 py-2 text-left font-semibold">Flag</th>
             </tr>
           </thead>
@@ -143,6 +202,15 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   {alert.city || '—'}
                   {alert.latitude && alert.longitude && (
                     <MapPin className="w-2.5 h-2.5 text-slate-500" title={`${alert.latitude}, ${alert.longitude}`} />
+                  )}
+                </td>
+                {/* Work Type ID */}
+                <td className="px-3 py-2 text-slate-300 font-mono text-[10px] relative group/wt">
+                  {alert.work_type_id || '—'}
+                  {alert.work_type && (
+                    <span className="absolute bottom-full left-0 mb-1 hidden group-hover/wt:block text-[10px] text-slate-200 bg-slate-900 border border-slate-700 rounded px-2 py-1 shadow-xl z-50 whitespace-nowrap">
+                      {alert.work_type}
+                    </span>
                   )}
                 </td>
                 {/* Flag */}

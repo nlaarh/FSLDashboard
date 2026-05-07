@@ -26,41 +26,65 @@ def _check_password(password: str, stored_hash: str, salt: str) -> bool:
     return secrets.compare_digest(h, stored_hash)
 
 
-# ── Seed default users (only if users table is empty) ────────────────────────
+# ── Seed / ensure users ──────────────────────────────────────────────────────
 # Passwords come from env vars — never stored in source code.
+# (username, env_var, display_name, role, email, department)
 
 _SEED_USER_DEFS = [
-    ('admin',               'SEED_PASS_ADMIN',     'Admin',         'admin',      '',                    ''),
-    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM', 'Tina Ingraham', 'manager',    'tingraham@nyaaa.com', ''),
-    ('dfisher@nyaaa.com',   'SEED_PASS_DFISHER',   'D Fisher',      'manager',    'dfisher@nyaaa.com',   ''),
-    ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI', 'Nour Laaroubi', 'superadmin', 'nlaaroubi@nyaaa.com', ''),
-    ('shorn@nyaaa.com',     'SEED_PASS_SHORN',     'S Horn',        'manager',    'shorn@nyaaa.com',     ''),
-    ('jnixon@nyaaa.com',    'SEED_PASS_JNIXON',    'J Nixon',       'officer',    'jnixon@nyaaa.com',    ''),
+    # Core / admin
+    ('admin',               'SEED_PASS_ADMIN',          'Admin',              'admin',          '',                        ''),
+    ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI',      'Nour Laaroubi',     'superadmin',     'nlaaroubi@nyaaa.com',     'executive'),
+    # ERS managers — full access
+    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM',      'Tina Ingraham',     'ers-manager',    'tingraham@nyaaa.com',     'ers'),
+    ('dfisher@nyaaa.com',   'SEED_PASS_DFISHER',        'D Fisher',          'ers-manager',    'dfisher@nyaaa.com',       'ers'),
+    ('shorn@nyaaa.com',     'SEED_PASS_SHORN',          'S Horn',            'ers-manager',    'shorn@nyaaa.com',         'ers'),
+    ('rprendergast@nyaaa.com','SEED_PASS_RPRENDERGAST', 'Robert Prendergast','ers-manager',    'rprendergast@nyaaa.com',  'ers'),
+    ('cmacneil@nyaaa.com',  'SEED_PASS_CMACNEIL',       'Chris Macneil',    'ers-manager',    'cmacneil@nyaaa.com',      'ers'),
+    ('tcoulter@nyaaa.com',  'SEED_PASS_TCOULTER',        'Todd Coulter',    'ers-manager',    'tcoulter@nyaaa.com',      'ers'),
+    ('mmika@nyaaa.com',     'SEED_PASS_MMIKA',           'Mark Mika',       'ers-manager',    'mmika@nyaaa.com',         'ers'),
+    ('rlyle@nyaaa.com',     'SEED_PASS_RLYLE',           'Robert Lyle',     'ers-manager',    'rlyle@nyaaa.com',         'ers'),
+    ('jcarroll@nyaaa.com',  'SEED_PASS_JCARROLL',        'Jon Carroll',     'ers-manager',    'jcarroll@nyaaa.com',      'ers'),
+    ('jharrington@nyaaa.com','SEED_PASS_JHARRINGTON',    'Jeremy Harrington','ers-manager',    'jharrington@nyaaa.com',   'ers'),
+    # ERS supervisors — no accounting, no admin
+    ('sgancasz@nyaaa.com',  'SEED_PASS_SGANCASZ',        'Shawn Gancasz',   'ers-supervisor', 'sgancasz@nyaaa.com',      'ers'),
+    ('mtrichilo@nyaaa.com', 'SEED_PASS_MTRICHILO',       'Mary Trichilo',   'ers-supervisor', 'mtrichilo@nyaaa.com',     'ers'),
+    ('khartman@nyaaa.com',  'SEED_PASS_KHARTMAN',        'Kristin Hartman', 'ers-supervisor', 'khartman@nyaaa.com',      'ers'),
+    ('calger@nyaaa.com',    'SEED_PASS_CALGER',           'Cat Alger',      'ers-supervisor', 'calger@nyaaa.com',        'ers'),
+    ('dkalenda@nyaaa.com',  'SEED_PASS_DKALENDA',         'Deborah Kalenda','ers-supervisor', 'dkalenda@nyaaa.com',      'ers'),
+    # Executive
+    ('jnixon@nyaaa.com',    'SEED_PASS_JNIXON',          'J Nixon',        'executive',      'jnixon@nyaaa.com',        'executive'),
+    # Finance — accounting only
+    ('dbrown@nyaaa.com',    'SEED_PASS_DBROWN',           'Denise Brown',   'finance',        'dbrown@nyaaa.com',        'finance'),
+    ('ksmeal@nyaaa.com',    'SEED_PASS_KSMEAL',           'Kerry Smeal',    'finance',        'ksmeal@nyaaa.com',        'finance'),
 ]
 
 
 def seed_users():
-    """Seed default users ONLY if users table is empty. Passwords read from SEED_PASS_* env vars."""
+    """Ensure all defined users exist with correct roles. Creates missing users, updates role/dept for existing ones.
+    Passwords read from SEED_PASS_* env vars — only set on initial creation (never overwrite existing passwords)."""
     import os, logging
     _log = logging.getLogger('users')
     with db.get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) cnt FROM users").fetchone()['cnt']
-        if count > 0:
-            return  # users exist, don't touch
-        seeded = 0
-        for username, env_var, name, role, email, phone in _SEED_USER_DEFS:
+        for username, env_var, name, role, email, department in _SEED_USER_DEFS:
+            existing = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
+            if existing:
+                # Update role and department to match definition (never touch password)
+                conn.execute(
+                    "UPDATE users SET role = ?, department = ?, name = ?, email = ? WHERE username = ?",
+                    (role, department, name, email, username),
+                )
+                continue
+            # New user — password required from env var
             password = os.getenv(env_var)
             if not password:
                 _log.warning(f"Skipping seed for {username}: {env_var} not set in env")
                 continue
             h, salt = _hash_password(password)
             conn.execute(
-                "INSERT OR IGNORE INTO users (username, name, role, email, phone, password_hash, salt, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                (username, name, role, email, phone, h, salt, time.time()),
+                "INSERT INTO users (username, name, role, email, phone, password_hash, salt, active, created_at, department) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (username, name, role, email, '', h, salt, time.time(), department),
             )
-            seeded += 1
-        if seeded == 0:
-            _log.error("Users table is empty and no SEED_PASS_* env vars found — set them in .env")
+            _log.info(f"Seeded user {username} ({role})")
 
 
 def migrate_json_users():
