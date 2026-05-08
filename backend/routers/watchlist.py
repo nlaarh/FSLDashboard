@@ -143,6 +143,9 @@ def _build_watchlist() -> dict:
                ERS_Tow_Pick_Up_Drop_off__c, ParentRecordId,
                WO_Priority_Code__c, FSL__GanttLabel__c,
                AAA_ERS_Account_Facility__c, AAA_ERS_Account_Facility__r.Name,
+               AAA_ERS_Account_Facility__r.Phone,
+               AccountId, Account.Name, Account.PersonMobilePhone, Account.Phone,
+               Phone, Mobile_Phone__c,
                CreatedDate, SchedStartTime, ActualStartTime, ActualEndTime,
                LastModifiedDate, Street, City, Latitude, Longitude
         FROM ServiceAppointment
@@ -281,6 +284,10 @@ def _build_watchlist() -> dict:
             alert['wo_number'] = wo_info.get('wo_number', '')
             alert['wo_id'] = wo_info.get('wo_id', '')
             alert['current_wait'] = wo_info.get('current_wait')
+            # Vehicle from WO
+            v_parts = [p for p in [wo_info.get('vehicle_make', ''), wo_info.get('vehicle_model', '')] if p]
+            alert['vehicle'] = ' '.join(v_parts)
+            alert['vehicle_plate'] = wo_info.get('vehicle_plate', '')
             # Add phases for SAWithTimeline hover
             hist_list = hist_by_sa.get(alert['sa_id'], [])
             alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)

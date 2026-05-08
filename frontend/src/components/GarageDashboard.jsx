@@ -4,23 +4,31 @@ import { RefreshCw } from 'lucide-react'
 import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from '../api'
 import GaragePerformance from './GaragePerformance'
 import GarageOperations from './GarageOperations'
+import GarageRevenueDrivers from './GarageRevenueDrivers'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Format a Date as YYYY-MM-DD in Eastern Time (business timezone).
+function fmtDate(d) {
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+}
+
 export default function GarageDashboard({ garageId, garageName }) {
   // ── Shared date range (used by all tabs)
   // Default to last month (always has full data). If today is past the 5th, use current month instead.
   const today = new Date()
-  const defaultStart = today.getDate() > 5
+  // Derive day-of-month in Eastern Time so the cutoff is consistent for all users.
+  const etDay = parseInt(today.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).split('-')[2], 10)
+  const defaultStart = etDay > 5
     ? new Date(today.getFullYear(), today.getMonth(), 1)
     : new Date(today.getFullYear(), today.getMonth() - 1, 1)
-  const defaultEnd = today.getDate() > 5
+  const defaultEnd = etDay > 5
     ? today
     : new Date(today.getFullYear(), today.getMonth(), 0)  // last day of previous month
-  const [startDate, setStartDate] = useState(defaultStart.toISOString().slice(0, 10))
-  const [endDate, setEndDate] = useState(defaultEnd.toISOString().slice(0, 10))
+  const [startDate, setStartDate] = useState(fmtDate(defaultStart))
+  const [endDate, setEndDate] = useState(fmtDate(defaultEnd))
 
   // Legacy period compat — Overview endpoints use start/end
   const start = startDate
@@ -37,10 +45,22 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [scorecardError, setScorecardError] = useState(null)
   const [scoreError, setScoreError] = useState(null)
   const [activeDef, setActiveDef] = useState(null)  // which metric tooltip is open
-  const [activeTab, setActiveTab] = useState('performance')  // performance | operations
-  const [refreshKey, setRefreshKey] = useState(0)  // bump to force all data refresh
+  const [activeTab, setActiveTab] = useState('performance')  // performance | operations | revenue
+  // Per-tab refresh keys — only the active tab's key is bumped on refresh
+  const [perfRefreshKey, setPerfRefreshKey] = useState(0)
+  const [opsRefreshKey,  setOpsRefreshKey]  = useState(0)
+  const [revRefreshKey,  setRevRefreshKey]  = useState(0)
+  const [refreshing, setRefreshing]         = useState(false)
 
-  // ── Load performance + decomposition in parallel (period-dependent)
+  const handleRefresh = () => {
+    setRefreshing(true)
+    setTimeout(() => setRefreshing(false), 800)
+    if (activeTab === 'performance') setPerfRefreshKey(k => k + 1)
+    else if (activeTab === 'operations') setOpsRefreshKey(k => k + 1)
+    else setRevRefreshKey(k => k + 1)
+  }
+
+  // ── Load performance + decomposition in parallel (period-dependent, Operations only)
   useEffect(() => {
     let ignore = false
     setLoading(p => ({ ...p, perf: true, decomp: true }))
@@ -62,9 +82,9 @@ export default function GarageDashboard({ garageId, garageName }) {
     }
     load()
     return () => { ignore = true }
-  }, [garageId, start, end, refreshKey])
+  }, [garageId, start, end, opsRefreshKey])
 
-  // ── Load scorecard + score in parallel (not period-dependent)
+  // ── Load scorecard + score in parallel (not period-dependent, Operations only)
   useEffect(() => {
     let ignore = false
     setLoading(p => ({ ...p, scorecard: true, score: true }))
@@ -86,7 +106,7 @@ export default function GarageDashboard({ garageId, garageName }) {
     }
     load()
     return () => { ignore = true }
-  }, [garageId, refreshKey])
+  }, [garageId, opsRefreshKey])
 
   return (
     <div className="space-y-5">
@@ -94,7 +114,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       {/* TAB BAR + DATE PILLS + CUSTOM RANGE */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
-          {[['performance', 'Performance'], ['operations', 'Operations']].map(([key, label]) => (
+          {[['performance', 'Performance'], ['operations', 'Operations'], ['revenue', 'Revenue']].map(([key, label]) => (
             <button key={key}
               onClick={() => setActiveTab(key)}
               className={clsx('px-4 py-1.5 rounded-md text-xs font-semibold transition',
@@ -107,11 +127,11 @@ export default function GarageDashboard({ garageId, garageName }) {
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
               {(() => {
                 const t = new Date()
-                const todayStr = t.toISOString().slice(0, 10)
+                const todayStr = fmtDate(t)
                 const pills = []
                 for (let i = 0; i <= t.getMonth(); i++) {
-                  const s = new Date(t.getFullYear(), i, 1).toISOString().slice(0, 10)
-                  const e = i === t.getMonth() ? todayStr : new Date(t.getFullYear(), i + 1, 0).toISOString().slice(0, 10)
+                  const s = fmtDate(new Date(t.getFullYear(), i, 1))
+                  const e = i === t.getMonth() ? todayStr : fmtDate(new Date(t.getFullYear(), i + 1, 0))
                   const label = new Date(t.getFullYear(), i, 1).toLocaleDateString('en-US', { month: 'short' })
                   pills.push({ label, s, e })
                 }
@@ -133,17 +153,17 @@ export default function GarageDashboard({ garageId, garageName }) {
               <span className="text-slate-600 text-xs">to</span>
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
                 className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
-              <button onClick={() => setRefreshKey(k => k + 1)}
-                title="Force refresh all data"
+              <button onClick={handleRefresh}
+                title={`Refresh ${activeTab} tab`}
                 className="p-1.5 rounded-lg hover:bg-slate-800/50 text-slate-500 hover:text-white transition">
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </button>
             </div>
       </div>
 
       {/* PERFORMANCE TAB */}
       {activeTab === 'performance' && (
-        <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} refreshKey={refreshKey} />
+        <GaragePerformance garageId={garageId} garageName={garageName} startDate={startDate} endDate={endDate} refreshKey={perfRefreshKey} />
       )}
 
       {/* OPERATIONS TAB */}
@@ -155,6 +175,11 @@ export default function GarageDashboard({ garageId, garageName }) {
           startDate={startDate} endDate={endDate}
           activeDef={activeDef} setActiveDef={setActiveDef}
         />
+      )}
+
+      {/* REVENUE TAB */}
+      {activeTab === 'revenue' && (
+        <GarageRevenueDrivers garageId={garageId} startDate={startDate} endDate={endDate} garageName={garageName} refreshKey={revRefreshKey} />
       )}
     </div>
   )

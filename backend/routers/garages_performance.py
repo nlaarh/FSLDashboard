@@ -40,10 +40,10 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
     # Parallel: individual SAs + WO IDs for surveys + trend aggregate
     data = sf_parallel(
         sas=lambda: sf_query_all(f"""
-            SELECT Id, Status, CreatedDate, ActualStartTime, ActualEndTime,
-                   SchedStartTime, ERS_Auto_Assign__c, ERS_PTA__c,
-                   ERS_Facility_Decline_Reason__c, ERS_Cancellation_Reason__c,
-                   ERS_Dispatch_Method__c, ERS_Spotting_Number__c, WorkType.Name
+            SELECT Id, Status, CreatedDate, ActualStartTime,
+                   ERS_Auto_Assign__c, ERS_PTA__c,
+                   ERS_Facility_Decline_Reason__c,
+                   ERS_Dispatch_Method__c, WorkType.Name
             FROM ServiceAppointment
             WHERE ServiceTerritoryId = '{territory_id}'
               AND CreatedDate >= {since}
@@ -76,7 +76,7 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         # SA history: territory assignment sequence (which garage was assigned 1st, 2nd, etc.)
         # Note: NewValue can't be filtered on History objects -- filter in Python
         sa_history=lambda: sf_query_all(f"""
-            SELECT ServiceAppointmentId, OldValue, NewValue, CreatedDate
+            SELECT ServiceAppointmentId, NewValue, CreatedDate
             FROM ServiceAppointmentHistory
             WHERE Field = 'ServiceTerritory'
               AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'

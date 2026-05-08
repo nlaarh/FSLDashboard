@@ -91,7 +91,6 @@ def _rulebased_garage(garage_data):
         csat = g['csat_avg']
         csat_n = g['csat_responses']
         drivers = g['driver_count']  # None for contractors
-        fleet_pct = g['fleet_pct']
         is_contractor = g.get('is_contractor', False)
 
         # -- Completion Rate --

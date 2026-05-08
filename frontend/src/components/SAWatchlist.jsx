@@ -11,11 +11,13 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { clsx } from 'clsx'
 import {
   Search, Clock, Lock, AlertTriangle, HelpCircle,
-  Loader2, User, Radio, CheckCircle2, X, ExternalLink, MapPin, Mail,
+  Loader2, User, Radio, CheckCircle2, X, ExternalLink, MapPin, Mail, Navigation,
+  ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
 import CheckpointTracker from './CheckpointTracker'
 import DriverMapPopup from './DriverMapPopup'
+import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
 import { fetchWatchlist } from '../api'
 
@@ -49,14 +51,43 @@ const FLAG_COLORS = {
   'Call Not Assigned - Rejected': 'bg-rose-500/20 text-rose-400 border-rose-500/40',
   'Call Not Assigned - Received': 'bg-amber-500/20 text-amber-400 border-amber-500/40',
   'Call Not Closed': 'bg-purple-500/20 text-purple-400 border-purple-500/40',
+  'Potential Duplicate': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
 }
 
 // ── Operational Alerts Table ────────────────────────────────────────────────
 
 function OperationalAlertsTable({ alerts, onShowHelp }) {
+  const [assistSaId, setAssistSaId] = useState(null)
+  const [assistHints, setAssistHints] = useState(null)
+  const [assistAlert, setAssistAlert] = useState(null)
+  const [sortCol, setSortCol] = useState(null)
+  const [sortDir, setSortDir] = useState('asc')
+  const [clipError, setClipError] = useState(false)
+
   if (!alerts || alerts.length === 0) return null
 
-  const handleEmail = () => {
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir('asc')
+    }
+  }
+
+  const sortedAlerts = [...alerts].sort((a, b) => {
+    if (!sortCol) return 0
+    let va = a[sortCol], vb = b[sortCol]
+    if (va == null) va = ''
+    if (vb == null) vb = ''
+    if (typeof va === 'number' && typeof vb === 'number') {
+      return sortDir === 'asc' ? va - vb : vb - va
+    }
+    const sa = String(va).toLowerCase(), sb = String(vb).toLowerCase()
+    return sortDir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa)
+  })
+
+  const handleEmail = async () => {
     // Build an HTML table for the email body
     const rows = alerts.map(a =>
       `<tr>
@@ -99,7 +130,12 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
     // Copy HTML to clipboard so user can paste into email body
     const blob = new Blob([htmlTable], { type: 'text/html' })
     const clipItem = new ClipboardItem({ 'text/html': blob })
-    navigator.clipboard.write([clipItem])
+    try {
+      await navigator.clipboard.write([clipItem])
+      setClipError(false)
+    } catch {
+      setClipError(true)
+    }
 
     // Open Outlook compose
     const subject = encodeURIComponent(`Operational Alerts — ${alerts.length} items (${new Date().toLocaleDateString()})`)
@@ -127,26 +163,51 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
         </span>
       </div>
 
+      {/* Clipboard error banner */}
+      {clipError && (
+        <div className="mx-4 my-2 px-3 py-2 rounded-lg bg-amber-950/40 border border-amber-800/40 text-amber-400 text-xs flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>Clipboard access denied — Outlook is open. Copy the table manually (⌘A → ⌘C) from Outlook.</span>
+          <button onClick={() => setClipError(false)} className="ml-auto text-amber-500 hover:text-amber-300"><X className="w-3 h-3" /></button>
+        </div>
+      )}
+
       {/* Table header */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-slate-700/50 text-[10px] text-slate-500 uppercase tracking-wider">
-              <th className="px-3 py-2 text-left font-semibold">Work Order</th>
-              <th className="px-3 py-2 text-left font-semibold">Appointment #</th>
-              <th className="px-3 py-2 text-left font-semibold">Priority</th>
-              <th className="px-3 py-2 text-left font-semibold">Gantt Label</th>
-              <th className="px-3 py-2 text-left font-semibold">PTA Delta</th>
-              <th className="px-3 py-2 text-left font-semibold">Current Wait</th>
-              <th className="px-3 py-2 text-left font-semibold">Territory</th>
-              <th className="px-3 py-2 text-left font-semibold">City</th>
-              <th className="px-3 py-2 text-left font-semibold">Work Type</th>
-              <th className="px-3 py-2 text-left font-semibold">Flag</th>
+              {[
+                ['wo_number', 'Work Order'],
+                ['sa_number', 'Appointment #'],
+                ['priority_code', 'Priority'],
+                ['gantt_label', 'Gantt Label'],
+                ['pta_delta_min', 'PTA Delta'],
+                ['current_wait', 'Current Wait'],
+                ['territory', 'Territory'],
+                ['city', 'City'],
+                ['work_type', 'Work Type'],
+                ['flag', 'Flag'],
+              ].map(([key, label]) => (
+                <th key={key}
+                  className="px-3 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
+                  onClick={() => handleSort(key)}>
+                  <span className="inline-flex items-center gap-0.5">
+                    {label}
+                    {sortCol === key && (sortDir === 'asc'
+                      ? <ChevronUp className="w-3 h-3 text-blue-400" />
+                      : <ChevronDown className="w-3 h-3 text-blue-400" />
+                    )}
+                  </span>
+                </th>
+              ))}
+              <th className="px-2 py-2 text-center font-semibold">Assist</th>
             </tr>
           </thead>
           <tbody>
-            {alerts.map((alert, idx) => (
-              <tr key={`${alert.sa_id}-${alert.flag}-${idx}`}
+            {sortedAlerts.map((alert) => (
+              <tr key={`${alert.sa_id}-${alert.flag}`}
+                id={`alert-row-${alert.sa_id}`}
                 className="border-b border-slate-800/40 hover:bg-slate-800/60 transition-colors">
                 {/* Work Order */}
                 <td className="px-3 py-2">
@@ -198,11 +259,13 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   {alert.territory || '—'}
                 </td>
                 {/* City */}
-                <td className="px-3 py-2 text-slate-300 flex items-center gap-1">
-                  {alert.city || '—'}
-                  {alert.latitude && alert.longitude && (
-                    <MapPin className="w-2.5 h-2.5 text-slate-500" title={`${alert.latitude}, ${alert.longitude}`} />
-                  )}
+                <td className="px-3 py-2 text-slate-300">
+                  <div className="flex items-center gap-1">
+                    {alert.city || '—'}
+                    {alert.latitude && alert.longitude && (
+                      <MapPin className="w-2.5 h-2.5 text-slate-500" title={`${alert.latitude}, ${alert.longitude}`} />
+                    )}
+                  </div>
                 </td>
                 {/* Work Type */}
                 <td className="px-3 py-2 text-slate-300 text-xs">
@@ -210,16 +273,66 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 </td>
                 {/* Flag */}
                 <td className="px-3 py-2">
-                  <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap',
-                    FLAG_COLORS[alert.flag] || 'bg-slate-700/50 text-slate-300 border-slate-600/50')}>
-                    {alert.flag}
-                  </span>
+                  <div>
+                    <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap',
+                      FLAG_COLORS[alert.flag] || 'bg-slate-700/50 text-slate-300 border-slate-600/50')}>
+                      {alert.flag}
+                    </span>
+                    {alert.duplicate_of?.length > 0 && (
+                      <div className="mt-1 text-[9px] text-cyan-400">
+                        <span className="text-slate-500">Dup of:</span>{' '}
+                        {alert.duplicate_of.map((saNum, i) => {
+                          const match = sortedAlerts.find(a => a.sa_number === saNum)
+                          return (
+                            <span key={saNum}>
+                              {i > 0 && ', '}
+                              {match ? (
+                                <button
+                                  className="underline hover:text-cyan-300 cursor-pointer"
+                                  onClick={() => {
+                                    const el = document.getElementById(`alert-row-${match.sa_id}`)
+                                    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('ring-1', 'ring-cyan-400'); setTimeout(() => el.classList.remove('ring-1', 'ring-cyan-400'), 2000) }
+                                  }}
+                                  title={`Jump to ${saNum}`}
+                                >{saNum}</button>
+                              ) : saNum}
+                            </span>
+                          )
+                        })}
+                        {alert.member_name && <span className="text-slate-500 ml-1">({alert.member_name})</span>}
+                      </div>
+                    )}
+                  </div>
+                </td>
+                {/* Dispatch Assist */}
+                <td className="px-2 py-2 text-center">
+                  <button
+                    onClick={() => {
+                      setAssistSaId(alert.sa_id)
+                      setAssistHints({
+                        territory: alert.territory_id,
+                        lat: alert.latitude,
+                        lon: alert.longitude,
+                        work_type_id: alert.work_type_id,
+                      })
+                      setAssistAlert(alert)
+                    }}
+                    className="p-1 rounded hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors"
+                    title="Dispatch Assist — show nearby resources"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Dispatch Assist Panel */}
+      {assistSaId && (
+        <DispatchAssistPanel saId={assistSaId} hints={assistHints} alertData={assistAlert} onClose={() => { setAssistSaId(null); setAssistHints(null); setAssistAlert(null) }} />
+      )}
     </div>
   )
 }
@@ -576,6 +689,10 @@ export default function SAWatchlist() {
                   <div>
                     <span className="text-orange-400 font-bold">High Priority Call Late</span>
                     <p className="pl-2 mt-0.5">Priority code P1–P7, created more than 30 minutes ago, still not resolved.</p>
+                  </div>
+                  <div>
+                    <span className="text-cyan-400 font-bold">Potential Duplicate</span>
+                    <p className="pl-2 mt-0.5">Same member has 2+ active SAs at a similar breakdown location — may be a double submission (phone + app/agent). Shows the related SA numbers.</p>
                   </div>
                 </div>
               </div>

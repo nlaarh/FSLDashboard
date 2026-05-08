@@ -119,13 +119,15 @@ async def activity_log_middleware(request: Request, call_next):
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (
-    auth, admin, garages, garages_performance, command_center, ops, map as map_router,
+    auth, admin, garages, garages_performance, garages_revenue, command_center, ops,
+    map as map_router,
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
-    garages_scorecard, garages_export, live_dispatch, watchlist, accounting,
+    garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
+    garages_revenue_export,
 )
 
 app.include_router(auth.router)
@@ -152,12 +154,15 @@ app.include_router(sa_report.router)
 app.include_router(garages_scorecard.router)
 app.include_router(garages_export.router)
 app.include_router(garages_performance.router)
+app.include_router(garages_revenue.router)
+app.include_router(garages_revenue_export.router)
 app.include_router(insights.router)
 app.include_router(insights_health.router)
 app.include_router(dispatch_trends_monthly.router)
 app.include_router(satisfaction_scorecard.router)
 app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
+app.include_router(watchlist_assist.router)
 app.include_router(accounting.router)
 app.include_router(accounting_reviews.router)
 app.include_router(accounting_ai.router)

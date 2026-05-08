@@ -7,6 +7,7 @@ Sessions tracked in-memory (cleared on restart).
 import hashlib, secrets, time, threading
 
 import database as db
+import user_backup
 
 _sess_lock = threading.Lock()
 _sessions: dict[str, dict] = {}
@@ -85,6 +86,7 @@ def seed_users():
                 (username, name, role, email, '', h, salt, time.time(), department),
             )
             _log.info(f"Seeded user {username} ({role})")
+    _trigger_backup()
 
 
 def migrate_json_users():
@@ -120,6 +122,17 @@ def _dept(row) -> str:
         return row['department'] or ''
     except Exception:
         return ''
+
+
+def _trigger_backup():
+    """Fire-and-forget: dump all user rows (including hashes) to encrypted backup."""
+    try:
+        with db.get_db() as conn:
+            rows = conn.execute("SELECT * FROM users").fetchall()
+            full = [dict(r) for r in rows]
+        user_backup.save(full)
+    except Exception:
+        pass  # backup failure must never crash the main operation
 
 
 def authenticate(username: str, password: str) -> dict | None:
@@ -161,6 +174,7 @@ def create_user(username: str, password: str, name: str, role: str = "viewer",
             )
     except Exception:
         raise ValueError(f"User '{username}' already exists")
+    _trigger_backup()
     return {"username": username, "name": name, "role": role, "email": email, "phone": phone, "department": department}
 
 
@@ -192,21 +206,40 @@ def update_user(username: str, name: str = None, role: str = None, department: s
             params.append(username)
             conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        return {"username": row['username'], "name": row['name'], "role": row['role'],
-                "active": bool(row['active']), "email": row['email'], "phone": row['phone'],
-                "department": _dept(row)}
+        result = {"username": row['username'], "name": row['name'], "role": row['role'],
+                  "active": bool(row['active']), "email": row['email'], "phone": row['phone'],
+                  "department": _dept(row)}
+    _trigger_backup()
+    return result
 
 
 def delete_user(username: str):
+    """Soft-delete: deactivates the user (active=0). Row is kept so it can be restored.
+    Use this instead of hard DELETE to prevent accidental permanent data loss."""
     with db.get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         if not row:
             raise ValueError(f"User '{username}' not found")
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.execute("UPDATE users SET active = 0 WHERE username = ?", (username,))
     with _sess_lock:
         to_remove = [t for t, s in _sessions.items() if s["user"] == username]
         for t in to_remove:
             del _sessions[t]
+    _trigger_backup()
+
+
+def restore_user(username: str) -> dict:
+    """Restore a soft-deleted (inactive) user by setting active=1."""
+    with db.get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            raise ValueError(f"User '{username}' not found")
+        conn.execute("UPDATE users SET active = 1 WHERE username = ?", (username,))
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        result = {"username": row['username'], "name": row['name'], "role": row['role'],
+                  "active": bool(row['active']), "email": row['email'], "department": _dept(row)}
+    _trigger_backup()
+    return result
 
 
 # ── Session management ────────────────────────────────────────────────────────

@@ -166,6 +166,14 @@ export const setWOAReview = (woaId, status, note = '', reviewer = '') =>
 export const fetchLiveDispatch = () => api.get('/live-dispatch').then(r => r.data)
 export const fetchWatchlist = () => api.get('/watchlist').then(r => r.data)
 export const fetchWatchlistManual = () => api.get('/watchlist/manual').then(r => r.data)
+export const fetchDispatchAssist = (saId, hints = {}) => {
+  const params = new URLSearchParams({ sa_id: saId })
+  if (hints.territory) params.append('territory', hints.territory)
+  if (hints.lat) params.append('lat', hints.lat)
+  if (hints.lon) params.append('lon', hints.lon)
+  if (hints.work_type_id) params.append('work_type_id', hints.work_type_id)
+  return api.get(`/watchlist/dispatch-assist?${params}`).then(r => r.data)
+}
 export const followSA = (sa_number, sa_id = '', added_by = '') => api.post('/watchlist/follow', { sa_number, sa_id, added_by }).then(r => r.data)
 export const unfollowSA = (sa_number) => api.delete(`/watchlist/follow/${sa_number}`).then(r => r.data)
 
@@ -223,6 +231,20 @@ export const optimizerRunZipUrl = (runId) => `/api/optimizer/files/${runId}/down
 export const optimizerDateZipUrl = (date) => `/api/optimizer/files/by-date/${date}/download`
 export const optimizerChat = (messages, runContext = null) =>
   api.post('/optimizer/chat', { messages, run_context: runContext }).then(r => r.data)
+
+// Garage Driver Revenue
+export const fetchDriverRevenue = (id, startDate, endDate, bust = false) =>
+  api.get(`/garages/${id}/driver-revenue?start_date=${startDate}&end_date=${endDate}${bust ? '&bust=true' : ''}`, { timeout: 120000 }).then(r => r.data)
+export const fetchDriverRevenueDaily = (id, driverName, startDate, endDate) =>
+  api.get(`/garages/${id}/driver-revenue/${encodeURIComponent(driverName)}/daily?start_date=${startDate}&end_date=${endDate}`, { timeout: 120000 }).then(r => r.data)
+export const exportDriverRevenue = (id, startDate, endDate, garageName) => {
+  const a = document.createElement('a')
+  a.href = `/api/garages/${id}/driver-revenue/export?start_date=${startDate}&end_date=${endDate}&garage_name=${encodeURIComponent(garageName || '')}`
+  a.download = `driver_revenue_${startDate}_${endDate}.xlsx`
+  document.body.appendChild(a); a.click(); a.remove()
+}
+export const emailDriverRevenue = (id, to, startDate, endDate, garageName) =>
+  api.post(`/garages/${id}/driver-revenue/email`, { to, start_date: startDate, end_date: endDate, garage_name: garageName }).then(r => r.data)
 
 // Reporting
 export const fetchReportSummary = (garageIds, startDate, endDate) => {

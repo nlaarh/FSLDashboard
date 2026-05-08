@@ -180,29 +180,32 @@ def get_ops_territories():
             if tid:
                 by_territory[tid].append(sa)
 
-        # Fetch real arrival times for Towbook SAs (On Location from history)
+        # Collect IDs needed by both history queries
         towbook_completed_ids = [
             sa['Id'] for sa in sas
             if (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
             and sa.get('Status') == 'Completed'
             and sa.get('Id')
         ]
-        towbook_on_location = get_towbook_on_location(towbook_completed_ids)
+        all_sa_ids = [sa['Id'] for sa in sas if sa.get('Id')]
+
+        from sf_batch import batch_soql_parallel
+        # Both queries depend on sas but not on each other — run in parallel
+        _hist = sf_parallel(
+            towbook=lambda: get_towbook_on_location(towbook_completed_ids),
+            sa_hist=lambda: batch_soql_parallel("""
+                SELECT ServiceAppointmentId, NewValue, CreatedDate
+                FROM ServiceAppointmentHistory
+                WHERE Field = 'ServiceTerritory'
+                  AND ServiceAppointmentId IN ('{id_list}')
+                ORDER BY ServiceAppointmentId, CreatedDate ASC
+            """, all_sa_ids, chunk_size=200) if all_sa_ids else [],
+        )
+        towbook_on_location = _hist['towbook']
+        sa_hist_rows = _hist['sa_hist']
 
         matrix = _get_priority_matrix()
         rank_lookup = matrix['rank_lookup']
-
-        # Fetch SA territory assignment history for primary/secondary classification
-        # Same logic as garages_performance.py: first territory assigned = primary
-        all_sa_ids = [sa['Id'] for sa in sas if sa.get('Id')]
-        from sf_batch import batch_soql_parallel
-        sa_hist_rows = batch_soql_parallel("""
-            SELECT ServiceAppointmentId, NewValue, CreatedDate
-            FROM ServiceAppointmentHistory
-            WHERE Field = 'ServiceTerritory'
-              AND ServiceAppointmentId IN ('{id_list}')
-            ORDER BY ServiceAppointmentId, CreatedDate ASC
-        """, all_sa_ids, chunk_size=200) if all_sa_ids else []
 
         # Build first-territory map: sa_id -> first territory ID assigned
         sa_first_territory = {}

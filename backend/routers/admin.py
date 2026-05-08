@@ -159,13 +159,79 @@ def admin_update_user(request: Request, username: str, body: dict):
 
 @router.delete("/api/admin/users/{username}")
 def admin_delete_user(request: Request, username: str):
-    """Delete a user."""
+    """Soft-delete a user (deactivates, does not purge). Recoverable via restore endpoint."""
     _check_pin(request)
     try:
         users.delete_user(username)
-        return {"ok": True}
+        return {"ok": True, "note": "User deactivated (not purged). Use /restore to recover."}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/api/admin/users/{username}/restore")
+def admin_restore_user(request: Request, username: str):
+    """Restore a soft-deleted user (sets active=1)."""
+    _check_pin(request)
+    try:
+        user = users.restore_user(username)
+        return {"ok": True, "user": user}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/api/admin/users/seed-restore")
+def admin_seed_restore(request: Request):
+    """Re-run seed_users() to restore any missing seed users from SEED_PASS_* env vars."""
+    _check_pin(request)
+    import io, logging
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    logging.getLogger('users').addHandler(handler)
+    try:
+        users.seed_users()
+    finally:
+        logging.getLogger('users').removeHandler(handler)
+    return {"ok": True, "log": buf.getvalue() or "All seed users already present."}
+
+
+@router.post("/api/admin/users/restore-missing")
+def admin_restore_backup(request: Request):
+    """Restore only missing users from Postgres mirror (or encrypted file fallback).
+    Existing users are never touched — no duplicates possible."""
+    _check_pin(request)
+    import user_backup, database as db
+    try:
+        backed_up = user_backup.load()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    restored = 0
+    skipped = 0
+    with db.get_db() as conn:
+        for row in backed_up:
+            result = conn.execute(
+                """INSERT OR IGNORE INTO users
+                   (username, name, role, email, phone, password_hash, salt, active, created_at, department)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [row.get('username'), row.get('name'), row.get('role'),
+                 row.get('email', ''), row.get('phone', ''),
+                 row['password_hash'], row['salt'],
+                 row.get('active', 1), row.get('created_at'), row.get('department', '')]
+            )
+            if result.rowcount:
+                restored += 1
+            else:
+                skipped += 1
+
+    return {"ok": True, "restored": restored, "skipped": skipped, "total_in_backup": len(backed_up)}
+
+
+@router.get("/api/admin/users/mirror-status")
+def admin_backup_info(request: Request):
+    """Show sync status of Postgres users mirror and file fallback."""
+    _check_pin(request)
+    import user_backup
+    return user_backup.backup_info()
 
 
 @router.get("/api/admin/sessions")

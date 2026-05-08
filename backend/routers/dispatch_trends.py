@@ -58,16 +58,6 @@ def api_trends():
                   AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
             """)
 
-        def _get_reassignment_history():
-            return sf_query_all("""
-                SELECT ServiceAppointmentId, CreatedDate, NewValue
-                FROM ServiceAppointmentHistory
-                WHERE CreatedDate = LAST_N_DAYS:31
-                  AND CreatedDate < TODAY
-                  AND Field = 'ERS_Assigned_Resource__c'
-                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
-            """)
-
         def _get_satisfaction():
             return sf_query_all("""
                 SELECT DAY_ONLY(CreatedDate) d,
@@ -80,13 +70,15 @@ def api_trends():
                 GROUP BY DAY_ONLY(CreatedDate), ERS_Overall_Satisfaction__c
             """)
 
-        def _get_reassign_with_creator():
-            """SAHistory rows for manual dispatch detection.
-            Manual = count > 2 (reassigned at least once) AND a human (Membership User) was involved.
-            Each assignment creates 2 rows (display name + SF ID), so count > 2 = reassigned.
+        def _get_assign_history():
+            """SAHistory rows for both reassignment counting and manual dispatch detection.
+            Merged from two formerly separate queries on the same WHERE clause — saves 1 SF call.
+            - NewValue + CreatedDate → count reassignments per day (step 3)
+            - CreatedBy.Profile.Name → detect human dispatchers (step 1)
             """
             return sf_query_all("""
-                SELECT ServiceAppointmentId, CreatedBy.Name, CreatedBy.Profile.Name
+                SELECT ServiceAppointmentId, CreatedDate, NewValue,
+                       CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE CreatedDate = LAST_N_DAYS:31
                   AND CreatedDate < TODAY
@@ -96,18 +88,16 @@ def api_trends():
 
         # All queries in parallel for speed
         data = sf_parallel(sas=_get_sas, status_hist=_get_status_history,
-                           reassign_hist=_get_reassignment_history,
-                           satisfaction=_get_satisfaction, assign_hist=_get_reassign_with_creator)
+                           satisfaction=_get_satisfaction, assign_hist=_get_assign_history)
 
         all_sas = data['sas']
         status_hist = data['status_hist']
-        reassign_hist = data['reassign_hist']
         satisfaction_rows = data['satisfaction']
         assign_hist_rows = data['assign_hist']
 
         import logging
         _log = logging.getLogger('trends')
-        _log.info(f"Trends fetch: sas={len(all_sas)}, status_hist={len(status_hist)}, reassign={len(reassign_hist)}, satisfaction={len(satisfaction_rows)}, assign_hist={len(assign_hist_rows)}")
+        _log.info(f"Trends fetch: sas={len(all_sas)}, status_hist={len(status_hist)}, assign_hist={len(assign_hist_rows)}, satisfaction={len(satisfaction_rows)}")
 
         # ── Pre-process history data ─────────────────────────────────
 
@@ -144,7 +134,7 @@ def api_trends():
         #    First assignment is normal dispatch; only subsequent ones are reassignments.
         reassign_by_day = defaultdict(int)
         _sa_assign_seq = defaultdict(int)  # count name-only rows per SA
-        for r in reassign_hist:
+        for r in assign_hist_rows:
             new_val = (r.get('NewValue') or '').strip()
             if not new_val or _sf_id_pat.match(new_val):
                 continue  # Skip SF ID duplicate rows
