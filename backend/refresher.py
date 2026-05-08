@@ -77,7 +77,7 @@ def _get_schedule():
         # ── Heavy / static (3600s) ──
         (3600, 'map_grids',              get_map_grids,                    True),
         (300,  'gps_health',             gps_health,                       False),  # 5 min — drivers log in/out
-        (900,  'accounting_woa_list_open', lambda: __import__('routers.accounting', fromlist=['_build_woa_list'])._build_woa_list('open'), True),
+        (900,  'accounting_woa_list', lambda: __import__('routers.accounting', fromlist=['_build_woa_list'])._build_woa_list(), True),
     ]
 
 

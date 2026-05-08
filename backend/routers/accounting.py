@@ -25,7 +25,7 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
                        product_filter: str = Query(''), rec_filter: str = Query(''), q: str = Query(''),
                        sort_col: str = Query('created_date'), sort_dir: str = Query('desc'),
                        start_date: str = Query(''), end_date: str = Query('')):
-    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
     items = full.get('items', [])
 
     # Status filter applied in memory — same as all other filters
@@ -154,24 +154,6 @@ def _build_woa_list() -> dict:
                 'unit_rate': unit_rate,
                 'description': wl.get('Description'),
             })
-
-    # Secondary: fetch WorkType per WO via SA.
-    # SAs link to WOLI (not WO) via ParentRecordId — must use WOLI IDs.
-    woli_ids = [w['id'] for wolis in wo_wolis.values() for w in wolis if w.get('id')]
-    woli_to_wo = {w['id']: woid for woid, wolis in wo_wolis.items() for w in wolis if w.get('id')}
-    sa_type_rows = batch_soql_parallel("""
-        SELECT ParentRecordId, WorkType.Name
-        FROM ServiceAppointment
-        WHERE ParentRecordId IN ('{id_list}')
-        AND WorkType.Name != 'Tow Drop-Off'
-    """, woli_ids, chunk_size=500) if woli_ids else []
-    wo_service_type: dict = {}
-    for _sa in sa_type_rows:
-        _woli_id = _sa.get('ParentRecordId')
-        _wt = (_sa.get('WorkType') or {}).get('Name') or ''
-        _woid = woli_to_wo.get(_woli_id)
-        if _woid and _wt and _woid not in wo_service_type:
-            wo_service_type[_woid] = _wt
 
     def _best_woli(wo_id, requested_qty, wo=None):
         return match_best_woli(wo_wolis.get(wo_id, []), requested_qty, wo)
@@ -323,7 +305,7 @@ def _build_woa_list() -> dict:
             'estimated_usd': estimated_usd,
             'is_low_materiality': is_low_materiality,
             'program': (wo.get('Type__c') or '').strip(),
-            'service_type': wo_service_type.get(wo_id, ''),
+            'service_type': '',
         })
 
     # Post-process: per-WO WOA counts and same-product duplicate detection
@@ -364,7 +346,7 @@ def _build_woa_list() -> dict:
 def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
                    rec_filter: str = Query(''), q: str = Query(''),
                    start_date: str = Query(''), end_date: str = Query('')):
-    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
     items = full.get('items', [])
     if status == 'open':
         items = [r for r in items if r.get('status') == 'New']
@@ -504,7 +486,7 @@ def api_accounting_rates():
 
 @router.get("/api/accounting/analytics")
 def api_accounting_analytics(status: str = Query('open')):
-    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
+    full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
     items = full.get('items', [])
     if status == 'open':
         items = [r for r in items if r.get('status') == 'New']
@@ -625,7 +607,7 @@ def api_batch_audit(body: BatchAuditRequest):
     woa_ids = [sanitize_soql(wid) for wid in body.woa_ids[:50]]
 
     if not woa_ids and body.product_filter:
-        full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=3600)
+        full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
         woa_ids = [r['id'] for r in full.get('items', [])
                    if r.get('status') == 'New'
                    and body.product_filter.lower() in (r.get('product') or '').lower()][:50]
