@@ -113,8 +113,9 @@ def _build_woa_list() -> dict:
                Work_Order__r.Long_Tow_Miles__c,
                Work_Order__r.Type__c
         FROM ERS_Work_Order_Adjustment__c
+        WHERE Status__c = 'New'
         ORDER BY CreatedDate DESC
-        LIMIT 15000
+        LIMIT 5000
     """)
 
     if not woa_rows:

@@ -73,7 +73,10 @@ def _build_woa_data(woa_id: str) -> dict:
     _fac_id = (wo.get('Facility_ID__c') or '').strip()
     _is_fleet = _fac_id.startswith(('100', '800'))
 
-    # Parallel: WOLI + Costs + SA — all need only wo_id (from Round 1)
+    # Round 2: all queries that need only Round 1 data run in parallel.
+    # rflib_gps and same_day moved here from Round 3 — they only need wo/woa data.
+    # sa_direct: removed Status='Completed' filter — catches in-progress SAs too,
+    # eliminating the expensive WOLI-based fallback in most cases.
     _SA_FIELDS = """Id, AppointmentNumber, Status, SchedStartTime,
                    ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
                    ERS_En_Route_Geolocation__Latitude__s,
@@ -84,6 +87,47 @@ def _build_woa_data(woa_id: str) -> dict:
                    ERS_Completed_Geolocation__Longitude__s,
                    ERS_Membership_Level_Coverage__c,
                    WorkType.Name"""
+    _account_id = wo.get('AccountId')
+    _woa_date_str = (woa.get('CreatedDate') or '')[:10]
+    _wo_number = wo.get('WorkOrderNumber', '')
+
+    def _get_rflib_gps_r2():
+        if _is_fleet or not _wo_number:
+            return []
+        return sf_query_all(f"""
+            SELECT ERS_Request__c, CreatedDate
+            FROM rflib_Log__c
+            WHERE Type__c = 'Integration Towbook Inbound'
+              AND Context__c = 'Appointment Update from Towbook'
+              AND ReferenceId__c = '{sanitize_soql(_wo_number)}'
+            ORDER BY CreatedDate ASC
+            LIMIT 20
+        """)
+
+    def _get_same_day_r2():
+        if not (_account_id and _woa_date_str):
+            return []
+        try:
+            rows = sf_query_all(f"""
+                SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
+                       ServiceTerritory.Name
+                FROM WorkOrder
+                WHERE AccountId = '{sanitize_soql(_account_id)}'
+                  AND CreatedDate >= {_woa_date_str}T00:00:00Z
+                  AND CreatedDate <= {_woa_date_str}T23:59:59Z
+                  AND Id != '{sanitize_soql(wo_id)}'
+                LIMIT 10
+            """, max_records=10)
+            return [
+                {'wo_number': r.get('WorkOrderNumber'), 'status': r.get('Status'),
+                 'trouble_code': r.get('Trouble_Code__c'), 'created_date': r.get('CreatedDate'),
+                 'territory': (r.get('ServiceTerritory') or {}).get('Name')}
+                for r in (rows or [])
+                if r.get('WorkOrderNumber') != _wo_number
+            ]
+        except Exception:
+            return []
+
     _ph2 = sf_parallel(
         woli=lambda: sf_query_all(f"""
             SELECT Id, WorkOrderId, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
@@ -99,9 +143,11 @@ def _build_woa_data(woa_id: str) -> dict:
         sa_direct=lambda: sf_query_all(f"""
             SELECT {_SA_FIELDS}
             FROM ServiceAppointment
-            WHERE ParentRecordId = '{wo_id}' AND Status = 'Completed'
+            WHERE ParentRecordId = '{wo_id}'
             ORDER BY SchedStartTime DESC LIMIT 1
         """) if wo_id else [],
+        rflib_gps=_get_rflib_gps_r2,
+        same_day=_get_same_day_r2,
     )
     woli_rows = _ph2['woli']
     wo_costs = _ph2['costs']
@@ -200,7 +246,9 @@ def _build_woa_data(woa_id: str) -> dict:
         for w in woli_rows
     )
 
-    # SA — use direct WO lookup (parallel above); fall back to WOLI IDs if needed
+    # SA — use direct WO lookup from Round 2.
+    # Fallback to WOLI IDs only if still not found (rare — sa_direct no longer
+    # filters on Status so it catches in-progress and completed SAs alike).
     sa = {}
     sa_id = ''
     sa_direct_rows = _ph2.get('sa_direct') or []
@@ -214,88 +262,36 @@ def _build_woa_data(woa_id: str) -> dict:
                 SELECT {_SA_FIELDS}
                 FROM ServiceAppointment
                 WHERE ParentRecordId IN ('{{id_list}}')
-                  AND Status = 'Completed'
+                ORDER BY SchedStartTime DESC LIMIT 1
             """, woli_ids, chunk_size=200)
             if sa_check:
                 sa = sa_check[0]
                 sa_id = sa.get('Id', '')
 
-    def _get_sa_history():
-        if not sa_id:
-            return []
-        return sf_query_all(f"""
-            SELECT CreatedDate, OldValue, NewValue
-            FROM ServiceAppointmentHistory
-            WHERE ServiceAppointmentId = '{sa_id}'
-              AND Field = 'Status'
-            ORDER BY CreatedDate ASC
-            LIMIT 200
-        """)
+    # Round 3: only SA-id-dependent queries. Skip entirely if no SA found.
+    if sa_id:
+        parallel_data = sf_parallel(
+            sa_history=lambda: sf_query_all(f"""
+                SELECT CreatedDate, OldValue, NewValue
+                FROM ServiceAppointmentHistory
+                WHERE ServiceAppointmentId = '{sa_id}'
+                  AND Field = 'Status'
+                ORDER BY CreatedDate ASC
+                LIMIT 20
+            """),
+            assigned_resource=lambda: sf_query_all(f"""
+                SELECT ServiceResourceId, ServiceResource.Name
+                FROM AssignedResource
+                WHERE ServiceAppointmentId = '{sa_id}'
+                ORDER BY CreatedDate DESC
+                LIMIT 1
+            """),
+        )
+    else:
+        parallel_data = {'sa_history': [], 'assigned_resource': []}
 
-    def _get_assigned_resource():
-        if not sa_id:
-            return []
-        return sf_query_all(f"""
-            SELECT ServiceResourceId, ServiceResource.Name
-            FROM AssignedResource
-            WHERE ServiceAppointmentId = '{sa_id}'
-            ORDER BY CreatedDate DESC
-            LIMIT 1
-        """)
-
-    def _get_rflib_gps():
-        """Towbook driver GPS from rflib_Log__c. Covers full job lifecycle:
-        DISPATCHED → EN_ROUTE → ON_LOCATION. ERS_Request__c is not filterable
-        in SOQL WHERE, so we fetch all logs for the WO and filter in Python."""
-        if _is_fleet:
-            return []  # Fleet drivers use FSL mobile GPS on SA — rflib is Towbook-only
-        wo_number = wo.get('WorkOrderNumber', '')
-        if not wo_number:
-            return []
-        return sf_query_all(f"""
-            SELECT ERS_Request__c, CreatedDate
-            FROM rflib_Log__c
-            WHERE Type__c = 'Integration Towbook Inbound'
-              AND Context__c = 'Appointment Update from Towbook'
-              AND ReferenceId__c = '{sanitize_soql(wo_number)}'
-            ORDER BY CreatedDate ASC
-            LIMIT 20
-        """)
-
-    # Same-member same-day and garage history only need WOA data — run in parallel
-    _account_id = wo.get('AccountId')
-    _woa_date_str = (woa.get('CreatedDate') or '')[:10]
-
-    def _get_same_day():
-        if not (_account_id and _woa_date_str):
-            return []
-        try:
-            rows = sf_query_all(f"""
-                SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
-                       ServiceTerritory.Name
-                FROM WorkOrder
-                WHERE AccountId = '{sanitize_soql(_account_id)}'
-                  AND CreatedDate >= {_woa_date_str}T00:00:00Z
-                  AND CreatedDate <= {_woa_date_str}T23:59:59Z
-                  AND Id != '{sanitize_soql(wo_id)}'
-                LIMIT 10
-            """, max_records=10)
-            return [
-                {'wo_number': r.get('WorkOrderNumber'), 'status': r.get('Status'),
-                 'trouble_code': r.get('Trouble_Code__c'), 'created_date': r.get('CreatedDate'),
-                 'territory': (r.get('ServiceTerritory') or {}).get('Name')}
-                for r in (rows or [])
-                if r.get('WorkOrderNumber') != wo.get('WorkOrderNumber')
-            ]
-        except Exception:
-            return []
-
-    parallel_data = sf_parallel(
-        sa_history=_get_sa_history,
-        assigned_resource=_get_assigned_resource,
-        rflib_gps=_get_rflib_gps,
-        same_day=_get_same_day,
-    )
+    parallel_data['rflib_gps'] = _ph2.get('rflib_gps') or []
+    parallel_data['same_day']  = _ph2.get('same_day') or []
 
     status_transitions = ['None', 'Scheduled', 'Assigned', 'Dispatched',
                           'Accepted', 'Declined', 'En Route',
