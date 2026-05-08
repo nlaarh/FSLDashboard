@@ -305,6 +305,25 @@ async def startup():
             dispatch_trends.api_trends()
     threading.Thread(target=_startup_trends_check, daemon=True).start()
 
+    # Accounting pre-warm: build WOA list in background immediately on startup.
+    # Runs in parallel with other startup work so the cache is hot before the
+    # first user opens the accounting tab (otherwise first load = 60s cold build).
+    def _prewarm_accounting():
+        if cache.disk_get_stale('accounting_woa_list'):
+            return  # L2 already has data — SWR will serve it instantly, no need to rebuild
+        import logging
+        logging.getLogger('startup').info("Accounting cache cold — pre-warming in background")
+        try:
+            from routers.accounting import _build_woa_list
+            import cache as _cache
+            result = _build_woa_list()
+            _cache.put('accounting_woa_list', result, ttl=900)
+            _cache.disk_put('accounting_woa_list', result, ttl=86400)
+            logging.getLogger('startup').info("Accounting cache pre-warm complete")
+        except Exception as e:
+            logging.getLogger('startup').warning(f"Accounting pre-warm failed: {e}")
+    threading.Thread(target=_prewarm_accounting, daemon=True).start()
+
 
 # ── Serve React SPA ─────────────────────────────────────────────────────────
 
