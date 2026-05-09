@@ -138,7 +138,7 @@ def lookup_sa(sa_number: str):
         return _lookup_sa_impl(sa_number)
     result = cache.cached_query(f'sa_lookup_{sa_number}', _fetch, ttl=30)
     if result is None:
-        raise HTTPException(status_code=404, detail=f"SA {sa_number} not found")
+        raise HTTPException(status_code=404, detail=f"{sa_number} not found")
     return result
 
 

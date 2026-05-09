@@ -1,7 +1,9 @@
 """Garage driver revenue & labor — per-driver revenue attribution from billing WOLIs.
 
 Only meaningful for On-Platform Contractor garages (e.g. Transit Auto 076DO/076D).
-Revenue = WorkOrderLineItem.Total_Amount_Invoiced__c for completed in-period calls.
+Revenue = sum of WOLI cost fields (Basic + Plus + Premier + RV + Other) on billing WOLIs
+          (PricebookEntryId != null). Populated immediately on call completion, before
+          invoicing — more complete than Total_Amount_Invoiced__c which requires billing cycle.
 Hours  = AssetHistory.ERS_Driver__c login/logout sessions across all ERS trucks.
 
 Two endpoints:
@@ -185,12 +187,21 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
 
     # Phase 3 — billing WOLI batches in parallel (depends on wo_ids from phase 2)
     billing_wolis = _batch_parallel(
-        "SELECT WorkOrderId, Total_Amount_Invoiced__c FROM WorkOrderLineItem",
+        "SELECT WorkOrderId, PricebookEntryId, Basic_Cost__c, Plus_Cost__c, "
+        "Premier_Cost__c, RV_Cost__c, Other_Cost__c FROM WorkOrderLineItem",
         "WorkOrderId", wo_ids,
     )
     wo_to_billing: dict[str, float] = {}
     for w in billing_wolis:
-        amt = w.get('Total_Amount_Invoiced__c') or 0.0
+        if not w.get('PricebookEntryId'):  # skip service WOLIs (work-type descriptors, always $0)
+            continue
+        amt = (
+            (w.get('Basic_Cost__c')   or 0.0) +
+            (w.get('Plus_Cost__c')    or 0.0) +
+            (w.get('Premier_Cost__c') or 0.0) +
+            (w.get('RV_Cost__c')      or 0.0) +
+            (w.get('Other_Cost__c')   or 0.0)
+        )
         if amt > 0:
             wo_id = w['WorkOrderId']
             wo_to_billing[wo_id] = wo_to_billing.get(wo_id, 0.0) + amt
@@ -333,12 +344,21 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
 
     # Phase 3 — billing WOLI batches in parallel
     billing_wolis = _batch_parallel(
-        "SELECT WorkOrderId, Total_Amount_Invoiced__c FROM WorkOrderLineItem",
+        "SELECT WorkOrderId, PricebookEntryId, Basic_Cost__c, Plus_Cost__c, "
+        "Premier_Cost__c, RV_Cost__c, Other_Cost__c FROM WorkOrderLineItem",
         "WorkOrderId", wo_ids,
     )
     wo_to_billing: dict[str, float] = {}
     for w in billing_wolis:
-        amt = w.get('Total_Amount_Invoiced__c') or 0.0
+        if not w.get('PricebookEntryId'):  # skip service WOLIs (always $0)
+            continue
+        amt = (
+            (w.get('Basic_Cost__c')   or 0.0) +
+            (w.get('Plus_Cost__c')    or 0.0) +
+            (w.get('Premier_Cost__c') or 0.0) +
+            (w.get('RV_Cost__c')      or 0.0) +
+            (w.get('Other_Cost__c')   or 0.0)
+        )
         if amt > 0:
             wo = w['WorkOrderId']
             wo_to_billing[wo] = wo_to_billing.get(wo, 0.0) + amt

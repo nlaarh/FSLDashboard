@@ -141,7 +141,7 @@ export default function Admin() {
         </div>
         <div className="flex items-center gap-3">
           {loading && <Loader2 className="w-4 h-4 animate-spin text-brand-400" />}
-          <button onClick={() => { refresh(); loadUsers(); loadSessions() }}
+          <button onClick={refresh}
             className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white
                        transition-colors flex items-center gap-1.5">
             <RefreshCw className="w-3 h-3" /> Refresh

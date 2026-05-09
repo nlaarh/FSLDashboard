@@ -451,3 +451,59 @@ Per driver:
 ---
 
 *Last verified against code: 2026-03-15*
+
+---
+
+## Driver Revenue (Garage Revenue Tab)
+
+**Scope:** On-Platform Contractor garages only (e.g., Transit Auto 076DO/076D). Fleet garages do not invoice AAA.
+
+### Revenue Source of Truth
+
+Revenue is calculated from **WOLI cost fields** on billing WOLIs (those with `PricebookEntryId != null`):
+
+```
+revenue per WO = Basic_Cost__c + Plus_Cost__c + Premier_Cost__c + RV_Cost__c + Other_Cost__c
+```
+
+**Why NOT `Total_Amount_Invoiced__c`:** That field is only populated after the Facility Invoice (`ERS_Facility_Invoice__c`) is created and processed — which happens on a billing cycle, potentially weeks after call completion. Using it causes recent calls to show $0 revenue even though the amounts are known. The cost fields above are populated immediately when the billing WOLI is created (right after call completion) and match `Total_Amount_Invoiced__c` exactly once invoiced.
+
+**Why NOT `TotalPrice`:** Standard SF field — always $0 in this org. Not used.
+
+### Two WOLI Types on Every Work Order
+
+| Type | WorkType | PricebookEntry | Cost fields | Used for |
+|---|---|---|---|---|
+| Service WOLI | "Lockout", "Tow Pick-Up", etc. | null | $0 always | SA.ParentRecordId points here — identifies the call type |
+| Billing WOLI | null | "BA - Base Rate", "ER - Enroute Miles", etc. | Has the money | Summed for revenue |
+
+Filter: `PricebookEntryId != null` selects billing WOLIs only.
+
+### Attribution Chain
+
+```
+SA → SA.ParentRecordId (service WOLI) → WorkOrderId
+→ ALL WOLIs WHERE WorkOrderId (billing WOLIs, PricebookEntryId != null)
+→ SUM(Basic + Plus + Premier + RV + Other) per WO
+→ attribute to driver via AssignedResource
+```
+
+### Battery vs Tow/Light Revenue
+
+Battery SAs (WorkType contains "battery") tracked separately under `battery_revenue`. Reason: batteries have a different cost structure and should not be mixed with tow/light service revenue.
+
+- **Tow/Light revenue**: all WOs excluding battery and drop-off SAs
+- **Battery revenue**: WOs from battery SAs only
+
+### Hours Calculation
+
+`AssetHistory.ERS_Driver__c` tracks truck login/logout. Sessions > 16h are capped. Open sessions (driver still logged in) are discarded.
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `routers/garages_revenue.py` | `_compute_revenue()`, `_compute_driver_daily()` |
+| `routers/garages_revenue_export.py` | Excel + email export |
+
+*Updated 2026-05-08 — switched from Total_Amount_Invoiced__c to cost fields for immediate post-completion coverage.*

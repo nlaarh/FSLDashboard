@@ -144,7 +144,7 @@ def _build_woa_data(woa_id: str) -> dict:
             SELECT {_SA_FIELDS}
             FROM ServiceAppointment
             WHERE ParentRecordId = '{wo_id}'
-            ORDER BY SchedStartTime DESC LIMIT 1
+            ORDER BY SchedStartTime ASC
         """) if wo_id else [],
         rflib_gps=_get_rflib_gps_r2,
         same_day=_get_same_day_r2,
@@ -251,9 +251,9 @@ def _build_woa_data(woa_id: str) -> dict:
     # filters on Status so it catches in-progress and completed SAs alike).
     sa = {}
     sa_id = ''
-    sa_direct_rows = _ph2.get('sa_direct') or []
-    if sa_direct_rows:
-        sa = sa_direct_rows[0]
+    all_sa_rows = _ph2.get('sa_direct') or []
+    if all_sa_rows:
+        sa = all_sa_rows[0]
         sa_id = sa.get('Id', '')
     else:
         woli_ids = [wl['Id'] for wl in woli_rows if wl.get('Id')]
@@ -262,31 +262,47 @@ def _build_woa_data(woa_id: str) -> dict:
                 SELECT {_SA_FIELDS}
                 FROM ServiceAppointment
                 WHERE ParentRecordId IN ('{{id_list}}')
-                ORDER BY SchedStartTime DESC LIMIT 1
+                ORDER BY SchedStartTime ASC
             """, woli_ids, chunk_size=200)
             if sa_check:
+                all_sa_rows = sa_check
                 sa = sa_check[0]
                 sa_id = sa.get('Id', '')
 
-    # Round 3: only SA-id-dependent queries. Skip entirely if no SA found.
-    if sa_id:
-        parallel_data = sf_parallel(
-            sa_history=lambda: sf_query_all(f"""
+    # Identify secondary SAs (2nd, 3rd, etc.) for multi-SA timeline
+    secondary_sa_rows = all_sa_rows[1:] if len(all_sa_rows) > 1 else []
+    all_sa_ids = [s.get('Id') for s in all_sa_rows if s.get('Id')]
+
+    # Round 3: fetch history for ALL SAs on the WO in parallel.
+    if all_sa_ids:
+        _history_queries = {}
+        _history_queries['sa_history'] = lambda: sf_query_all(f"""
+            SELECT CreatedDate, OldValue, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE ServiceAppointmentId = '{sa_id}'
+              AND Field = 'Status'
+            ORDER BY CreatedDate ASC
+            LIMIT 20
+        """)
+        _history_queries['assigned_resource'] = lambda: sf_query_all(f"""
+            SELECT ServiceResourceId, ServiceResource.Name
+            FROM AssignedResource
+            WHERE ServiceAppointmentId = '{sa_id}'
+            ORDER BY CreatedDate DESC
+            LIMIT 1
+        """)
+        # Fetch history for secondary SAs
+        for i, sec_sa in enumerate(secondary_sa_rows[:3]):  # max 3 secondary SAs
+            _sec_id = sec_sa.get('Id', '')
+            _history_queries[f'sa_history_{i+2}'] = (lambda sid: lambda: sf_query_all(f"""
                 SELECT CreatedDate, OldValue, NewValue
                 FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId = '{sa_id}'
+                WHERE ServiceAppointmentId = '{sid}'
                   AND Field = 'Status'
                 ORDER BY CreatedDate ASC
                 LIMIT 20
-            """),
-            assigned_resource=lambda: sf_query_all(f"""
-                SELECT ServiceResourceId, ServiceResource.Name
-                FROM AssignedResource
-                WHERE ServiceAppointmentId = '{sa_id}'
-                ORDER BY CreatedDate DESC
-                LIMIT 1
-            """),
-        )
+            """))(_sec_id)
+        parallel_data = sf_parallel(**_history_queries)
     else:
         parallel_data = {'sa_history': [], 'assigned_resource': []}
 
@@ -340,6 +356,35 @@ def _build_woa_data(woa_id: str) -> dict:
     ar_rows = parallel_data['assigned_resource']
     driver_resource_id = ar_rows[0].get('ServiceResourceId', '') if ar_rows else ''
     driver_name = (ar_rows[0].get('ServiceResource') or {}).get('Name', '') if ar_rows else ''
+
+    # Build secondary SA timelines (for multi-SA work orders)
+    secondary_sa_timelines = []
+    for i, sec_sa in enumerate(secondary_sa_rows[:3]):
+        sec_history = parallel_data.get(f'sa_history_{i+2}') or []
+        sec_timeline = []
+        _sec_prev_ts = None
+        for h in sec_history:
+            nv = h.get('NewValue', '')
+            if nv in status_transitions:
+                _cur_ts = _parse_dt(h.get('CreatedDate'))
+                _elapsed = round((_cur_ts - _sec_prev_ts).total_seconds()) if (_sec_prev_ts and _cur_ts) else None
+                sec_timeline.append({
+                    'time': _fmt_et(h.get('CreatedDate')),
+                    'from': h.get('OldValue') or '',
+                    'to': nv,
+                    'elapsed_seconds': _elapsed,
+                })
+                if _cur_ts is not None:
+                    _sec_prev_ts = _cur_ts
+        if sec_timeline:
+            secondary_sa_timelines.append({
+                'sa_number': sec_sa.get('AppointmentNumber', ''),
+                'sa_id': sec_sa.get('Id', ''),
+                'work_type': (sec_sa.get('WorkType') or {}).get('Name', ''),
+                'status': sec_sa.get('Status', ''),
+                'timeline': sec_timeline,
+            })
+
     truck_prev = None
 
     # Parse Towbook rflib GPS — DISPATCHED, EN_ROUTE, and ON_LOCATION from parallel query.
@@ -618,6 +663,7 @@ def _build_woa_data(woa_id: str) -> dict:
         },
         'woli_items': all_wolis,
         'sa_timeline': sa_timeline,
+        'secondary_sa_timelines': secondary_sa_timelines,
         'sf_urls': {
             'woa': f'{_SF_BASE}/{woa_id}',
             'wo': f'{_SF_BASE}/{wo_id}' if wo_id else None,

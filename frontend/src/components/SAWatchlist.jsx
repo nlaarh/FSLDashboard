@@ -313,7 +313,11 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                         territory: alert.territory_id,
                         lat: alert.latitude,
                         lon: alert.longitude,
-                        work_type_id: alert.work_type_id,
+                        work_type: alert.work_type,
+                        // 000 mode: pass grid zone so backend can find ranked garages + FSL drivers
+                        parent_territory_id: alert.facility_name?.startsWith('000')
+                          ? alert.parent_territory_id
+                          : undefined,
                       })
                       setAssistAlert(alert)
                     }}

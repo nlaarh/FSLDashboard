@@ -16,6 +16,7 @@ from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, timezone
 
 from sf_batch import batch_soql_parallel
+from sf_client import sf_query_all
 from utils import parse_dt as _parse_dt
 
 log = logging.getLogger('watchlist.alerts')
@@ -184,6 +185,8 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                 'current_wait': None,  # filled later from WO query
                 'territory': territory_name,
                 'territory_id': sa.get('ServiceTerritoryId') or '',
+                'parent_territory_id': sa.get('ERS_Parent_Territory__c') or '',
+                'parent_territory_name': (sa.get('ERS_Parent_Territory__r') or {}).get('Name', ''),
                 'city': city_val,
                 'work_type': (sa.get('WorkType') or {}).get('Name', ''),
                 'work_type_id': sa.get('WorkTypeId') or '',
@@ -212,18 +215,38 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     }
     alerts.sort(key=lambda a: (_FLAG_PRIORITY.get(a['flag'], 99), -(a['pta_delta_min'] or 0)))
 
-    # ── Flag 7: Potential Duplicate — same account with 2+ active SAs nearby ──
-    # Group ALL active SAs (not just flagged ones) by AccountId
-    acct_groups = defaultdict(list)
-    for sa in sas:
-        acct_id = sa.get('AccountId')
-        status_cat = sa.get('StatusCategory', '')
-        if acct_id and status_cat in _ACTIVE_CATEGORIES:
-            acct_groups[acct_id].append(sa)
+    # ── Flag 7: Potential Duplicate — same member with 2+ active SAs at similar location ──
+    # SOQL handles both exclusions so Python only needs to group and check proximity:
+    #   • WorkType.Name != 'Tow Drop-Off'
+    #   • WO ERS_Unable_To_Complete_Dupe__c = false (via NOT IN subquery on WOLI)
+    cutoff = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    _dup_candidates: list = []
+    try:
+        _dup_candidates = sf_query_all(f"""
+            SELECT Id, AccountId, AppointmentNumber, Latitude, Longitude, Street
+            FROM ServiceAppointment
+            WHERE RecordType.Name = 'ERS Service Appointment'
+              AND ServiceTerritoryId != null
+              AND CreatedDate >= {cutoff}
+              AND StatusCategory IN ('None', 'Scheduled', 'Dispatched', 'InProgress', 'CheckedIn')
+              AND WorkType.Name != 'Tow Drop-Off'
+              AND ParentRecordId NOT IN (
+                  SELECT Id FROM WorkOrderLineItem
+                  WHERE WorkOrder.ERS_Unable_To_Complete_Dupe__c = true
+                    AND WorkOrder.CreatedDate >= {cutoff}
+              )
+        """)
+    except Exception as e:
+        log.warning(f"Duplicate candidate query failed, skipping Flag 7: {e}")
 
-    # Find accounts with 2+ active SAs at similar locations
+    acct_groups = defaultdict(list)
+    for cand in _dup_candidates:
+        acct_id = cand.get('AccountId')
+        if acct_id:
+            # Merge with full SA data so alert construction has all fields
+            acct_groups[acct_id].append(sa_map.get(cand['Id'], cand))
+
     existing_sa_ids = {a['sa_id'] for a in alerts}
-    # Index existing alerts by sa_id for annotation
     alert_by_sa = {}
     for a in alerts:
         alert_by_sa[a['sa_id']] = a
@@ -232,7 +255,6 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         if len(sa_group) < 2:
             continue
 
-        # Check all pairs for location proximity
         duplicates = set()
         if len(sa_group) > _DUP_CHECK_MAX_GROUP:
             duplicates = {s['Id'] for s in sa_group}
@@ -245,11 +267,11 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                 nearby = False
                 if lat1 and lon1 and lat2 and lon2:
                     nearby = _haversine_mi(lat1, lon1, lat2, lon2) <= _DUPLICATE_RADIUS_MI
-                # Also flag if same street address (even without GPS)
-                street1 = (s1.get('Street') or '').strip().lower()
-                street2 = (s2.get('Street') or '').strip().lower()
-                if not nearby and street1 and street2 and street1 == street2:
-                    nearby = True
+                if not nearby:
+                    street1 = (s1.get('Street') or '').strip().lower()
+                    street2 = (s2.get('Street') or '').strip().lower()
+                    if street1 and street2 and street1 == street2:
+                        nearby = True
                 if nearby:
                     duplicates.add(s1['Id'])
                     duplicates.add(s2['Id'])
@@ -257,7 +279,6 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         if not duplicates:
             continue
 
-        # Build related SA list for each duplicate
         dup_sa_numbers = {s['Id']: s.get('AppointmentNumber', '') for s in sa_group if s['Id'] in duplicates}
         acct_name = (sa_group[0].get('Account') or {}).get('Name', '')
 
@@ -268,11 +289,9 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
             related = [num for sid, num in dup_sa_numbers.items() if sid != sa_id]
 
             if sa_id in alert_by_sa:
-                # SA already has an alert — annotate it with duplicate info
                 alert_by_sa[sa_id]['duplicate_of'] = related
                 alert_by_sa[sa_id]['member_name'] = acct_name
             else:
-                # SA not flagged by other rules — add new "Potential Duplicate" alert
                 territory_name = (sa.get('ServiceTerritory') or {}).get('Name', '')
                 created = _parse_dt(sa.get('CreatedDate'))
                 pta_delta = None
@@ -308,6 +327,8 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                     'current_wait': None,
                     'territory': territory_name,
                     'territory_id': sa.get('ServiceTerritoryId') or '',
+                    'parent_territory_id': sa.get('ERS_Parent_Territory__c') or '',
+                    'parent_territory_name': (sa.get('ERS_Parent_Territory__r') or {}).get('Name', ''),
                     'city': city_val,
                     'work_type': (sa.get('WorkType') or {}).get('Name', ''),
                     'work_type_id': sa.get('WorkTypeId') or '',

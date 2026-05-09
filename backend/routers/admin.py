@@ -4,6 +4,7 @@ import os, json as _json
 from fastapi import APIRouter, HTTPException, Query, Request
 import users
 import cache
+from password_policy import password_policy_error
 from sf_client import get_stats as sf_stats
 import time
 
@@ -123,6 +124,9 @@ def admin_create_user(request: Request, body: dict):
     role = body.get("role", "viewer")
     if not username or not password or not name:
         raise HTTPException(status_code=400, detail="username, password, and name are required")
+    password_error = password_policy_error(password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
     email = body.get("email", "").strip()
     phone = body.get("phone", "").strip()
     valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor")
@@ -142,13 +146,18 @@ def admin_create_user(request: Request, body: dict):
 def admin_update_user(request: Request, username: str, body: dict):
     """Update a user."""
     _check_pin(request)
+    password = body.get("password") or None
+    if password:
+        password_error = password_policy_error(password)
+        if password_error:
+            raise HTTPException(status_code=400, detail=password_error)
     try:
         return users.update_user(
             username,
             name=body.get("name"),
             role=body.get("role"),
             department=body.get("department"),
-            password=body.get("password") or None,
+            password=password,
             active=body.get("active"),
             email=body.get("email"),
             phone=body.get("phone"),

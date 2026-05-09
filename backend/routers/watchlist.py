@@ -146,6 +146,7 @@ def _build_watchlist() -> dict:
                AAA_ERS_Account_Facility__r.Phone,
                AccountId, Account.Name, Account.PersonMobilePhone, Account.Phone,
                Phone, Mobile_Phone__c,
+               ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name,
                CreatedDate, SchedStartTime, ActualStartTime, ActualEndTime,
                LastModifiedDate, Street, City, Latitude, Longitude
         FROM ServiceAppointment

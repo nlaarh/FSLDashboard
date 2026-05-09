@@ -1,11 +1,13 @@
 """User management — SQLite-based user store with session tracking.
 
-Users stored in SQLite database (fslapp.db). Passwords hashed with SHA-256 + salt.
+Users stored in SQLite database (fslapp.db). Passwords hashed with bcrypt (new)
+or SHA-256 + salt (legacy — migrated on next login).
 Sessions tracked in-memory (cleared on restart).
 """
 
 import hashlib, secrets, time, threading
 
+import bcrypt
 import database as db
 import user_backup
 
@@ -15,16 +17,48 @@ _sessions: dict[str, dict] = {}
 
 # ── Password hashing ─────────────────────────────────────────────────────────
 
-def _hash_password(password: str, salt: str = None) -> tuple[str, str]:
-    if salt is None:
-        salt = secrets.token_hex(16)
+# bcrypt work factor — adjust based on server capacity. 12 is a safe default.
+_BCRYPT_ROUNDS = 12
+
+
+def _hash_password(password: str, _salt: str = None) -> tuple[str, str]:
+    """Hash password with bcrypt. Returns (hash, 'bcrypt').
+    The _salt param is ignored for bcrypt but kept for API compatibility."""
+    pw_bytes = password.encode("utf-8")
+    h = bcrypt.hashpw(pw_bytes, bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode("utf-8")
+    return h, "bcrypt"
+
+
+def _check_password_legacy(password: str, stored_hash: str, salt: str) -> bool:
+    """Check against legacy SHA-256 + salt (for migration only)."""
     h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-    return h, salt
+    return secrets.compare_digest(h, stored_hash)
 
 
 def _check_password(password: str, stored_hash: str, salt: str) -> bool:
-    h, _ = _hash_password(password, salt)
-    return secrets.compare_digest(h, stored_hash)
+    """Check password against stored hash.
+    If salt == 'bcrypt', use bcrypt. Otherwise fall back to legacy SHA-256.
+    """
+    if not stored_hash:
+        return False
+    # Detect bcrypt by prefix
+    if salt == "bcrypt" or stored_hash.startswith(("$2b$", "$2a$", "$2y$")):
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    # Legacy SHA-256
+    return _check_password_legacy(password, stored_hash, salt)
+
+
+def _migrate_password_to_bcrypt(username: str, password: str):
+    """Re-hash a user's password with bcrypt after successful legacy auth."""
+    try:
+        h, salt = _hash_password(password)
+        with db.get_db() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, salt = ? WHERE username = ?",
+                (h, salt, username),
+            )
+    except Exception:
+        pass  # migration failure must not block login
 
 
 # ── Seed / ensure users ──────────────────────────────────────────────────────
@@ -135,12 +169,27 @@ def _trigger_backup():
         pass  # backup failure must never crash the main operation
 
 
+def find_by_email(email: str) -> dict | None:
+    """Find active user by email (case-insensitive)."""
+    with db.get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND active = 1", (email,)
+        ).fetchone()
+        if not row:
+            return None
+        return {"username": row['username'], "name": row['name'], "role": row['role'],
+                "email": row['email'], "active": bool(row['active']), "department": _dept(row)}
+
+
 def authenticate(username: str, password: str) -> dict | None:
     with db.get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ? AND active = 1", (username,)).fetchone()
         if not row:
             return None
         if _check_password(password, row['password_hash'], row['salt']):
+            # If this was a legacy hash, transparently migrate to bcrypt
+            if row['salt'] != 'bcrypt' and not row['password_hash'].startswith(("$2b$", "$2a$", "$2y$")):
+                _migrate_password_to_bcrypt(username, password)
             return {"username": row['username'], "name": row['name'], "role": row['role'],
                     "email": row['email'], "department": _dept(row)}
     return None
@@ -153,6 +202,15 @@ def get_user(username: str) -> dict | None:
             return None
         return {"username": row['username'], "name": row['name'], "role": row['role'],
                 "email": row['email'], "active": bool(row['active']), "department": _dept(row)}
+
+
+def check_password_against_user(username: str, password: str) -> bool:
+    """Return True if the provided password matches the user's current password."""
+    with db.get_db() as conn:
+        row = conn.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            return False
+        return _check_password(password, row['password_hash'], row['salt'])
 
 
 def list_users() -> list[dict]:
@@ -240,6 +298,14 @@ def restore_user(username: str) -> dict:
                   "active": bool(row['active']), "email": row['email'], "department": _dept(row)}
     _trigger_backup()
     return result
+
+
+def invalidate_user_sessions(username: str):
+    """Destroy all active sessions for a given user (e.g., after password reset)."""
+    with _sess_lock:
+        to_remove = [t for t, s in _sessions.items() if s["user"] == username]
+        for t in to_remove:
+            del _sessions[t]
 
 
 # ── Session management ────────────────────────────────────────────────────────

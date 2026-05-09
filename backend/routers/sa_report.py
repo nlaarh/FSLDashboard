@@ -407,7 +407,7 @@ def sa_report(sa_number: str):
 
     result = cache.cached_query(f'sa_report_{sa_number}', _fetch, ttl=3600)  # 1h — historical reports don't change
     if result is None:
-        raise HTTPException(status_code=404, detail=f'SA {sa_number} not found')
+        raise HTTPException(status_code=404, detail=f'{sa_number} not found')
     # Completed/Canceled SAs won't change — extend cache to 1 hour
     status = (result.get('sa_summary') or {}).get('status', '')
     if status in ('Completed', 'Canceled', 'Unable to Complete', 'No-Show'):

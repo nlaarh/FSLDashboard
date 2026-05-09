@@ -171,8 +171,9 @@ export const fetchDispatchAssist = (saId, hints = {}) => {
   if (hints.territory) params.append('territory', hints.territory)
   if (hints.lat) params.append('lat', hints.lat)
   if (hints.lon) params.append('lon', hints.lon)
-  if (hints.work_type_id) params.append('work_type_id', hints.work_type_id)
-  return api.get(`/watchlist/dispatch-assist?${params}`).then(r => r.data)
+  if (hints.work_type) params.append('work_type', hints.work_type)
+  if (hints.parent_territory_id) params.append('parent_territory_id', hints.parent_territory_id)
+  return api.get(`/watchlist/dispatch-assist?${params}`, { timeout: 15000 }).then(r => r.data)
 }
 export const followSA = (sa_number, sa_id = '', added_by = '') => api.post('/watchlist/follow', { sa_number, sa_id, added_by }).then(r => r.data)
 export const unfollowSA = (sa_number) => api.delete(`/watchlist/follow/${sa_number}`).then(r => r.data)

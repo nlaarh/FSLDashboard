@@ -48,3 +48,11 @@ yarn-error.log*
 # Deploy artifacts (built locally)
 backend/deploy.zip
 *.pdf
+backend/migrate_passwords_to_bcrypt.py
+
+# Local artifacts / temp files
+backend/-
+WO-Adj/
+reports/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

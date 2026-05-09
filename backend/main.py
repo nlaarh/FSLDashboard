@@ -127,7 +127,7 @@ from routers import (
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
     garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
-    garages_revenue_export,
+    garages_revenue_export, password_reset,
 )
 
 app.include_router(auth.router)
@@ -169,6 +169,7 @@ app.include_router(accounting_ai.router)
 app.include_router(optimizer.router)
 app.include_router(optimizer_chat.router)
 app.include_router(reporting.router)
+app.include_router(password_reset.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────

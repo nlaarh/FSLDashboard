@@ -56,9 +56,14 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
     reverse = sort_dir == 'desc'
     actual_col = '_sort_date' if sort_col == 'created_date' else sort_col
     def _sort_key(r):
-        v = r.get(actual_col, '') or ''
-        if isinstance(v, (int, float)): return v
-        return str(v).lower()
+        v = r.get(actual_col)
+        if v is None:
+            return (0, '') if actual_col in _NUMERIC_COLS else (0, '')
+        if isinstance(v, (int, float)):
+            return (1, v)
+        return (1, str(v).lower())
+
+    _NUMERIC_COLS = {'requested_qty', 'currently_paid', 'delta', 'woa_age_from_wo_days', 'woa_age_days'}
     try:
         items.sort(key=_sort_key, reverse=reverse)
     except Exception:
@@ -84,6 +89,25 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
             'review_count': total_review,
         },
     }
+
+def _calc_age_from_wo(woa_created, wo_created):
+    """Days between WO creation and WOA creation."""
+    if not woa_created or not wo_created:
+        return None
+    woa_dt = _parse_dt(woa_created)
+    wo_dt = _parse_dt(wo_created)
+    if woa_dt and wo_dt:
+        return (woa_dt - wo_dt).days
+    return None
+
+def _calc_age_to_now(woa_created, now):
+    """Days from WOA creation to current date."""
+    if not woa_created:
+        return None
+    woa_dt = _parse_dt(woa_created)
+    if woa_dt:
+        return (now - woa_dt).days
+    return None
 
 def _build_woa_list() -> dict:
     woa_rows = sf_query_all("""
@@ -111,7 +135,8 @@ def _build_woa_list() -> dict:
                Work_Order__r.ERS_On_Location_Date_Time__c,
                Work_Order__r.Long_Tow_Used__c,
                Work_Order__r.Long_Tow_Miles__c,
-               Work_Order__r.Type__c
+               Work_Order__r.Type__c,
+               Work_Order__r.CreatedDate
         FROM ERS_Work_Order_Adjustment__c
         WHERE Status__c = 'New'
         ORDER BY CreatedDate DESC
@@ -122,6 +147,8 @@ def _build_woa_list() -> dict:
         return {'items': [], 'total': 0}
 
     import time as _time
+    from datetime import datetime, timezone as _tz
+    _now = datetime.now(_tz.utc)
     _t0 = _time.time()
 
     wo_ids = list({r.get('Work_Order__c') for r in woa_rows if r.get('Work_Order__c')})
@@ -300,6 +327,9 @@ def _build_woa_list() -> dict:
             'created_date': _fmt_date_et(r.get('CreatedDate')),
             '_sort_date': (r.get('CreatedDate') or '')[:10],
             'created_by': (r.get('CreatedBy') or {}).get('Name', ''),
+            'owner': (r.get('Owner') or {}).get('Name', ''),
+            'woa_age_from_wo_days': _calc_age_from_wo(r.get('CreatedDate'), wo.get('CreatedDate')),
+            'woa_age_days': _calc_age_to_now(r.get('CreatedDate'), _now),
             'sf_miles': {'enroute': sf_er, 'estimated_enroute': sf_est_er, 'tow': sf_tow, 'estimated_tow': sf_est_tow},
             'vehicle': {'make': v_make, 'model': v_model, 'group': v_group},
             'woli_summary': woli_summary,

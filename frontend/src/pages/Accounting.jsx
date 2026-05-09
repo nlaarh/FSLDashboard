@@ -53,6 +53,7 @@ const SORT_DEF = {
   woa_number: 'asc', facility: 'asc', wo_number: 'asc', product: 'asc',
   requested_qty: 'desc', currently_paid: 'desc', delta: 'desc',
   recommendation: 'asc', created_date: 'desc', created_by: 'asc',
+  owner: 'asc', woa_age_from_wo_days: 'desc', woa_age_days: 'desc',
 }
 
 const COL_HELP = {
@@ -66,6 +67,9 @@ const COL_HELP = {
   recommendation: 'Auto-calculated recommendation based on SF data. No AI — pure math.\n\n✓ Approve = Data supports the garage\'s request\n⚠ Review = Data doesn\'t match or is missing. Needs human verification.\n\nHow we verify by product:\n• ER/TW (miles): Requested vs SF Google distance (≤130% = Approve)\n• E1/MI (time): Requested minutes vs actual on-scene time from SA timestamps (≤120% = Approve)\n• MH (weight): Vehicle Group DW/HD = Approve, PS = Review\n• TL (tolls): Always Review — need receipts\n• BA/BC/PC (rates): Always Review — policy-based\n\nSF already uses Google Maps internally — we reuse those distances, no extra API calls.\n\nHover over ⚠ Review for the specific reason.',
   created_date: 'When the adjustment was submitted.',
   created_by: 'Who submitted the adjustment (usually dispatch/garage staff).',
+  owner: 'Current owner of the WOA record in Salesforce — who is responsible for reviewing/actioning it.',
+  woa_age_from_wo_days: 'Days between WO creation and WOA creation.\n\nHow long after the original call before the garage filed this adjustment.',
+  woa_age_days: 'Days since this WOA was created.\n\nHow long this adjustment has been sitting unresolved.',
 }
 
 function HelpTip({ text, children }) {
@@ -370,6 +374,9 @@ export default function Accounting() {
                     : <span className="inline-block w-3 ml-0.5" />}
                 </th>
                 <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Conf.</th>
+                <Th label="Owner"      col="owner"         sort={sort} onSort={onSort} />
+                <Th label="WOA Age"    col="woa_age_days"  sort={sort} onSort={onSort} right />
+                <Th label="WO→WOA"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
                 <Th label="Created"    col="created_date"  sort={sort} onSort={onSort} />
                 <Th label="Created By" col="created_by"    sort={sort} onSort={onSort} />
                 <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Description</th>
@@ -379,7 +386,7 @@ export default function Accounting() {
               {loading && [...Array(10)].map((_, i) => (
                 <tr key={i}>
                   <td className="px-2 py-3"><div className="skeleton h-3 rounded w-4" /></td>
-                  {[...Array(10)].map((__, j) => (
+                  {[...Array(13)].map((__, j) => (
                     <td key={j} className="px-3 py-3.5">
                       <div className={clsx('skeleton h-3.5 rounded', j === 1 ? 'w-32' : 'w-16')} />
                     </td>
@@ -582,6 +589,23 @@ export default function Accounting() {
                         </span>
                       </td>
 
+                      {/* Owner */}
+                      <td className="px-3 py-2.5 text-slate-500 truncate max-w-[120px]">{r.owner || '--'}</td>
+
+                      {/* WOA Age */}
+                      <td className="px-3 py-2.5 text-right font-mono text-[10px]">
+                        {r.woa_age_days != null
+                          ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
+                          : <span className="text-slate-700">--</span>}
+                      </td>
+
+                      {/* WO→WOA */}
+                      <td className="px-3 py-2.5 text-right font-mono text-[10px]">
+                        {r.woa_age_from_wo_days != null
+                          ? <span className={clsx(r.woa_age_from_wo_days > 90 ? 'text-red-400' : r.woa_age_from_wo_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_from_wo_days}d</span>
+                          : <span className="text-slate-700">--</span>}
+                      </td>
+
                       {/* Created */}
                       <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{r.created_date || '--'}</td>
 
@@ -598,7 +622,7 @@ export default function Accounting() {
 
                     {isExpanded && (
                       <tr>
-                        <td colSpan={14} className="p-0 border-b border-slate-700/30">
+                        <td colSpan={17} className="p-0 border-b border-slate-700/30">
                           <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
                             allWoSiblings={allWoSiblings}
                             isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}

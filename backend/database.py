@@ -268,6 +268,21 @@ def init_db():
                 error_detail      TEXT,
                 duration_ms       INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                token              TEXT PRIMARY KEY,
+                username           TEXT NOT NULL,
+                email              TEXT NOT NULL,
+                pin                TEXT NOT NULL,
+                expires_at         REAL NOT NULL,
+                validated          INTEGER DEFAULT 0,
+                validation_token   TEXT,
+                validation_expires_at REAL,
+                attempts           INTEGER DEFAULT 0,
+                created_at         REAL DEFAULT (strftime('%s', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_reset_tokens_email ON password_reset_tokens(email);
+            CREATE INDEX IF NOT EXISTS idx_reset_tokens_val ON password_reset_tokens(validation_token);
         """)
 
         # Seed default bonus tiers if empty

@@ -1,55 +1,22 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, UserPlus, Edit3, Trash, Radio, Loader2, CheckCircle2, Eye, EyeOff, Copy, RefreshCw, Mail } from 'lucide-react'
+import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw } from 'lucide-react'
 import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions } from '../api'
 import { clsx } from 'clsx'
-
-const ROLES = ['superadmin', 'admin', 'executive', 'ers', 'finance', 'manager', 'officer', 'viewer']
-const DEPTS = [{ value: '', label: '— None —' }, { value: 'ers', label: 'ERS' }, { value: 'finance', label: 'Finance' }, { value: 'executive', label: 'Executive' }]
-
-const DEPT_STYLE = {
-  ers:       'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  finance:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-}
-
-const ROLE_STYLE = {
-  superadmin: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  admin:      'bg-brand-500/10 text-brand-400 border-brand-500/20',
-  executive:  'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  ers:        'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  finance:    'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  manager:    'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  officer:    'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  supervisor: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  viewer:     'bg-slate-500/10 text-slate-400 border-slate-500/20',
-}
-
-function genPassword() {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-  const lower = 'abcdefghjkmnpqrstuvwxyz'
-  const digits = '23456789'
-  const special = '!@#$%&*'
-  const all = upper + lower + digits + special
-  let pw = ''
-  // Ensure at least one of each type
-  pw += upper[Math.floor(Math.random() * upper.length)]
-  pw += lower[Math.floor(Math.random() * lower.length)]
-  pw += digits[Math.floor(Math.random() * digits.length)]
-  pw += special[Math.floor(Math.random() * special.length)]
-  for (let i = 4; i < 8; i++) pw += all[Math.floor(Math.random() * all.length)]
-  // Shuffle
-  return pw.split('').sort(() => Math.random() - 0.5).join('')
-}
+import AdminUserEditor from './AdminUserEditor'
+import { DEPT_STYLE, ROLE_STYLE } from '../constants/users'
+import { EMPTY_USER_FORM, FORM_PASSWORD_COPY_KEY, generatePassword, passwordIssues } from '../utils/passwords'
 
 export default function AdminUsers({ pin }) {
   const [userList, setUserList] = useState([])
   const [sessions, setSessions] = useState([])
   const [showUserForm, setShowUserForm] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
-  const [userForm, setUserForm] = useState({ username: '', password: '', name: '', role: 'viewer', email: '', phone: '', department: '' })
+  const [userForm, setUserForm] = useState(EMPTY_USER_FORM)
   const [userError, setUserError] = useState('')
+  const [saveMessage, setSaveMessage] = useState('')
   const [userSaving, setUserSaving] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [passwordChangeOpen, setPasswordChangeOpen] = useState(false)
   const [copied, setCopied] = useState(null) // username of copied password
   const [generatedPw, setGeneratedPw] = useState({}) // username -> last generated pw (in-memory only)
 
@@ -74,44 +41,116 @@ export default function AdminUsers({ pin }) {
     return () => clearInterval(id)
   }, [loadUsers, loadSessions])
 
-  const openCreateUser = () => {
-    const pw = genPassword()
+  const closeUserForm = () => {
+    setShowUserForm(false)
     setEditingUser(null)
-    setUserForm({ username: '', password: pw, name: '', role: 'viewer', email: '' })
-    setShowPassword(true)
+    setPasswordChangeOpen(false)
+    setShowPassword(false)
     setUserError('')
+    setSaveMessage('')
+    setCopied(null)
+    setGeneratedPw({})
+  }
+
+  const openCreateUser = () => {
+    const pw = generatePassword()
+    setEditingUser(null)
+    setUserForm({ ...EMPTY_USER_FORM, password: pw, passwordConfirm: pw })
+    setShowPassword(true)
+    setPasswordChangeOpen(true)
+    setUserError('')
+    setSaveMessage('')
+    setCopied(null)
     setShowUserForm(true)
   }
 
   const openEditUser = (u) => {
     setEditingUser(u.username)
-    setUserForm({ username: u.username, password: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '' })
+    setUserForm({ username: u.username, password: '', passwordConfirm: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '' })
+    setShowPassword(false)
+    setPasswordChangeOpen(false)
+    setUserError('')
+    setSaveMessage('')
+    setCopied(null)
+    setShowUserForm(true)
+  }
+
+  const beginPasswordChange = () => {
+    setPasswordChangeOpen(true)
+    setUserForm(f => ({ ...f, password: '', passwordConfirm: '' }))
     setShowPassword(false)
     setUserError('')
-    setShowUserForm(true)
+    setSaveMessage('')
+    setCopied(null)
+  }
+
+  const generateFormPassword = () => {
+    const pw = generatePassword()
+    setPasswordChangeOpen(true)
+    setUserForm(f => ({ ...f, password: pw, passwordConfirm: pw }))
+    setShowPassword(true)
+    setUserError('')
+    setSaveMessage('Generated password is ready. Copy it or update the user to apply it.')
+    setCopied(null)
+  }
+
+  const copyFormPassword = () => {
+    if (!userForm.password) return
+    navigator.clipboard.writeText(userForm.password)
+    setCopied(FORM_PASSWORD_COPY_KEY)
+    setTimeout(() => setCopied(null), 2000)
+  }
+
+  const validatePassword = () => {
+    if (!userForm.password || !userForm.passwordConfirm) return 'Enter and confirm the new password'
+    if (userForm.password !== userForm.passwordConfirm) return 'Passwords do not match'
+    const issues = passwordIssues(userForm.password)
+    if (issues.length) return `Password must include: ${issues.join(', ')}`
+    return ''
   }
 
   const saveUser = async () => {
     setUserError('')
+    setSaveMessage('')
     setUserSaving(true)
     try {
       if (editingUser) {
-        const data = { name: userForm.name, role: userForm.role, email: userForm.email, department: userForm.department }
-        if (userForm.password) data.password = userForm.password
+        const changingPassword = passwordChangeOpen || userForm.password || userForm.passwordConfirm
+        if (changingPassword) {
+          const passwordError = validatePassword()
+          if (passwordError) {
+            setUserError(passwordError)
+            return
+          }
+        }
+        const data = { name: userForm.name, role: userForm.role, email: userForm.email, phone: userForm.phone, department: userForm.department }
+        if (changingPassword) data.password = userForm.password
         await adminUpdateUser(pin, editingUser, data)
-        if (userForm.password) {
-          showPwTemporarily(editingUser, userForm.password)
+        if (changingPassword) {
+          setSaveMessage(`Password changed for ${editingUser}. Copy it before closing.`)
+          setShowPassword(true)
+          loadUsers()
+          return
         }
       } else {
-        if (!userForm.username || !userForm.password || !userForm.name) {
+        if (!userForm.username || !userForm.name) {
           setUserError('Username, name, and password are required')
-          setUserSaving(false)
+          return
+        }
+        const passwordError = validatePassword()
+        if (passwordError) {
+          setUserError(passwordError)
           return
         }
         await adminCreateUser(pin, { ...userForm })
         showPwTemporarily(userForm.username, userForm.password)
+        setEditingUser(userForm.username)
+        setSaveMessage(`User ${userForm.username} created. Copy the password before closing.`)
+        setShowPassword(true)
+        loadUsers()
+        return
       }
-      setShowUserForm(false)
+      closeUserForm()
       loadUsers()
     } catch (e) {
       setUserError(e.response?.data?.detail || 'Error saving user')
@@ -135,15 +174,16 @@ export default function AdminUsers({ pin }) {
 
   const showPwTemporarily = (username, pw) => {
     setGeneratedPw(prev => ({ ...prev, [username]: pw }))
-    setTimeout(() => setGeneratedPw(prev => { const n = { ...prev }; delete n[username]; return n }), 15000)
+    setTimeout(() => setGeneratedPw(prev => { const n = { ...prev }; delete n[username]; return n }), 60000)
   }
 
-  const resetPassword = async (username) => {
-    const pw = genPassword()
-    try {
-      await adminUpdateUser(pin, username, { password: pw })
-      showPwTemporarily(username, pw)
-    } catch { /* ignore */ }
+  const resetPassword = (user) => {
+    openEditUser(user)
+    setPasswordChangeOpen(true)
+    const pw = generatePassword()
+    setUserForm(f => ({ ...f, password: pw, passwordConfirm: pw }))
+    setShowPassword(true)
+    setSaveMessage('Generated password is ready. Copy it or update the user to apply it.')
   }
 
   const copyPassword = (username) => {
@@ -220,7 +260,7 @@ export default function AdminUsers({ pin }) {
                       ) : (
                         <span className="text-[10px] text-slate-600">••••••</span>
                       )}
-                      <button onClick={() => resetPassword(u.username)} title="Generate new password"
+                      <button onClick={() => resetPassword(u)} title="Change password"
                         className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-amber-400 transition">
                         <RefreshCw className="w-3 h-3" />
                       </button>
@@ -257,89 +297,24 @@ export default function AdminUsers({ pin }) {
           </table>
         </div>
 
-        {/* Inline create/edit form */}
         {showUserForm && (
-          <div className="border-t border-slate-700/50 p-4 bg-slate-800/30">
-            <div className="flex items-center gap-2 mb-3">
-              <h3 className="text-sm font-semibold text-white">{editingUser ? `Edit ${editingUser}` : 'Create User'}</h3>
-              <button onClick={() => setShowUserForm(false)} className="ml-auto text-xs text-slate-500 hover:text-white">Cancel</button>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Username</label>
-                <input value={userForm.username} onChange={e => setUserForm(f => ({ ...f, username: e.target.value }))}
-                  disabled={!!editingUser}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40 disabled:opacity-50"
-                  placeholder="email@nyaaa.com" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Name</label>
-                <input value={userForm.name} onChange={e => setUserForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40"
-                  placeholder="John Doe" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">
-                  Password {editingUser && <span className="text-slate-600">(blank = keep)</span>}
-                </label>
-                <div className="flex gap-1">
-                  <input type={showPassword ? 'text' : 'password'} value={userForm.password}
-                    onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono
-                               focus:outline-none focus:ring-1 focus:ring-brand-500/40"
-                    placeholder="••••••" />
-                  <button onClick={() => setShowPassword(!showPassword)} title="Toggle visibility"
-                    className="p-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-500 hover:text-white">
-                    {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  </button>
-                  <button onClick={() => { setUserForm(f => ({ ...f, password: genPassword() })); setShowPassword(true) }}
-                    title="Generate password"
-                    className="p-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-500 hover:text-amber-400">
-                    <RefreshCw className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Role</label>
-                <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40">
-                  {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Department</label>
-                <select value={userForm.department} onChange={e => setUserForm(f => ({ ...f, department: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40">
-                  {DEPTS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Email</label>
-                <input type="email" value={userForm.email} onChange={e => setUserForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40"
-                  placeholder="user@nyaaa.com" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Phone</label>
-                <input type="tel" value={userForm.phone} onChange={e => setUserForm(f => ({ ...f, phone: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs
-                             focus:outline-none focus:ring-1 focus:ring-brand-500/40"
-                  placeholder="(555) 123-4567" />
-              </div>
-            </div>
-            {userError && <p className="text-red-400 text-xs mt-2">{userError}</p>}
-            <button onClick={saveUser} disabled={userSaving}
-              className="mt-3 px-4 py-2 bg-brand-600 hover:bg-brand-500 rounded-lg text-xs font-semibold
-                         transition-colors disabled:opacity-50 flex items-center gap-1.5">
-              {userSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-              {editingUser ? 'Update' : 'Create'}
-            </button>
-          </div>
+          <AdminUserEditor
+            editingUser={editingUser}
+            userForm={userForm}
+            setUserForm={setUserForm}
+            userError={userError}
+            saveMessage={saveMessage}
+            userSaving={userSaving}
+            showPassword={showPassword}
+            setShowPassword={setShowPassword}
+            passwordChangeOpen={passwordChangeOpen}
+            beginPasswordChange={beginPasswordChange}
+            generateFormPassword={generateFormPassword}
+            copyFormPassword={copyFormPassword}
+            copied={copied}
+            onClose={closeUserForm}
+            onSave={saveUser}
+          />
         )}
       </div>
 

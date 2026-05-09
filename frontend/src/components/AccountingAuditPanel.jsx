@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
 import {
   Loader2, AlertTriangle, ExternalLink,
-  MapPin, RefreshCw, ArrowRight, Info, Sparkles, ShieldAlert, Lightbulb, CheckSquare,
+  MapPin, RefreshCw, ArrowRight, Info, Sparkles, ShieldAlert, Lightbulb, CheckSquare, ChevronDown,
 } from 'lucide-react'
 import { fetchWOAAudit, recalculateWOAAudit, fetchAccountingRates, fetchWOAAiAnalysis } from '../api'
 import { productCode } from '../utils/formatting'
@@ -38,6 +38,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const [recalcing, setRecalcing] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [rates, setRates] = useState({})
+  const [expandedSAs, setExpandedSAs] = useState(new Set())
+  const [showMap, setShowMap] = useState(false)
 
   useEffect(() => { fetchAccountingRates().then(setRates).catch(() => {}) }, [])
 
@@ -84,6 +86,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const aiRecDiffers = aiRec && aiRec !== rec
   const urls = audit?.sf_urls || {}
   const timeline = audit?.sa_timeline || []
+  const secondaryTimelines = audit?.secondary_sa_timelines || []
   const ev = audit?.evidence || {}
   const code = productCode(ev.product)
 
@@ -420,8 +423,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </div>
       )}
 
-      {/* ── 4-column: Verification | WO Context | SA Timeline | Auditor Summary ── */}
-      {audit && <div className="grid grid-cols-4 gap-3">
+      {/* ── 3-column: Verification | WO Context | SA Timeline ── */}
+      {audit && <div className="grid grid-cols-3 gap-3">
 
         {/* Left: Verification — product-specific, extracted to AuditVerificationCard */}
         <AuditVerificationCard
@@ -539,101 +542,165 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           )}
         </div>
 
-        {/* Col 3: SA Timeline */}
-        {timeline.length > 0 && (
+        {/* Col 3: SA Timeline — primary open, each secondary individually collapsible */}
+        {(timeline.length > 0 || secondaryTimelines.length > 0) && (
           <div className="glass rounded-xl border border-slate-700/20 p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-3">
-              SA Timeline <span className="text-slate-600 normal-case font-normal ml-1">({timeline.length} events)</span>
-            </div>
-            <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
-              <span>Transition</span><span className="text-right">Elapsed</span>
-            </div>
-            {timeline.map((step, i) => {
-              const sec = step.elapsed_seconds
-              let lbl = ''
-              if (sec != null) {
-                lbl = sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
-              }
+            {/* Primary SA — always open */}
+            {timeline.length > 0 && (
+              <>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-3">
+                  SA Timeline <span className="text-slate-600 normal-case font-normal ml-1">({timeline.length} events)</span>
+                  {secondaryTimelines.length > 0 && (
+                    <span className="text-slate-600 normal-case font-normal ml-2">
+                      · {secondaryTimelines.length} additional SA{secondaryTimelines.length > 1 ? 's' : ''} below
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
+                  <span>Transition</span><span className="text-right">Elapsed</span>
+                </div>
+                {timeline.map((step, i) => {
+                  const sec = step.elapsed_seconds
+                  let lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
+                  return (
+                    <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-300 font-medium truncate">
+                          {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                        </span>
+                        <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
+                          {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
+                    </div>
+                  )
+                })}
+              </>
+            )}
+
+            {/* Secondary SAs — each individually collapsible, collapsed by default */}
+            {secondaryTimelines.map((sa, idx) => {
+              const isOpen = expandedSAs.has(idx)
+              const toggle = () => setExpandedSAs(prev => {
+                const next = new Set(prev)
+                isOpen ? next.delete(idx) : next.add(idx)
+                return next
+              })
               return (
-                <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-300 font-medium truncate">
-                      {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                <div key={idx} className="mt-3 pt-3 border-t border-slate-800/40">
+                  <button onClick={toggle} className="w-full flex items-center justify-between text-left group">
+                    <span className="text-[10px] text-sky-400 font-medium">
+                      SA #{sa.sa_number} — {sa.work_type || 'N/A'}
+                      <span className="text-slate-500 font-normal ml-1">({sa.status})</span>
                     </span>
-                    <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
-                      {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
-                    </span>
-                  </div>
-                  <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
+                    <ChevronDown className={clsx('w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-all shrink-0', isOpen && 'rotate-180')} />
+                  </button>
+                  {isOpen && (
+                    <div className="mt-2">
+                      <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
+                        <span>Transition</span><span className="text-right">Elapsed</span>
+                      </div>
+                      {(sa.timeline || []).map((step, i) => {
+                        const sec = step.elapsed_seconds
+                        let lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
+                        return (
+                          <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] text-slate-300 font-medium truncate">
+                                {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                              </span>
+                              <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
+                                {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
+                              </span>
+                            </div>
+                            <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
         )}
 
-        {/* Col 4: Auditor Summary — full AI when available, local fallback otherwise */}
-        {(localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
-          <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Auditor Summary</div>
-              {(showAi || aiLoading) && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-[9px] font-bold text-blue-400 uppercase tracking-wider">
-                  <Sparkles className={clsx('w-2.5 h-2.5', aiLoading && 'animate-pulse')} />
-                  {aiLoading ? 'AI…' : 'AI'}
-                </span>
-              )}
-            </div>
-            {showAi ? (
-              <div className="space-y-3">
-                {audit.ai_headline && <div className="text-[12px] font-semibold text-slate-200 leading-snug">{audit.ai_headline}</div>}
-                {audit.ai_story && <div className="text-[11px] text-slate-300 leading-relaxed">{audit.ai_story}</div>}
-                {audit.ai_fraud_signals?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1"><ShieldAlert className="w-3 h-3 text-red-400" /><span className="text-[9px] font-bold text-red-400 uppercase tracking-wider">Fraud Signals</span></div>
-                    {audit.ai_fraud_signals.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-red-300"><span className="text-red-500 mt-0.5">●</span>{s}</div>)}
-                  </div>
-                )}
-                {audit.ai_anomalies?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1"><Lightbulb className="w-3 h-3 text-amber-400" /><span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Anomalies</span></div>
-                    {audit.ai_anomalies.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-amber-300"><span className="text-amber-500 mt-0.5">●</span>{s}</div>)}
-                  </div>
-                )}
-                {audit.ai_what_to_do?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1"><CheckSquare className="w-3 h-3 text-emerald-400" /><span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">What To Do</span></div>
-                    {audit.ai_what_to_do.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-emerald-300"><span className="text-emerald-600 font-bold mt-0.5">{i + 1}.</span>{s}</div>)}
-                  </div>
-                )}
-              </div>
-            ) : localSummary ? (
-              <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
-                {localSummary.split('\n\n').map((para, i) => (
-                  <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
-                ))}
-              </div>
-            ) : null}
-            {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-slate-700/30">
-                <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
-                {audit.ask_garage.map((item, i) => (
-                  <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2"><span className="text-amber-400">-</span>{item}</div>
-                ))}
-              </div>
+      </div>}
+
+      {/* ── Auditor Summary — full width below grid ── */}
+      {audit && (localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
+        <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Auditor Summary</div>
+            {(showAi || aiLoading) && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-[9px] font-bold text-blue-400 uppercase tracking-wider">
+                <Sparkles className={clsx('w-2.5 h-2.5', aiLoading && 'animate-pulse')} />
+                {aiLoading ? 'AI…' : 'AI'}
+              </span>
             )}
           </div>
-        )}
-      </div>}
-      {/* ── Route map ── */}
+          {showAi ? (
+            <div className="space-y-3">
+              {audit.ai_headline && <div className="text-[12px] font-semibold text-slate-200 leading-snug">{audit.ai_headline}</div>}
+              {audit.ai_story && <div className="text-[11px] text-slate-300 leading-relaxed">{audit.ai_story}</div>}
+              {audit.ai_fraud_signals?.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1"><ShieldAlert className="w-3 h-3 text-red-400" /><span className="text-[9px] font-bold text-red-400 uppercase tracking-wider">Fraud Signals</span></div>
+                  {audit.ai_fraud_signals.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-red-300"><span className="text-red-500 mt-0.5">●</span>{s}</div>)}
+                </div>
+              )}
+              {audit.ai_anomalies?.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1"><Lightbulb className="w-3 h-3 text-amber-400" /><span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Anomalies</span></div>
+                  {audit.ai_anomalies.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-amber-300"><span className="text-amber-500 mt-0.5">●</span>{s}</div>)}
+                </div>
+              )}
+              {audit.ai_what_to_do?.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1"><CheckSquare className="w-3 h-3 text-emerald-400" /><span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">What To Do</span></div>
+                  {audit.ai_what_to_do.map((s, i) => <div key={i} className="flex items-start gap-2 text-[10px] text-emerald-300"><span className="text-emerald-600 font-bold mt-0.5">{i + 1}.</span>{s}</div>)}
+                </div>
+              )}
+            </div>
+          ) : localSummary ? (
+            <div className="text-[11px] text-slate-300 leading-relaxed space-y-1.5">
+              {localSummary.split('\n\n').map((para, i) => (
+                <p key={i} className={/^(RED FLAG|SIGNIFICANT|DRIVER STATUS)/.test(para) ? 'text-red-300 bg-red-950/20 px-3 py-2 rounded-lg border border-red-800/30' : ''}>{para}</p>
+              ))}
+            </div>
+          ) : null}
+          {rec === 'REVIEW' && audit.ask_garage?.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-700/30">
+              <div className="text-[10px] text-amber-400 font-bold mb-1">Next Steps:</div>
+              {audit.ask_garage.map((item, i) => (
+                <div key={i} className="text-[10px] text-slate-300 flex items-start gap-2"><span className="text-amber-400">-</span>{item}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Route map — collapsed by default ── */}
       {audit && (ev.call_location_lat || ev.truck_prev_location) && (
         <div className="space-y-1">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold px-1">Route Map</div>
-          <WOAAuditMap ev={ev} />
-          <div className="flex gap-4 text-[9px] text-slate-600 px-1">
-            <span><span className="inline-block w-2 h-0.5 bg-slate-400 mr-1" style={{borderTop:'2px dashed'}} />— Truck→Call</span>
-            <span><span className="inline-block w-2 h-0.5 bg-purple-400 mr-1" />— Tow Route</span>
-            <span>🔴 Breakdown &nbsp; ⬛ Truck origin &nbsp; 🟢 Tow destination</span>
-          </div>
+          <button
+            onClick={() => setShowMap(v => !v)}
+            className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase tracking-wider font-bold px-1 hover:text-slate-300 transition-colors"
+          >
+            Route Map
+            <ChevronDown className={clsx('w-3.5 h-3.5 transition-transform', showMap && 'rotate-180')} />
+          </button>
+          {showMap && (
+            <>
+              <WOAAuditMap ev={ev} />
+              <div className="flex gap-4 text-[9px] text-slate-600 px-1">
+                <span><span className="inline-block w-2 h-0.5 bg-slate-400 mr-1" style={{borderTop:'2px dashed'}} />— Truck→Call</span>
+                <span><span className="inline-block w-2 h-0.5 bg-purple-400 mr-1" />— Tow Route</span>
+                <span>🔴 Breakdown &nbsp; ⬛ Truck origin &nbsp; 🟢 Tow destination</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
