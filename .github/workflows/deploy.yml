@@ -47,6 +47,7 @@ jobs:
         zip -r ../deploy.zip \
           *.py \
           routers/ \
+          repositories/ \
           startup.sh requirements.txt \
           static/
         echo "Package size: $(du -h ../deploy.zip | cut -f1)"
