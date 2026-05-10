@@ -305,7 +305,8 @@ def ops_brief():
 
             # Find primary garage for this zone from matrix
             primary_garage = None
-            for (pid, sid), rank in matrix['rank_lookup'].items():
+            for key, rank in matrix['rank_lookup'].items():
+                pid, sid = key.split('|', 1)
                 if pid == zone_id and rank == 1:
                     # Get garage name from by_garage entries
                     for entry in matrix['by_garage'].get(sid, []):

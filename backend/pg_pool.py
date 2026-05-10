@@ -37,8 +37,8 @@ READER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_READER_MIN', '2'))
 READER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_READER_MAX', '10'))
 READER_TIMEOUT  = int(os.environ.get('FSLAPP_PG_READER_TIMEOUT_S', '5'))
 
-WRITER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MIN', '1'))
-WRITER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MAX', '2'))
+WRITER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MIN', '2'))
+WRITER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MAX', '4'))
 WRITER_TIMEOUT  = int(os.environ.get('FSLAPP_PG_WRITER_TIMEOUT_S', '10'))
 
 _credential: Optional[DefaultAzureCredential] = None

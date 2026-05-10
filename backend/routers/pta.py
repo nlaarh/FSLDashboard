@@ -33,15 +33,15 @@ _PTA_TYPE_MAP = {
 # Settings file for configurable refresh interval
 def _load_settings():
     try:
-        import database
-        return database.get_all_settings()
+        from repositories import settings
+        return settings.get_all_settings()
     except Exception:
         return {}
 
 def _save_settings(settings: dict):
-    import database
+    from repositories import settings as _settings_repo
     for key, value in settings.items():
-        database.put_setting(key, value)
+        _settings_repo.put_setting(key, value)
 
 def _pta_refresh_interval():
     return _load_settings().get('pta_refresh_interval', 900)

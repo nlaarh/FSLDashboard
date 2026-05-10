@@ -7,6 +7,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:8000',
+      '/login': 'http://localhost:8000',
+      '/forgot-password': 'http://localhost:8000',
+      '/reset-password': 'http://localhost:8000',
       '/track/': {
         target: 'http://localhost:8000',
         changeOrigin: true,

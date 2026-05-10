@@ -451,8 +451,8 @@ _DEFAULT_FEATURES = {
 
 def _load_settings():
     try:
-        import database
-        return database.get_all_settings()
+        from repositories import settings
+        return settings.get_all_settings()
     except Exception:
         return {}
 

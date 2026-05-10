@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed
 import cache
 import refresher
-import database
+from repositories import settings, activity
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Pool exhaustion handler — return 503 with Retry-After instead of 500 ────
+
+try:
+    from psycopg_pool import PoolTimeout as _PoolTimeout
+
+    @app.exception_handler(_PoolTimeout)
+    async def _pool_timeout_handler(request: Request, exc: _PoolTimeout):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server busy — please retry in a moment"},
+            headers={"Retry-After": "2"},
+        )
+except ImportError:
+    pass  # psycopg_pool not available in test env
 
 
 # ── Auth middleware ──────────────────────────────────────────────────────────
@@ -99,8 +115,11 @@ async def activity_log_middleware(request: Request, call_next):
             parts = payload.split(":")
             user = parts[0] if parts else None
 
-    try:
-        database.log_activity(
+    # Fire-and-forget — daemon thread keeps this off the async event loop
+    # and off the writer pool critical path for the response.
+    threading.Thread(
+        target=activity.log_activity,
+        kwargs=dict(
             user=user,
             action='api_request',
             endpoint=path,
@@ -109,9 +128,9 @@ async def activity_log_middleware(request: Request, call_next):
             duration_ms=duration_ms,
             ip=request.client.host if request.client else None,
             user_agent=(request.headers.get('user-agent') or '')[:200],
-        )
-    except Exception:
-        pass  # never fail the request for logging
+        ),
+        daemon=True,
+    ).start()
 
     return response
 
@@ -252,39 +271,24 @@ def _nightly_trends_refresh():
             time.sleep(300)
 
 
-def _sync_ai_keys_from_env():
-    """Copy AI API keys from .env into the settings DB on startup.
-    DB value wins if already set — .env is only a seed/fallback."""
-    s = database.get_all_settings()
-    for env_var, db_key in (('ANTHROPIC_API_KEY', 'anthropic_api_key'),
-                             ('OPENAI_API_KEY', 'openai_api_key')):
-        env_val = os.environ.get(env_var, '').strip()
-        if env_val and not s.get(db_key, '').strip():
-            database.put_setting(db_key, env_val)
+def _scrub_sensitive_db_keys():
+    """Remove any sensitive API keys that may have been stored in the DB.
+    Keys are now read exclusively from environment variables."""
+    for key in ('anthropic_api_key', 'openai_api_key', 'google_maps'):
+        settings.delete_setting(key)
+    cb = settings.get_setting('chatbot')
+    if cb and isinstance(cb, dict) and 'api_key' in cb:
+        cb.pop('api_key')
+        settings.put_setting('chatbot', cb)
 
 
 @app.on_event("startup")
 async def startup():
-    import db_backup
-
-    # Initialize SQLite database (settings, cache, bonus_tiers, users)
-    database.init_db()
-    database.migrate_settings_json()
     import users
-    users.migrate_json_users()
     users.seed_users()
 
-    # If the DB is empty (fresh after corruption), restore from latest Azure Blob backup
-    if not database.get_all_settings() and not users.list_users():
-        log.info("Empty DB detected — attempting restore from backup")
-        db_backup.restore_latest()
-        users.seed_users()
-
-    # Sync AI API keys from .env → DB so they survive container restarts without re-entry
-    _sync_ai_keys_from_env()
-
-    # Start automatic DB backup (every 6h → Azure Blob db-backups/)
-    db_backup.start()
+    # Purge any sensitive API keys previously stored in DB — now env-var only
+    _scrub_sensitive_db_keys()
 
     # Start proactive cache refresher (replaces _warmup_cache)
     # The refresher handles leader election — safe to call from all workers

@@ -2,7 +2,7 @@
 
 Architecture:
 - L1: In-process memory dict (sub-microsecond, per-worker)
-- L2: SQLite persistent cache (5-50ms, shared across all workers/instances)
+- L2: Postgres persistent cache (5-50ms, shared across all workers/instances)
 - Refresher: Background thread proactively refreshes all hot keys on a schedule
   → Users NEVER trigger Salesforce queries. Always served from L1 or L2.
 
@@ -65,14 +65,16 @@ def invalidate(prefix: str = ''):
             del _store[k]
     # Also clear L2
     try:
-        import database
-        database.cache_delete_prefix(_vkey(prefix))
+        from repositories import cache as _cache_repo
+        _cache_repo.cache_delete_prefix(_vkey(prefix))
     except Exception:
         pass
 
 
 def cleanup_expired(max_stale_sec: int = 3600):
-    """Remove L1 entries that expired more than max_stale_sec ago."""
+    """Remove L1 entries that expired more than max_stale_sec ago.
+    Also purges stale L2 (Postgres) cache rows."""
+    # L1 cleanup
     with _lock:
         now = time.time()
         expired = [k for k, v in _store.items()
@@ -82,14 +84,23 @@ def cleanup_expired(max_stale_sec: int = 3600):
     if expired:
         log.info(f"L1 cleanup: purged {len(expired)} expired entries")
 
+    # L2 cleanup
+    try:
+        from repositories import cache as _cache_repo
+        l2_purged = _cache_repo.cache_delete_stale()
+        if l2_purged:
+            log.info(f"L2 cleanup: purged {l2_purged} stale cache rows")
+    except Exception:
+        pass
+
 
 # ── L2: SQLite persistent cache ──────────────────────────────────────────────
 
 def disk_get(key: str, ttl: int = 86400):
     """Read from L2 SQLite cache. Returns data if fresh, else None."""
     try:
-        import database
-        return database.cache_get(_vkey(key))
+        from repositories import cache as _cache_repo
+        return _cache_repo.cache_get(_vkey(key))
     except Exception:
         return None
 
@@ -97,8 +108,8 @@ def disk_get(key: str, ttl: int = 86400):
 def disk_get_stale(key: str):
     """Read from L2 even if expired (fallback)."""
     try:
-        import database
-        return database.cache_get_stale(_vkey(key))
+        from repositories import cache as _cache_repo
+        return _cache_repo.cache_get(_vkey(key))
     except Exception:
         return None
 
@@ -106,8 +117,8 @@ def disk_get_stale(key: str):
 def disk_put(key: str, data, ttl: int = 86400):
     """Write to L2 SQLite cache."""
     try:
-        import database
-        database.cache_put(_vkey(key), data, ttl)
+        from repositories import cache as _cache_repo
+        _cache_repo.cache_put(_vkey(key), data, ttl)
     except Exception as e:
         log.warning(f'Failed to write L2 cache for {key}: {e}')
 
@@ -115,8 +126,8 @@ def disk_put(key: str, data, ttl: int = 86400):
 def disk_get_meta(key: str) -> dict:
     """Get cache entry metadata (created_at). Returns {} if not found."""
     try:
-        import database
-        return database.cache_get_meta(_vkey(key))
+        from repositories import cache as _cache_repo
+        return _cache_repo.cache_get_meta(_vkey(key))
     except Exception:
         return {}
 
@@ -124,8 +135,8 @@ def disk_get_meta(key: str) -> dict:
 def disk_invalidate(key: str):
     """Remove a specific L2 cache entry."""
     try:
-        import database
-        database.cache_delete(_vkey(key))
+        from repositories import cache as _cache_repo
+        _cache_repo.cache_delete(_vkey(key))
     except Exception:
         pass
 
@@ -429,8 +440,8 @@ def stats():
         stale = total - alive
         pending = len(_pending)
     try:
-        import database
-        db_stats = database.cache_stats()
+        from repositories import cache as _cache_repo
+        db_stats = _cache_repo.cache_stats()
     except Exception:
         db_stats = {'total_keys': 0, 'alive': 0, 'stale': 0}
     return {

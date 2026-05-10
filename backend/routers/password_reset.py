@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 import requests as _requests
 import users
 from password_policy import password_policy_error
-import database as db
+from repositories import activity as _activity_repo
+from repositories import password_reset
 
 router = APIRouter()
 _log = logging.getLogger("password_reset")
@@ -121,8 +122,7 @@ def _generate_pin() -> str:
 def _cleanup_expired_tokens():
     """Remove expired reset tokens from SQLite."""
     try:
-        with db.get_db() as conn:
-            conn.execute("DELETE FROM password_reset_tokens WHERE expires_at < ?", (time.time(),))
+        password_reset.cleanup_expired_tokens()
     except Exception as e:
         _log.warning(f"Token cleanup failed: {e}")
 
@@ -157,7 +157,7 @@ def _audit_pg(username: str, email: str, password_hash: str, salt: str):
 def _log_activity(user: str, action: str, detail: str = None, status_code: int = 200):
     """Log to SQLite activity_log."""
     try:
-        db.log_activity(user=user, action=action, detail=detail, status_code=status_code)
+        _activity_repo.log_activity(user=user, action=action, detail=detail, status_code=status_code)
     except Exception:
         pass
 
@@ -209,8 +209,7 @@ def forgot_password(request: Request, body: dict):
 
     # Invalidate any existing tokens for this user
     try:
-        with db.get_db() as conn:
-            conn.execute("DELETE FROM password_reset_tokens WHERE username = ?", (user["username"],))
+        password_reset.delete_tokens_by_username(user["username"])
     except Exception as e:
         _log.warning(f"Failed to invalidate old tokens for {user['username']}: {e}")
 
@@ -220,11 +219,7 @@ def forgot_password(request: Request, body: dict):
     expires_at = time.time() + _TOKEN_TTL_SECONDS
 
     try:
-        with db.get_db() as conn:
-            conn.execute(
-                "INSERT INTO password_reset_tokens (token, username, email, pin, expires_at) VALUES (?, ?, ?, ?, ?)",
-                (token, user["username"], user["email"], pin, expires_at),
-            )
+        password_reset.create_token(token, user["username"], user["email"], pin, expires_at)
     except Exception as e:
         _log.error(f"Failed to store reset token for {user['username']}: {e}")
         raise HTTPException(status_code=500, detail="Failed to create reset token")
@@ -260,10 +255,7 @@ def verify_reset_pin(body: dict):
 
     _cleanup_expired_tokens()
 
-    with db.get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM password_reset_tokens WHERE token = ?", (token,)
-        ).fetchone()
+    row = password_reset.get_token(token)
 
     if not row:
         _log_activity(user=None, action="verify_pin", detail="Invalid or expired token", status_code=400)
@@ -275,15 +267,13 @@ def verify_reset_pin(body: dict):
 
     # Check expiry
     if row["expires_at"] < time.time():
-        with db.get_db() as conn:
-            conn.execute("DELETE FROM password_reset_tokens WHERE token = ?", (token,))
+        password_reset.delete_token(token)
         _log_activity(user=username, action="verify_pin", detail="Token expired", status_code=400)
         raise HTTPException(status_code=400, detail="Token has expired. Please request a new reset link.")
 
     # Check max attempts
     if attempts >= _MAX_PIN_ATTEMPTS:
-        with db.get_db() as conn:
-            conn.execute("DELETE FROM password_reset_tokens WHERE token = ?", (token,))
+        password_reset.delete_token(token)
         _log_activity(user=username, action="verify_pin", detail="Max PIN attempts exceeded", status_code=400)
         raise HTTPException(status_code=400, detail="Too many failed attempts. Please request a new reset link.")
 
@@ -291,11 +281,7 @@ def verify_reset_pin(body: dict):
     if row["pin"] != pin:
         new_attempts = attempts + 1
         remaining = _MAX_PIN_ATTEMPTS - new_attempts
-        with db.get_db() as conn:
-            conn.execute(
-                "UPDATE password_reset_tokens SET attempts = ? WHERE token = ?",
-                (new_attempts, token),
-            )
+        password_reset.increment_attempts(token, new_attempts)
         _log_activity(user=username, action="verify_pin", detail=f"Invalid PIN (attempt {new_attempts})", status_code=400)
         raise HTTPException(status_code=400, detail=f"Invalid PIN. {remaining} attempt(s) remaining.")
 
@@ -303,11 +289,7 @@ def verify_reset_pin(body: dict):
     validation_token = secrets.token_urlsafe(32)
     validation_expires = time.time() + _VALIDATION_TTL_SECONDS
 
-    with db.get_db() as conn:
-        conn.execute(
-            "UPDATE password_reset_tokens SET validated = 1, validation_token = ?, validation_expires_at = ? WHERE token = ?",
-            (validation_token, validation_expires, token),
-        )
+    password_reset.validate_token(token, validation_token, validation_expires)
 
     _log.info(f"PIN verified for {username}, validation token issued")
     _log_activity(user=username, action="verify_pin", detail="PIN verified, validation token issued")
@@ -326,10 +308,7 @@ def reset_password(body: dict):
 
     _cleanup_expired_tokens()
 
-    with db.get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM password_reset_tokens WHERE validation_token = ?", (validation_token,)
-        ).fetchone()
+    row = password_reset.get_token_by_validation(validation_token)
 
     if not row:
         _log_activity(user=None, action="reset_password", detail="Invalid validation token", status_code=400)
@@ -340,8 +319,7 @@ def reset_password(body: dict):
 
     # Check validation expiry
     if not row["validated"] or not row["validation_expires_at"] or row["validation_expires_at"] < time.time():
-        with db.get_db() as conn:
-            conn.execute("DELETE FROM password_reset_tokens WHERE validation_token = ?", (validation_token,))
+        password_reset.delete_token(validation_token)
         _log_activity(user=username, action="reset_password", detail="Validation token expired", status_code=400)
         raise HTTPException(status_code=400, detail="Session expired. Please request a new reset link.")
 
@@ -366,18 +344,16 @@ def reset_password(body: dict):
         _log.error(f"Failed to update password for {username}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update password")
 
-    # Invalidate token
-    with db.get_db() as conn:
-        conn.execute("DELETE FROM password_reset_tokens WHERE validation_token = ?", (validation_token,))
+    # Invalidate token (delete by original token, not validation_token)
+    password_reset.delete_token(row["token"])
 
     # Invalidate all existing sessions for this user (security: attacker gets kicked out)
     users.invalidate_user_sessions(username)
 
     # Get the new hash+salt for audit
-    with db.get_db() as conn:
-        row = conn.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username,)).fetchone()
-        new_hash = row["password_hash"] if row else ""
-        new_salt = row["salt"] if row else ""
+    user_row = users.get_user_with_hash(username)
+    new_hash = user_row["password_hash"] if user_row else ""
+    new_salt = user_row["salt"] if user_row else ""
 
     # Admin notification (fire-and-forget, includes hash NOT plaintext)
     notif_body = (

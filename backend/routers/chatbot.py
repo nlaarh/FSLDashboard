@@ -38,8 +38,8 @@ def _verify_cookie(cookie: str) -> str | None:
 
 def _load_settings():
     try:
-        import database
-        return database.get_all_settings()
+        from repositories import settings
+        return settings.get_all_settings()
     except Exception:
         return {}
 
@@ -314,12 +314,18 @@ def chatbot_ask(request: Request, response: Response, body: dict = None):
         # Low: just return the reason as a friendly message
         return {"answer": reason, "model": "guardrail", "provider": "system", "blocked": True}
 
-    # ── Layer 3: Load AI config (env var takes priority over SQLite settings) ──
+    # ── Layer 3: Load AI config — keys from env vars only ──
     settings = _load_settings()
     cb_settings = settings.get("chatbot", {})
-    env_key = os.environ.get('OPENAI_API_KEY', '')
-    provider = 'openai' if env_key else cb_settings.get("provider", "")
-    api_key = env_key or cb_settings.get("api_key", "")
+    provider = cb_settings.get("provider", "openai")
+    if provider == 'anthropic':
+        api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    elif provider == 'openai':
+        api_key = os.environ.get('OPENAI_API_KEY', '')
+    elif provider == 'google':
+        api_key = os.environ.get('GOOGLE_AI_API_KEY', '')
+    else:
+        api_key = ''
 
     if not provider or not api_key:
         raise HTTPException(status_code=400, detail="Chatbot not configured. Go to Admin → AI Assistant to set up a provider and API key.")

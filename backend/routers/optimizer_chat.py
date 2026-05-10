@@ -5,7 +5,6 @@ import requests as _requests
 from fastapi import APIRouter, HTTPException, Request
 
 import optimizer_db
-import database
 
 router = APIRouter(tags=['optimizer'])
 log = logging.getLogger('optimizer_chat')
@@ -458,28 +457,23 @@ async def optimizer_chat(request: Request):
         raise HTTPException(400, "messages required")
 
     import os as _os
-    settings = database.get_all_settings()
+    from repositories import settings
+    settings = settings.get_all_settings()
     oc = settings.get('optimizer_chat', {})
     provider = oc.get('provider', 'anthropic')
     model = oc.get('model', '')
 
     if provider == 'openai':
-        api_key = (settings.get('openai_api_key', '')
-                   or _os.environ.get('OPENAI_API_KEY', ''))
+        api_key = _os.environ.get('OPENAI_API_KEY', '')
         model = model or _DEFAULT_OAI_MODEL
         if not api_key:
-            raise HTTPException(503, "OpenAI API key not configured — set it in Admin > AI Settings")
+            raise HTTPException(503, "OPENAI_API_KEY environment variable not set")
     else:
-        # Default: Anthropic
         provider = 'anthropic'
-        chatbot_key = settings.get('chatbot', {}).get('api_key', '') \
-                      if settings.get('chatbot', {}).get('provider') == 'anthropic' else ''
-        api_key = (settings.get('anthropic_api_key', '')
-                   or chatbot_key
-                   or _os.environ.get('ANTHROPIC_API_KEY', ''))
+        api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
         model = model or _DEFAULT_MODEL
         if not api_key:
-            raise HTTPException(503, "Anthropic API key not configured — set it in Admin > AI Settings")
+            raise HTTPException(503, "ANTHROPIC_API_KEY environment variable not set")
 
     system = _SYSTEM_PROMPT
     if run_context:

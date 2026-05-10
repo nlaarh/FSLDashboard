@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw } from 'lucide-react'
-import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminListSessions } from '../api'
+import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw, RotateCcw, EyeOff } from 'lucide-react'
+import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminRestoreUser, adminListSessions } from '../api'
 import { clsx } from 'clsx'
 import AdminUserEditor from './AdminUserEditor'
 import { DEPT_STYLE, ROLE_STYLE } from '../constants/users'
@@ -19,6 +19,11 @@ export default function AdminUsers({ pin }) {
   const [passwordChangeOpen, setPasswordChangeOpen] = useState(false)
   const [copied, setCopied] = useState(null) // username of copied password
   const [generatedPw, setGeneratedPw] = useState({}) // username -> last generated pw (in-memory only)
+  const [emailUrl, setEmailUrl] = useState(null) // Outlook compose URL for welcome / password changed
+  const [emailSubject, setEmailSubject] = useState('')
+  const [emailBody, setEmailBody] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+  const [actionError, setActionError] = useState('')
 
   const loadUsers = useCallback(async () => {
     try {
@@ -50,6 +55,9 @@ export default function AdminUsers({ pin }) {
     setSaveMessage('')
     setCopied(null)
     setGeneratedPw({})
+    setEmailUrl(null)
+    setEmailSubject('')
+    setEmailBody('')
   }
 
   const openCreateUser = () => {
@@ -125,10 +133,13 @@ export default function AdminUsers({ pin }) {
         }
         const data = { name: userForm.name, role: userForm.role, email: userForm.email, phone: userForm.phone, department: userForm.department }
         if (changingPassword) data.password = userForm.password
-        await adminUpdateUser(pin, editingUser, data)
+        const result = await adminUpdateUser(pin, editingUser, data)
         if (changingPassword) {
           setSaveMessage(`Password changed for ${editingUser}. Copy it before closing.`)
           setShowPassword(true)
+          if (result?.password_changed_email_url) setEmailUrl(result.password_changed_email_url)
+          if (result?.email_subject) setEmailSubject(result.email_subject)
+          if (result?.email_body) setEmailBody(result.email_body)
           loadUsers()
           return
         }
@@ -142,11 +153,14 @@ export default function AdminUsers({ pin }) {
           setUserError(passwordError)
           return
         }
-        await adminCreateUser(pin, { ...userForm })
+        const result = await adminCreateUser(pin, { ...userForm })
         showPwTemporarily(userForm.username, userForm.password)
         setEditingUser(userForm.username)
         setSaveMessage(`User ${userForm.username} created. Copy the password before closing.`)
         setShowPassword(true)
+        if (result?.welcome_email_url) setEmailUrl(result.welcome_email_url)
+        if (result?.email_subject) setEmailSubject(result.email_subject)
+        if (result?.email_body) setEmailBody(result.email_body)
         loadUsers()
         return
       }
@@ -158,11 +172,24 @@ export default function AdminUsers({ pin }) {
   }
 
   const deleteUser = async (username) => {
-    if (!confirm(`Delete user "${username}"?`)) return
+    if (!confirm(`Deactivate user "${username}"? They won't be able to log in. You can restore them later.`)) return
+    setActionError('')
     try {
       await adminDeleteUser(pin, username)
       loadUsers()
-    } catch { /* ignore */ }
+    } catch (e) {
+      setActionError(e.response?.data?.detail || `Failed to deactivate ${username}`)
+    }
+  }
+
+  const restoreUser = async (username) => {
+    setActionError('')
+    try {
+      await adminRestoreUser(pin, username)
+      loadUsers()
+    } catch (e) {
+      setActionError(e.response?.data?.detail || `Failed to restore ${username}`)
+    }
   }
 
   const toggleActive = async (u) => {
@@ -195,6 +222,9 @@ export default function AdminUsers({ pin }) {
     }
   }
 
+  const inactiveCount = userList.filter(u => !u.active).length
+  const displayedUsers = userList.filter(u => showInactive || u.active)
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* User Management */}
@@ -202,7 +232,23 @@ export default function AdminUsers({ pin }) {
         <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
           <Users className="w-4 h-4 text-brand-400" />
           <h2 className="text-sm font-semibold text-white">Users</h2>
-          <span className="ml-1 text-xs text-slate-500">({userList.length})</span>
+          <span className="ml-1 text-xs text-slate-500">({userList.filter(u => u.active).length} active)</span>
+          {inactiveCount > 0 && (
+            <button
+              onClick={() => setShowInactive(s => !s)}
+              className={clsx('flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-colors border',
+                showInactive
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                  : 'text-slate-500 border-slate-700/40 hover:text-slate-300'
+              )}
+            >
+              <EyeOff className="w-3 h-3" />
+              {showInactive ? 'Hide' : 'Show'} deactivated ({inactiveCount})
+            </button>
+          )}
+          {actionError && (
+            <span className="text-[10px] text-red-400 ml-1 truncate max-w-[200px]">{actionError}</span>
+          )}
           <button onClick={openCreateUser}
             className="ml-auto px-2.5 py-1 text-[11px] bg-brand-600 hover:bg-brand-500 rounded-lg font-semibold
                        flex items-center gap-1 transition-colors">
@@ -223,8 +269,8 @@ export default function AdminUsers({ pin }) {
               </tr>
             </thead>
             <tbody>
-              {userList.map(u => (
-                <tr key={u.username} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+              {displayedUsers.map(u => (
+                <tr key={u.username} className={clsx('border-b border-slate-800/50 hover:bg-slate-800/30', !u.active && 'opacity-50')}>
                   <td className="py-2.5 px-4">
                     <div className="text-slate-300 font-medium">{u.username}</div>
                     {u.email && <div className="text-[10px] text-slate-600">{u.email}</div>}
@@ -260,37 +306,47 @@ export default function AdminUsers({ pin }) {
                       ) : (
                         <span className="text-[10px] text-slate-600">••••••</span>
                       )}
-                      <button onClick={() => resetPassword(u)} title="Change password"
-                        className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-amber-400 transition">
-                        <RefreshCw className="w-3 h-3" />
-                      </button>
+                      {u.active && (
+                        <button onClick={() => resetPassword(u)} title="Change password"
+                          className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-amber-400 transition">
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td className="py-2.5 px-4 text-center">
-                    <button onClick={() => toggleActive(u)}
-                      className={clsx('px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors border',
-                        u.active
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-                          : 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
-                      )}>
-                      {u.active ? 'Active' : 'Disabled'}
-                    </button>
+                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold border',
+                      u.active
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                        : 'bg-slate-700/30 text-slate-500 border-slate-700/30'
+                    )}>
+                      {u.active ? 'Active' : 'Deactivated'}
+                    </span>
                   </td>
                   <td className="py-2.5 px-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      <button onClick={() => openEditUser(u)} title="Edit user"
-                        className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-white transition-colors">
-                        <Edit3 className="w-3 h-3" />
-                      </button>
-                      <button onClick={() => deleteUser(u.username)} title="Delete user"
-                        className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition-colors">
-                        <Trash className="w-3 h-3" />
-                      </button>
+                      {u.active ? (
+                        <>
+                          <button onClick={() => openEditUser(u)} title="Edit user"
+                            className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-white transition-colors">
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => deleteUser(u.username)} title="Deactivate user"
+                            className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition-colors">
+                            <Trash className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <button onClick={() => restoreUser(u.username)} title="Restore user"
+                          className="p-1.5 rounded-lg hover:bg-emerald-900/30 text-slate-500 hover:text-emerald-400 transition-colors flex items-center gap-1 text-[10px]">
+                          <RotateCcw className="w-3 h-3" /> Restore
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ))}
-              {userList.length === 0 && (
+              {displayedUsers.length === 0 && (
                 <tr><td colSpan={7} className="py-8 text-center text-slate-600">No users</td></tr>
               )}
             </tbody>
@@ -312,6 +368,9 @@ export default function AdminUsers({ pin }) {
             generateFormPassword={generateFormPassword}
             copyFormPassword={copyFormPassword}
             copied={copied}
+            emailUrl={emailUrl}
+            emailSubject={emailSubject}
+            emailBody={emailBody}
             onClose={closeUserForm}
             onSave={saveUser}
           />

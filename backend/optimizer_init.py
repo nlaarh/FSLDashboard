@@ -16,7 +16,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '.env'), override=False)
 
 import optimizer_db
 import optimizer_sync
-import database
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('optimizer_init')
@@ -32,7 +31,6 @@ def main():
     args = parser.parse_args()
 
     optimizer_db.init_db()
-    database.init_db()
 
     since = (datetime.now(timezone.utc) - timedelta(days=args.days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     log.info(f"Backfilling optimizer runs since {since} ({args.days} days)")

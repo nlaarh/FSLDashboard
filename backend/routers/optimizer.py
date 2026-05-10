@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 import optimizer_db
-import database
+from repositories import optimizer
 from routers.admin import _check_pin
 
 router = APIRouter(tags=['optimizer'])
@@ -109,7 +109,7 @@ def run_sql(body: dict, request: Request):
 
 @router.get('/api/optimizer/admin/sync-audit')
 def sync_audit(limit: int = Query(50, le=200)):
-    return database.get_sync_audit(limit)
+    return optimizer.get_sync_audit(limit)
 
 
 @router.get('/api/optimizer/stats')

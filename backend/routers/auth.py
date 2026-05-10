@@ -10,6 +10,7 @@ router = APIRouter()
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
 _TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
+_DEV_AUTO_LOGIN = os.environ.get("DEV_AUTO_LOGIN", "false").lower() == "true"
 
 _PUBLIC_PATHS = {"/login", "/forgot-password", "/reset-password", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/verify-reset-pin", "/api/auth/reset-password", "/api/health", "/api/features", "/favicon.ico"}
 
@@ -66,172 +67,290 @@ def _verify_cookie(cookie: str) -> str | None:
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FleetPulse - Fleet Operations Intelligence</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect x='2' y='22' width='28' height='4' rx='2' fill='%23334155'/%3E%3Crect x='4' y='12' width='16' height='10' rx='2' fill='%233b82f6'/%3E%3Crect x='20' y='15' width='8' height='7' rx='1.5' fill='%232563eb'/%3E%3Ccircle cx='10' cy='22' r='3' fill='%231e293b'/%3E%3Ccircle cx='24' cy='22' r='3' fill='%231e293b'/%3E%3Cpolyline points='1,8 7,8 9,4 12,12 15,6 18,8 22,8' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<title>FleetPulse — Sign In</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;overflow-x:hidden}
-
-/* Animated gradient background */
-.bg-anim{position:fixed;inset:0;z-index:0;overflow:hidden}
-.bg-anim::before{content:'';position:absolute;width:600px;height:600px;border-radius:50%;
-  background:radial-gradient(circle,rgba(59,130,246,.15),transparent 70%);
-  top:-200px;right:-100px;animation:float 20s ease-in-out infinite}
-.bg-anim::after{content:'';position:absolute;width:500px;height:500px;border-radius:50%;
-  background:radial-gradient(circle,rgba(96,165,250,.1),transparent 70%);
-  bottom:-200px;left:-100px;animation:float 25s ease-in-out infinite reverse}
-@keyframes float{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,30px)}}
-
-.container{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 2rem}
-
-/* Header */
-header{padding:1.5rem 0;display:flex;align-items:center;justify-content:space-between}
-.logo{display:flex;align-items:center;gap:.5rem;text-decoration:none;color:#fff;font-size:1.3rem;font-weight:700}
-.logo svg{width:28px;height:28px}
-.logo span{color:#60a5fa}
-
-/* Hero */
-.hero{display:grid;grid-template-columns:1fr 400px;gap:4rem;align-items:center;padding:4rem 0 3rem;min-height:70vh}
-.hero-text h1{font-size:3rem;font-weight:800;line-height:1.1;margin-bottom:1.5rem;
-  background:linear-gradient(135deg,#fff 0%,#60a5fa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hero-text p{font-size:1.1rem;color:#94a3b8;line-height:1.7;margin-bottom:2rem;max-width:520px}
-
-/* Feature pills */
-.pills{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:2rem}
-.pill{display:flex;align-items:center;gap:.4rem;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);
-  border-radius:999px;padding:.35rem .8rem;font-size:.75rem;color:#93c5fd;font-weight:500}
-.pill svg{width:14px;height:14px;opacity:.7}
-
-/* Login card */
-.login-card{background:rgba(15,23,42,.8);backdrop-filter:blur(20px);border:1px solid rgba(51,65,85,.5);
-  border-radius:16px;padding:2.5rem;box-shadow:0 25px 50px rgba(0,0,0,.3)}
-.login-card h2{font-size:1.2rem;font-weight:700;color:#fff;text-align:center;margin-bottom:.3rem}
-.login-card .sub{text-align:center;color:#64748b;font-size:.85rem;margin-bottom:1.8rem}
-.login-card input{width:100%;padding:.75rem 1rem;margin-bottom:.75rem;background:#1e293b;border:1px solid #334155;
-  border-radius:8px;color:#e2e8f0;font-size:.9rem;outline:none;transition:border-color .2s}
-.login-card input:focus{border-color:#3b82f6}
-.login-card input::placeholder{color:#475569}
-.login-btn{width:100%;padding:.8rem;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border:none;
-  border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer;transition:all .2s;margin-top:.5rem}
-.login-btn:hover{background:linear-gradient(135deg,#1d4ed8,#2563eb);transform:translateY(-1px);
-  box-shadow:0 8px 20px rgba(37,99,235,.3)}
-.err{color:#f87171;text-align:center;margin-bottom:.8rem;font-size:.85rem;min-height:1.2rem}
-
-/* Features grid */
-.features{padding:2rem 0 4rem}
-.features h2{text-align:center;font-size:1.5rem;font-weight:700;margin-bottom:.5rem}
-.features .sub{text-align:center;color:#64748b;font-size:.9rem;margin-bottom:2.5rem}
-.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2rem}
-.feat{background:rgba(30,41,59,.5);border:1px solid rgba(51,65,85,.4);border-radius:12px;padding:1.5rem;
-  transition:all .3s}
-.feat:hover{border-color:rgba(59,130,246,.3);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
-.feat-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-  margin-bottom:1rem;font-size:1.2rem}
-.feat h3{font-size:.9rem;font-weight:600;margin-bottom:.4rem;color:#f1f5f9}
-.feat p{font-size:.78rem;color:#64748b;line-height:1.5}
-
-.feat-icon.blue{background:rgba(59,130,246,.15)}
-.feat-icon.green{background:rgba(16,185,129,.15)}
-.feat-icon.amber{background:rgba(245,158,11,.15)}
-.feat-icon.purple{background:rgba(139,92,246,.15)}
-.feat-icon.rose{background:rgba(244,63,94,.15)}
-.feat-icon.cyan{background:rgba(6,182,212,.15)}
-
-/* Footer */
-footer{text-align:center;padding:2rem 0;color:#334155;font-size:.75rem;border-top:1px solid rgba(51,65,85,.3)}
-
-/* Responsive */
-@media(max-width:900px){
-  .hero{grid-template-columns:1fr;gap:2rem;padding:2rem 0;min-height:auto}
-  .feat-grid{grid-template-columns:1fr 1fr}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',system-ui,sans-serif;
+  background:#060c18;color:#e2e8f0;min-height:100dvh;
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
 }
-@media(max-width:600px){.feat-grid{grid-template-columns:1fr}}
+
+/* ── Animated background ── */
+.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
+.orb{position:absolute;border-radius:50%;filter:blur(90px);pointer-events:none}
+.orb-1{
+  width:560px;height:560px;
+  background:radial-gradient(circle,rgba(37,99,235,.38) 0%,transparent 70%);
+  top:-180px;right:-120px;
+  animation:drift1 20s ease-in-out infinite;
+}
+.orb-2{
+  width:480px;height:480px;
+  background:radial-gradient(circle,rgba(245,158,11,.22) 0%,transparent 70%);
+  bottom:-140px;left:-100px;
+  animation:drift2 26s ease-in-out infinite;
+}
+.orb-3{
+  width:320px;height:320px;
+  background:radial-gradient(circle,rgba(6,182,212,.18) 0%,transparent 70%);
+  top:45%;left:25%;
+  animation:drift3 32s ease-in-out infinite;
+}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}40%{transform:translate(28px,-22px) scale(1.06)}70%{transform:translate(-18px,18px) scale(.97)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}35%{transform:translate(-24px,20px) scale(1.04)}65%{transform:translate(18px,-14px) scale(.96)}}
+@keyframes drift3{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(36px,28px) scale(1.08)}}
+
+/* Subtle dot grid */
+.grid{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(rgba(59,130,246,.08) 1px,transparent 1px);
+  background-size:28px 28px;
+}
+
+/* ── Card ── */
+.wrap{
+  position:relative;z-index:1;
+  width:100%;max-width:400px;
+  padding:0 20px;
+  animation:rise .75s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+
+.card{
+  background:rgba(9,16,30,.88);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:22px;
+  padding:40px 36px 36px;
+  backdrop-filter:blur(28px);
+  box-shadow:
+    0 0 0 1px rgba(59,130,246,.07),
+    0 40px 80px rgba(0,0,0,.55),
+    0 0 80px rgba(37,99,235,.06);
+}
+
+/* ── Logo ── */
+.logo{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  margin-bottom:30px;text-decoration:none;
+  animation:rise .75s .1s cubic-bezier(.22,1,.36,1) both;
+}
+.logo-text{font-size:1.3rem;font-weight:800;color:#fff;letter-spacing:-.03em}
+.logo-text span{color:#3b82f6}
+
+/* ── Headings ── */
+.title{
+  font-size:1.6rem;font-weight:700;color:#fff;
+  letter-spacing:-.025em;text-align:center;
+  margin-bottom:6px;
+  animation:rise .75s .15s cubic-bezier(.22,1,.36,1) both;
+}
+.subtitle{
+  font-size:.83rem;color:#475569;text-align:center;
+  line-height:1.5;margin-bottom:30px;
+  animation:rise .75s .2s cubic-bezier(.22,1,.36,1) both;
+}
+
+/* ── Form fields ── */
+.field{margin-bottom:14px;animation:rise .75s .25s cubic-bezier(.22,1,.36,1) both}
+.field+.field{animation-delay:.3s}
+.field label{
+  display:block;font-size:.72rem;font-weight:600;
+  color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px;
+}
+.field input{
+  width:100%;padding:13px 16px;
+  background:rgba(15,23,42,.75);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:11px;color:#e2e8f0;font-size:.93rem;
+  outline:none;transition:border-color .2s,box-shadow .2s,background .2s;
+}
+.field input:focus{
+  border-color:rgba(59,130,246,.5);
+  box-shadow:0 0 0 3px rgba(59,130,246,.12),0 0 24px rgba(59,130,246,.05);
+  background:rgba(20,32,58,.85);
+}
+.field input::placeholder{color:#2d3f5a}
+
+/* ── Password toggle ── */
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:46px}
+.pw-btn{
+  position:absolute;right:13px;top:50%;transform:translateY(-50%);
+  background:none;border:none;cursor:pointer;color:#334155;
+  display:flex;align-items:center;padding:4px;
+  transition:color .2s;
+}
+.pw-btn:hover{color:#64748b}
+
+/* ── Error ── */
+.err{
+  font-size:.8rem;color:#f87171;text-align:center;
+  min-height:20px;margin-bottom:14px;display:flex;
+  align-items:center;justify-content:center;gap:6px;
+  animation:rise .75s .35s cubic-bezier(.22,1,.36,1) both;
+}
+
+/* ── Submit button ── */
+.btn{
+  width:100%;padding:14px;margin-top:4px;
+  background:#2563eb;color:#fff;border:none;
+  border-radius:11px;font-size:.95rem;font-weight:600;
+  cursor:pointer;letter-spacing:-.01em;
+  transition:background .2s,transform .15s,box-shadow .2s;
+  position:relative;overflow:hidden;
+  animation:rise .75s .4s cubic-bezier(.22,1,.36,1) both;
+}
+.btn::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,.1) 0%,transparent 55%);
+  opacity:0;transition:opacity .2s;pointer-events:none;
+}
+.btn:hover{
+  background:#1d4ed8;transform:translateY(-2px);
+  box-shadow:0 10px 30px rgba(37,99,235,.45),0 0 50px rgba(37,99,235,.15);
+}
+.btn:hover::after{opacity:1}
+.btn:active{transform:translateY(0) scale(.99);box-shadow:none}
+.btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+
+/* ── Spinner ── */
+.sp{
+  display:inline-block;width:15px;height:15px;
+  border:2px solid rgba(255,255,255,.3);border-top-color:#fff;
+  border-radius:50%;animation:spin .65s linear infinite;
+  vertical-align:middle;margin-right:8px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Forgot link ── */
+.fp{
+  display:block;text-align:center;margin-top:18px;
+  color:#3b82f6;font-size:.8rem;text-decoration:none;opacity:.7;
+  transition:opacity .2s;
+  animation:rise .75s .45s cubic-bezier(.22,1,.36,1) both;
+}
+.fp:hover{opacity:1}
+
+/* ── Footer tag ── */
+.tag{
+  text-align:center;margin-top:22px;
+  font-size:.7rem;color:rgba(255,255,255,.18);letter-spacing:.04em;
+}
+
+@media(max-width:420px){
+  .card{padding:32px 24px 28px;border-radius:18px}
+}
 </style></head>
 <body>
-<div class="bg-anim"></div>
-<div class="container">
 
-<header>
-  <a href="/login" class="logo">
-    <svg viewBox="0 0 32 32" fill="none"><rect x="2" y="22" width="28" height="4" rx="2" fill="#334155"/>
-    <rect x="4" y="12" width="16" height="10" rx="2" fill="#3b82f6"/><rect x="20" y="15" width="8" height="7" rx="1.5" fill="#2563eb"/>
-    <circle cx="10" cy="22" r="3" fill="#1e293b"/><circle cx="24" cy="22" r="3" fill="#1e293b"/>
-    <polyline points="1,8 7,8 9,4 12,12 15,6 18,8 22,8" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-    Fleet<span>Pulse</span>
-  </a>
-</header>
-
-<section class="hero">
-  <div class="hero-text">
-    <h1>Real-time fleet intelligence at your fingertips</h1>
-    <p>FleetPulse transforms raw Salesforce Field Service data into actionable insights. Monitor garages, optimize dispatch, track driver performance, and hit your SLA targets -- all from one unified dashboard.</p>
-    <div class="pills">
-      <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Real-Time Monitoring</div>
-      <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg> Performance Scoring</div>
-      <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> AI Assistant</div>
-      <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg> Dispatch Insights</div>
-    </div>
-  </div>
-  <div class="login-card">
-    <h2>Welcome Back</h2>
-    <div class="sub">Sign in to your FleetPulse dashboard</div>
-    <div class="err" id="err"></div>
-    <form onsubmit="return doLogin(event)">
-      <input name="username" placeholder="Username" required autocomplete="username">
-      <input name="password" type="password" placeholder="Password" required autocomplete="current-password">
-      <button type="submit" class="login-btn">Sign In</button>
-    </form>
-    <a href="/forgot-password" style="display:block;text-align:center;margin-top:1rem;color:#60a5fa;font-size:.85rem;text-decoration:none">Forgot password?</a>
-  </div>
-</section>
-
-<section class="features">
-  <h2>Everything you need to run a world-class fleet</h2>
-  <div class="sub">Built for AAA roadside operations. Powered by Salesforce Field Service data.</div>
-  <div class="feat-grid">
-    <div class="feat">
-      <div class="feat-icon blue">&#128225;</div>
-      <h3>Command Center</h3>
-      <p>Bird's-eye view of all territories. Open calls, SLA status, over-capacity alerts, and dispatch metrics -- updated in real time.</p>
-    </div>
-    <div class="feat">
-      <div class="feat-icon green">&#9733;</div>
-      <h3>Garage Scorecards</h3>
-      <p>A-to-F composite grading for every garage based on response time, utilization, on-time arrival, and customer satisfaction.</p>
-    </div>
-    <div class="feat">
-      <div class="feat-icon amber">&#128336;</div>
-      <h3>PTA Advisor</h3>
-      <p>Predicted Time of Arrival accuracy tracking. See where estimates miss and by how much, broken down by work type.</p>
-    </div>
-    <div class="feat">
-      <div class="feat-icon purple">&#127793;</div>
-      <h3>Territory Matrix</h3>
-      <p>Cross-territory health comparison. Identify imbalances, workload distribution issues, and cascade opportunities.</p>
-    </div>
-    <div class="feat">
-      <div class="feat-icon rose">&#128202;</div>
-      <h3>Dispatch Insights</h3>
-      <p>System vs dispatcher assignment rates, closest-driver analysis for fleet and Towbook, and over-capacity detection.</p>
-    </div>
-    <div class="feat">
-      <div class="feat-icon cyan">&#129302;</div>
-      <h3>AI Assistant</h3>
-      <p>Ask questions about metrics, calculations, and data in plain English. Powered by AI with full context of your fleet data.</p>
-    </div>
-  </div>
-</section>
-
-<footer>FleetPulse -- Fleet Operations Intelligence Platform</footer>
-
+<div class="bg">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
 </div>
+<div class="grid"></div>
+
+<div class="wrap">
+  <div class="card">
+
+    <a href="/login" class="logo">
+      <svg viewBox="0 0 36 36" width="30" height="30" fill="none">
+        <circle cx="18" cy="18" r="15.5" stroke="#2563eb" stroke-width="1.4" opacity="0.45"/>
+        <circle cx="18" cy="18" r="15.5" stroke="#3b82f6" stroke-width="6" opacity="0.04"/>
+        <polyline points="2.5,18 7,18 10,10 13.5,26 18,12 21.5,21 24.5,18 33.5,18"
+          stroke="#f59e0b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="33.5" cy="18" r="2.2" fill="#3b82f6">
+          <animate attributeName="opacity" values="1;0.25;1" dur="1.6s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="33.5" cy="18" r="4.5" fill="#3b82f6" opacity="0.12">
+          <animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.12;0;0.12" dur="1.6s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+      <span class="logo-text">Fleet<span>Pulse</span></span>
+    </a>
+
+    <h1 class="title">Welcome back</h1>
+    <p class="subtitle">Sign in to your FleetPulse account</p>
+
+    <div class="err" id="err" role="alert" aria-live="polite"></div>
+
+    <form onsubmit="return doLogin(event)" novalidate>
+      <div class="field">
+        <label for="u">Username</label>
+        <input id="u" name="username" type="text"
+          placeholder="Enter your username"
+          required autocomplete="username" autofocus>
+      </div>
+
+      <div class="field">
+        <label for="p">Password</label>
+        <div class="pw-wrap">
+          <input id="p" name="password" type="password"
+            placeholder="Enter your password"
+            required autocomplete="current-password">
+          <button type="button" class="pw-btn" id="pwtoggle"
+            aria-label="Show password" onclick="togglePw()">
+            <svg id="eye-icon" viewBox="0 0 24 24" width="18" height="18"
+              fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn" id="btn">Sign in</button>
+    </form>
+
+    <a href="/forgot-password" class="fp">Forgot password?</a>
+
+  </div>
+  <p class="tag">AAA Emergency Road Service &bull; Internal tool</p>
+</div>
+
 <script>
-async function doLogin(e){e.preventDefault();
-const f=new FormData(e.target);
-const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({username:f.get('username'),password:f.get('password')})});
-if(r.ok){window.location.href='/'}
-else{document.getElementById('err').textContent='Invalid credentials'}}
+var eyeOpen='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+var eyeOff='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function togglePw(){
+  var inp=document.getElementById('p');
+  var btn=document.getElementById('pwtoggle');
+  var hidden=inp.type==='password';
+  inp.type=hidden?'text':'password';
+  btn.innerHTML=hidden?eyeOff:eyeOpen;
+  btn.setAttribute('aria-label',hidden?'Hide password':'Show password');
+}
+async function doLogin(e){
+  e.preventDefault();
+  var err=document.getElementById('err');
+  var btn=document.getElementById('btn');
+  err.textContent='';
+  btn.disabled=true;
+  btn.innerHTML='<span class="sp"></span>Signing in…';
+  try{
+    var f=new FormData(e.target);
+    var r=await fetch('/api/auth/login',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:f.get('username'),password:f.get('password')})
+    });
+    if(r.ok){
+      btn.innerHTML='Signed in ✔';
+      window.location.href='/';
+    } else {
+      err.textContent='Invalid username or password';
+      btn.disabled=false;
+      btn.textContent='Sign in';
+      document.getElementById('p').focus();
+    }
+  } catch(ex){
+    err.textContent='Connection error. Try again.';
+    btn.disabled=false;
+    btn.textContent='Sign in';
+  }
+}
 </script>
 </body></html>"""
 
@@ -528,7 +647,9 @@ def auth_me(request: Request):
             if not department:
                 department = user_record.get("department", "")
         return {"user": username, "name": name, "role": role, "email": email, "department": department, "method": "admin"}
-    return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "department": "", "method": "local"}
+    if _DEV_AUTO_LOGIN:
+        return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "department": "", "method": "local"}
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 @router.post("/api/auth/logout")

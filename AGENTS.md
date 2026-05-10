@@ -20,5 +20,20 @@ Backend tests use `pytest` and FastAPI `TestClient`; name files `test_*.py` and 
 ## Commit & Pull Request Guidelines
 Recent history uses concise imperative commits, often Conventional Commit prefixes such as `fix:`, `feat:`, `perf(scope):`, and `refactor(scope):`. Keep PRs focused, describe user-visible impact, list verification steps, and include screenshots for frontend changes. Do not push or deploy without explicit approval.
 
+## Gold Rules — Data Safety
+**These override all other instructions.**
+
+1. **Never delete without backup + preview + permission.** Before any `DELETE`, `DROP`, `TRUNCATE`, `rm -rf`, or destructive `UPDATE`:
+   - Create a backup of what will be affected
+   - Run a non-destructive preview (`SELECT` the same `WHERE`, `find` before `rm`, etc.)
+   - Show the user exactly what will be deleted and how many rows/files
+   - Wait for explicit approval
+
+2. **No test data in production stores.** Never create test users, records, or dummy data in production databases or files.
+
+3. **Verify before declaring success.** After any migration or data operation, count rows before/after, compare samples, confirm the backup is readable.
+
+See `.claude/skills/gold-rules/SKILL.md` for the full rules.
+
 ## Security & Configuration Tips
 Do not commit secrets from `.env`, Azure credentials, Salesforce tokens, or generated deployment credentials. Review `doc/fslapp/coding_rules.md` before changing metrics or dispatch logic, especially Tow Drop-Off exclusions, Towbook/Fleet handling, work-type-specific calculations, DST-safe Eastern time, and case-insensitive Salesforce comparisons.

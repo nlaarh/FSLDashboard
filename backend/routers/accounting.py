@@ -16,6 +16,7 @@ from routers.accounting_calc import (
 )
 from routers.accounting_audit import _build_woa_data
 from routers.accounting_audit_ai import call_audit_ai, _build_woa_audit
+from repositories import accounting
 
 router = APIRouter()
 log = logging.getLogger('accounting')
@@ -162,8 +163,7 @@ def _build_woa_list() -> dict:
 
     # Build WO → ALL WOLIs map (keep all line items per WO)
     from collections import defaultdict
-    import database as _db
-    _rates = _db.get_accounting_rates_dict()
+    _rates = accounting.get_accounting_rates_dict()
     _materiality = _rates.get('materiality_threshold_usd', 10.0)
 
     wo_wolis = defaultdict(list)
@@ -511,8 +511,7 @@ def api_accounting_refresh():
 @router.get("/api/accounting/rates")
 def api_accounting_rates():
     """Public read-only: return accounting reference rates for the audit panel."""
-    import database
-    return {r['code']: r for r in database.get_accounting_rates()}
+    return {r['code']: r for r in accounting.get_accounting_rates()}
 
 
 @router.get("/api/accounting/analytics")

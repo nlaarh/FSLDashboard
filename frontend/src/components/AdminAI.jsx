@@ -11,7 +11,6 @@ const OC_PROVIDERS = [
 export default function AdminAI({ pin }) {
   // ── Main chatbot state ──────────────────────────────────────────────────────
   const [aiProvider, setAiProvider] = useState('')
-  const [aiApiKey, setAiApiKey]     = useState('')
   const [aiPrimaryModel, setAiPrimaryModel] = useState('')
   const [aiFallbackModel, setAiFallbackModel] = useState('')
   const [aiModelCatalog, setAiModelCatalog] = useState({})
@@ -20,8 +19,6 @@ export default function AdminAI({ pin }) {
   const [aiSaved, setAiSaved]   = useState(false)
 
   // ── Optimizer chat state ────────────────────────────────────────────────────
-  const [ocAnthropicKey, setOcAnthropicKey] = useState('')
-  const [ocOpenaiKey, setOcOpenaiKey]       = useState('')
   const [ocProvider, setOcProvider]         = useState('anthropic')
   const [ocModel, setOcModel]               = useState('')
   const [ocSaving, setOcSaving] = useState(false)
@@ -49,7 +46,6 @@ export default function AdminAI({ pin }) {
       const cb = settings.chatbot || {}
       setAiChatEnabled(cb.enabled || false)
       setAiProvider(cb.provider || '')
-      setAiApiKey(cb.api_key || '')
       setAiPrimaryModel(cb.primary_model || cb.models?.mid || cb.models?.high || '')
       setAiFallbackModel(cb.fallback_model || cb.models?.low || '')
 
@@ -57,8 +53,6 @@ export default function AdminAI({ pin }) {
       const oc = settings.optimizer_chat || {}
       setOcProvider(oc.provider || 'anthropic')
       setOcModel(oc.model || '')
-      setOcAnthropicKey(settings.anthropic_api_key || '')
-      setOcOpenaiKey(settings.openai_api_key || '')
     } catch { /* ignore */ }
   }, [pin])
 
@@ -69,7 +63,7 @@ export default function AdminAI({ pin }) {
     setAiSaving(true); setAiSaved(false)
     try {
       await adminUpdateSettings(pin, {
-        chatbot: { enabled: aiChatEnabled, provider: aiProvider, api_key: aiApiKey,
+        chatbot: { enabled: aiChatEnabled, provider: aiProvider,
                    primary_model: aiPrimaryModel, fallback_model: aiFallbackModel },
       })
       setAiSaved(true)
@@ -82,9 +76,7 @@ export default function AdminAI({ pin }) {
     setOcSaving(true); setOcSaved(false)
     try {
       await adminUpdateSettings(pin, {
-        anthropic_api_key: ocAnthropicKey,
-        openai_api_key:    ocOpenaiKey,
-        optimizer_chat:    { provider: ocProvider, model: ocModel },
+        optimizer_chat: { provider: ocProvider, model: ocModel },
       })
       setOcSaved(true)
       setTimeout(() => setOcSaved(false), 3000)
@@ -132,7 +124,7 @@ export default function AdminAI({ pin }) {
                 <div className="relative">
                   <select value={aiProvider} onChange={e => {
                     const p = e.target.value
-                    setAiProvider(p); setAiApiKey('')
+                    setAiProvider(p)
                     const cat = Array.isArray(aiModelCatalog[p]) ? aiModelCatalog[p] : []
                     const balanced = cat.find(m => m.tier === 'balanced')
                     const fast     = cat.find(m => m.tier === 'fast')
@@ -151,11 +143,8 @@ export default function AdminAI({ pin }) {
               </div>
 
               {aiProvider && (
-                <div>
-                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">API Key</label>
-                  <input value={aiApiKey} onChange={e => setAiApiKey(e.target.value)}
-                    type="password" placeholder={`Enter your ${aiProvider} API key...`}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 font-mono" />
+                <div className="bg-slate-800/40 rounded-lg px-3 py-2.5 border border-slate-700/40">
+                  <p className="text-[10px] text-slate-500">API key is read from the <span className="font-mono text-slate-400">{aiProvider === 'anthropic' ? 'ANTHROPIC_API_KEY' : aiProvider === 'openai' ? 'OPENAI_API_KEY' : 'GOOGLE_AI_API_KEY'}</span> environment variable set on the server.</p>
                 </div>
               )}
             </div>
@@ -200,7 +189,7 @@ export default function AdminAI({ pin }) {
 
           {aiProvider && (
             <div className="flex items-center gap-3 pt-1">
-              <button onClick={saveAiConfig} disabled={aiSaving || !aiApiKey || !aiPrimaryModel}
+              <button onClick={saveAiConfig} disabled={aiSaving || !aiPrimaryModel}
                 className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-40 rounded-lg text-xs font-semibold text-white transition-colors">
                 {aiSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {aiSaving ? 'Saving...' : 'Save AI Configuration'}
@@ -230,26 +219,8 @@ export default function AdminAI({ pin }) {
             decisions. Configure API keys and pick your preferred LLM. Defaults to Anthropic Claude Sonnet.
           </p>
 
-          {/* API Keys — side by side */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">
-                Anthropic API Key
-              </label>
-              <input value={ocAnthropicKey} onChange={e => setOcAnthropicKey(e.target.value)}
-                type="password" placeholder="sk-ant-..."
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono" />
-              <p className="text-[10px] text-slate-600 mt-1">console.anthropic.com/settings/keys</p>
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1.5">
-                OpenAI API Key
-              </label>
-              <input value={ocOpenaiKey} onChange={e => setOcOpenaiKey(e.target.value)}
-                type="password" placeholder="sk-..."
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2.5 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono" />
-              <p className="text-[10px] text-slate-600 mt-1">platform.openai.com/api-keys</p>
-            </div>
+          <div className="bg-slate-800/40 rounded-lg px-3 py-2.5 border border-slate-700/40">
+            <p className="text-[10px] text-slate-500">API keys are managed via server environment variables: <span className="font-mono text-slate-400">ANTHROPIC_API_KEY</span> and <span className="font-mono text-slate-400">OPENAI_API_KEY</span>.</p>
           </div>
 
           {/* Provider + Model */}

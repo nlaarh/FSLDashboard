@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, Copy, Eye, EyeOff, KeyRound, Loader2, RefreshCw, X } from 'lucide-react'
+import { useState } from 'react'
+import { AlertTriangle, CheckCircle2, Copy, Eye, EyeOff, ExternalLink, KeyRound, Loader2, Mail, RefreshCw, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { DEPTS, ROLES } from '../constants/users'
 import { FORM_PASSWORD_COPY_KEY, passwordChecks, passwordIssues } from '../utils/passwords'
@@ -17,9 +18,13 @@ export default function AdminUserEditor({
   generateFormPassword,
   copyFormPassword,
   copied,
+  emailUrl,
+  emailSubject,
+  emailBody,
   onClose,
   onSave,
 }) {
+  const [emailCopied, setEmailCopied] = useState(false)
   const passwordSectionOpen = !editingUser || passwordChangeOpen
   const checks = passwordChecks(userForm.password)
   const currentPasswordIssues = passwordSectionOpen ? passwordIssues(userForm.password) : []
@@ -193,7 +198,19 @@ export default function AdminUserEditor({
           {saveMessage && (
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-300">
               <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-              <span>{saveMessage}</span>
+              <span className="flex-1">{saveMessage}</span>
+              {emailBody && (
+                <Mail
+                  onClick={() => {
+                    navigator.clipboard.writeText(emailBody)
+                    setEmailCopied(true)
+                    setTimeout(() => setEmailCopied(false), 3000)
+                    window.open('https://outlook.cloud.microsoft/mail', '_blank')
+                  }}
+                  title="Copy email text and open Outlook"
+                  className="h-3.5 w-3.5 cursor-pointer"
+                />
+              )}
             </div>
           )}
         </div>

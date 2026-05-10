@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { SAReportProvider } from './contexts/SAReportContext.jsx'
 import Layout from './components/Layout'
+import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
 import GarageDetail from './pages/GarageDetail'
 import CommandCenter from './pages/CommandCenter'
@@ -17,27 +18,38 @@ import Accounting from './pages/Accounting'
 import OptimizerDecoder from './pages/OptimizerDecoder'
 import Reporting from './pages/Reporting'
 
-export default function App() {
+/*
+ * AuthApp — renders the full app when authenticated.
+ * When /api/auth/me returns 401, renders <Landing /> at whatever URL the user is on.
+ * After they log in, the browser lands back at / which re-runs this check.
+ */
+function AuthApp() {
   const [department, setDepartment] = useState(null)
   const [role, setRole] = useState(null)
+  const [authed, setAuthed] = useState(null) // null=loading | true=ok | false=401
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      setDepartment(d.department || '')
-      setRole(d.role || '')
-    }).catch(() => { setDepartment(''); setRole('') })
+    fetch('/api/auth/me')
+      .then(r => {
+        if (!r.ok) { setAuthed(false); return null }
+        return r.json()
+      })
+      .then(d => {
+        if (!d) return
+        setDepartment(d.department || '')
+        setRole(d.role || '')
+        setAuthed(true)
+      })
+      .catch(() => setAuthed(false))
   }, [])
+
+  if (authed === null) return null        // loading — blank screen briefly
+  if (authed === false) return <Landing /> // not authenticated — show landing in place
 
   const isFinance = department === 'finance'
   const isSupervisor = role === 'ers-supervisor'
-  // While loading, render null so routes aren't mounted with wrong guard
-  if (department === null) return null
-
-  // Finance → accounting only; Supervisor → everything except accounting + admin
-  const blocked = (fallback = '/') => isFinance ? <Navigate to="/accounting" replace /> : <Navigate to={fallback} replace />
 
   return (
-    <SAReportProvider>
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={isFinance ? <Navigate to="/accounting" replace /> : <CommandCenter />} />
@@ -58,6 +70,16 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+  )
+}
+
+export default function App() {
+  return (
+    <SAReportProvider>
+      <Routes>
+        {/* Every URL goes through AuthApp — it renders Landing when not authenticated */}
+        <Route path="/*" element={<AuthApp />} />
+      </Routes>
     </SAReportProvider>
   )
 }

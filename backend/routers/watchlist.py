@@ -86,40 +86,6 @@ def api_watchlist():
     return result
 
 
-@router.post("/api/watchlist/follow")
-def api_watchlist_follow(body: dict):
-    """Manually add an SA to the shared watchlist."""
-    sa_number = body.get('sa_number', '').strip()
-    sa_id = body.get('sa_id', '')
-    added_by = body.get('added_by', '')
-    if not sa_number:
-        return {'error': 'sa_number required'}
-    import database
-    database.watchlist_add(sa_number, sa_id, added_by)
-    cache.invalidate(CACHE_KEY)
-    cache.disk_invalidate(CACHE_KEY)
-    log.info(f"Manual watchlist follow: {sa_number} by {added_by}")
-    return {'ok': True, 'sa_number': sa_number}
-
-
-@router.delete("/api/watchlist/follow/{sa_number}")
-def api_watchlist_unfollow(sa_number: str):
-    """Remove an SA from the manual watchlist."""
-    import database
-    database.watchlist_remove(sa_number)
-    cache.invalidate(CACHE_KEY)
-    cache.disk_invalidate(CACHE_KEY)
-    log.info(f"Manual watchlist unfollow: {sa_number}")
-    return {'ok': True, 'sa_number': sa_number}
-
-
-@router.get("/api/watchlist/manual")
-def api_watchlist_manual():
-    """Get all manually-followed SA numbers (for star icon state)."""
-    import database
-    items = database.watchlist_list()
-    return {'followed': [i['sa_number'] for i in items]}
-
 
 # ── Build watchlist ──────────────────────────────────────────────────────────
 
@@ -129,11 +95,6 @@ def _build_watchlist() -> dict:
     # Keep terminal calls only if they changed very recently (UI only needs a short
     # grace window to show "Completed Xm ago" before auto-drop).
     cutoff_recent_terminal = (now_utc - timedelta(minutes=15)).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    # ── Load manually-followed SAs ──
-    import database
-    manual_items = database.watchlist_list()
-    manual_sa_numbers = {item['sa_number'] for item in manual_items}
 
     # ── Query 1: Active + recently completed SAs (last 24h) ──
     sas = sf_query_all(f"""
@@ -213,7 +174,7 @@ def _build_watchlist() -> dict:
             hist_by_sa[sa_id].append(r)
 
     # ── Evaluate each SA against watchlist criteria ──
-    watchlist = []
+    entries = []
     for sa_id, sa in sa_map.items():
         # Auto-drop: terminal status AND ActualEndTime > 5 min ago
         status = sa.get('Status', '')
@@ -238,36 +199,14 @@ def _build_watchlist() -> dict:
 
         reasons, flags = _evaluate_criteria(ar_list, hist_list)
 
-        # Also include if manually followed by a dispatcher
-        sa_num = sa.get('AppointmentNumber', '')
-        if not reasons and sa_num in manual_sa_numbers:
-            reasons = ['Manually followed']
-            flags = {'reassignment_count': 0}
-
         if not reasons:
             continue
 
         entry = _build_entry(sa, ar_list, hist_list, reasons, flags, now_utc, sa_map)
-        entry['manual_follow'] = sa_num in manual_sa_numbers
-        watchlist.append(entry)
-
-    # ── Auto-cleanup: remove manual follows for completed SAs ──
-    completed_sa_numbers = set()
-    for entry in watchlist:
-        if entry.get('current_status') in ('Completed', 'Canceled', 'Unable to Complete',
-                                            'Cancel Call - Service Not En Route',
-                                            'Cancel Call - Service En Route', 'No-Show'):
-            if entry.get('manual_follow'):
-                completed_sa_numbers.add(entry['sa_number'])
-    for sa_num in completed_sa_numbers:
-        try:
-            database.watchlist_remove(sa_num)
-            log.info(f"Auto-removed completed SA from manual watchlist: {sa_num}")
-        except Exception:
-            pass
+        entries.append(entry)
 
     # ── Sort: active flagged first, then by reassignment count, completed last ──
-    watchlist.sort(key=_sort_key)
+    entries.sort(key=_sort_key)
 
     # ── Operational Alerts (new flag-based table) ──
     operational_alerts = build_operational_alerts(sas, sa_map, hist_by_sa, now_utc)
@@ -296,10 +235,9 @@ def _build_watchlist() -> dict:
             alert['work_type_id'] = sa.get('WorkTypeId') or ''
 
     return {
-        'watchlist': watchlist,
-        'total': len(watchlist),
+        'watchlist': entries,
+        'total': len(entries),
         'operational_alerts': operational_alerts,
-        'manual_followed': list(manual_sa_numbers),
         'last_updated': now_utc.isoformat(),
     }
 

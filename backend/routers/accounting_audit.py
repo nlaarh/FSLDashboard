@@ -4,7 +4,7 @@ from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt
 from fastapi import HTTPException
-import cache, logging, requests as _requests
+import cache, logging, os, requests as _requests
 from datetime import timezone as _tz
 from zoneinfo import ZoneInfo
 
@@ -16,12 +16,12 @@ from routers.accounting_calc import (
     _SF_BASE, _TIME_CODES, _TOW_CODES,
 )
 from routers.accounting_audit_ai import call_audit_ai
+from repositories import accounting
 
 def _build_woa_data(woa_id: str) -> dict:
     """Build full WOA audit data WITHOUT the AI call (fast path, ~3-5s).
     Returns _ai_context and _garage_history as internal fields for the AI step."""
     import json as _json
-    import database
 
     woa_rows = sf_query_all(f"""
         SELECT Id, Name, Quantity__c, Description__c, Internal_Notes__c,
@@ -477,8 +477,7 @@ def _build_woa_data(woa_id: str) -> dict:
 
     # Google APIs only for TL product — toll + parking validation only
     if woli_code == 'TL' and call_lat and call_lon:
-        gm_settings = database.get_setting('google_maps') or {}
-        gm_key = gm_settings.get('api_key', '')
+        gm_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
         if gm_key:
             _tl_lat0 = call_lat if (tow_dest_lat and tow_dest_lon) else (truck_prev or {}).get('lat')
             _tl_lon0 = call_lon if (tow_dest_lat and tow_dest_lon) else (truck_prev or {}).get('lon')
@@ -554,7 +553,7 @@ def _build_woa_data(woa_id: str) -> dict:
             'vehicle_group': wo.get('Vehicle_Group__c'),
             'vehicle_weight': _safe_float(wo.get('Weight_lbs__c')),
         },
-        'reference_rates': database.get_accounting_rates_dict(),
+        'reference_rates': accounting.get_accounting_rates_dict(),
         'tl_context': tl_context,
     }
 

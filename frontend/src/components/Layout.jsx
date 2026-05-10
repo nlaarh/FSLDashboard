@@ -100,7 +100,7 @@ export default function Layout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } catch { /* ignore */ }
-    window.location.href = '/login'
+    window.location.href = '/'
   }
 
   return (

@@ -71,7 +71,7 @@ def _get_priority_matrix():
             pri = r.get('ERS_Priority__c')
             wt = r.get('ERS_Worktype__c', '')
             if parent_id and spotted_id:
-                by_pair[(parent_id, spotted_id)] = pri
+                by_pair[f"{parent_id}|{spotted_id}"] = pri
                 by_garage[spotted_id].append({
                     'parent_id': parent_id,
                     'priority': pri,
@@ -96,7 +96,7 @@ def _get_priority_matrix():
                 if spotted_id not in seen:
                     seen.add(spotted_id)
                     rank += 1
-                    rank_lookup[(parent_id, spotted_id)] = rank
+                    rank_lookup[f"{parent_id}|{spotted_id}"] = rank
         return {'by_pair': by_pair, 'by_garage': dict(by_garage), 'rank_lookup': rank_lookup}
     return cache.cached_query('priority_matrix', _fetch, ttl=600)
 
@@ -124,7 +124,7 @@ def get_ops_garages():
             primary_zones = 0
             secondary_zones = 0
             for entry in zone_entries:
-                rank = matrix['rank_lookup'].get((entry['parent_id'], tid))
+                rank = matrix['rank_lookup'].get(f"{entry['parent_id']}|{tid}")
                 if rank == 1:
                     primary_zones += 1
                 elif rank and rank >= 2:
@@ -420,7 +420,7 @@ def get_ops_territory_detail(territory_id: str):
 
             # Determine priority rank from matrix
             parent_tid = sa.get('ERS_Parent_Territory__c')
-            priority_rank = matrix['rank_lookup'].get((parent_tid, territory_id)) if parent_tid else None
+            priority_rank = matrix['rank_lookup'].get(f"{parent_tid}|{territory_id}") if parent_tid else None
 
             if not is_dropoff:
                 status_counts[status] += 1

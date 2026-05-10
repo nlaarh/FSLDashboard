@@ -1,15 +1,14 @@
-"""User management — SQLite-based user store with session tracking.
+"""User management — Postgres-only via repositories/users.py.
 
-Users stored in SQLite database (fslapp.db). Passwords hashed with bcrypt (new)
-or SHA-256 + salt (legacy — migrated on next login).
-Sessions tracked in-memory (cleared on restart).
+All database access goes through repositories/users.py (which uses db_adapter).
+No SQLite fallback. Sessions tracked in-memory (cleared on restart).
 """
 
-import hashlib, secrets, time, threading
+import hashlib, os, secrets, time, threading
 
 import bcrypt
-import database as db
 import user_backup
+from repositories import users as _user_repo
 
 _sess_lock = threading.Lock()
 _sessions: dict[str, dict] = {}
@@ -17,7 +16,6 @@ _sessions: dict[str, dict] = {}
 
 # ── Password hashing ─────────────────────────────────────────────────────────
 
-# bcrypt work factor — adjust based on server capacity. 12 is a safe default.
 _BCRYPT_ROUNDS = 12
 
 
@@ -46,19 +44,6 @@ def _check_password(password: str, stored_hash: str, salt: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
     # Legacy SHA-256
     return _check_password_legacy(password, stored_hash, salt)
-
-
-def _migrate_password_to_bcrypt(username: str, password: str):
-    """Re-hash a user's password with bcrypt after successful legacy auth."""
-    try:
-        h, salt = _hash_password(password)
-        with db.get_db() as conn:
-            conn.execute(
-                "UPDATE users SET password_hash = ?, salt = ? WHERE username = ?",
-                (h, salt, username),
-            )
-    except Exception:
-        pass  # migration failure must not block login
 
 
 # ── Seed / ensure users ──────────────────────────────────────────────────────
@@ -95,58 +80,34 @@ _SEED_USER_DEFS = [
 
 
 def seed_users():
-    """Ensure all defined users exist with correct roles. Creates missing users, updates role/dept for existing ones.
-    Passwords read from SEED_PASS_* env vars — only set on initial creation (never overwrite existing passwords)."""
-    import os, logging
+    """Ensure all defined users exist with correct roles. Creates missing users,
+    updates role/dept for existing ones.  Passwords read from SEED_PASS_* env vars
+    — only set on initial creation (never overwrite existing passwords)."""
+    import logging
     _log = logging.getLogger('users')
-    with db.get_db() as conn:
-        for username, env_var, name, role, email, department in _SEED_USER_DEFS:
-            existing = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
-            if existing:
-                # Update role and department to match definition (never touch password)
-                conn.execute(
-                    "UPDATE users SET role = ?, department = ?, name = ?, email = ? WHERE username = ?",
-                    (role, department, name, email, username),
-                )
-                continue
-            # New user — password required from env var
-            password = os.getenv(env_var)
-            if not password:
-                _log.warning(f"Skipping seed for {username}: {env_var} not set in env")
-                continue
-            h, salt = _hash_password(password)
-            conn.execute(
-                "INSERT INTO users (username, name, role, email, phone, password_hash, salt, active, created_at, department) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                (username, name, role, email, '', h, salt, time.time(), department),
+
+    for username, env_var, name, role, email, department in _SEED_USER_DEFS:
+        existing = _user_repo.get_user(username)
+        if existing:
+            _user_repo.update_user(
+                username, name=name, role=role, department=department, email=email
             )
-            _log.info(f"Seeded user {username} ({role})")
+            continue
+        password = os.getenv(env_var)
+        if not password:
+            _log.warning(f"Skipping seed for {username}: {env_var} not set in env")
+            continue
+        h, salt = _hash_password(password)
+        _user_repo.create_user(
+            username, name, role, email, '', h, salt, 1, time.time(), department
+        )
+        _log.info(f"Seeded user {username} ({role})")
     _trigger_backup()
 
 
 def migrate_json_users():
-    """One-time migration: read users.json → insert into SQLite → rename to .bak."""
-    import os, json
-    from pathlib import Path
-    json_path = Path(os.path.expanduser('~/.fslapp/users.json'))
-    if not json_path.exists():
-        return
-    try:
-        users = json.loads(json_path.read_text())
-    except Exception:
-        return
-    with db.get_db() as conn:
-        for username, u in users.items():
-            conn.execute(
-                """INSERT OR IGNORE INTO users (username, name, role, email, phone, password_hash, salt, active, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (username, u.get('name', username), u.get('role', 'viewer'), u.get('email', ''),
-                 u.get('phone', ''), u['password_hash'], u['salt'],
-                 1 if u.get('active', True) else 0, u.get('created', time.time())),
-            )
-    try:
-        json_path.rename(json_path.with_suffix('.json.migrated'))
-    except Exception:
-        pass
+    """No-op: JSON migration was a one-time operation."""
+    pass
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -159,114 +120,69 @@ def _dept(row) -> str:
 
 
 def _trigger_backup():
-    """Fire-and-forget: dump all user rows (including hashes) to encrypted backup."""
+    """Fire-and-forget: sync Postgres → SQLite backup + encrypted file."""
     try:
-        with db.get_db() as conn:
-            rows = conn.execute("SELECT * FROM users").fetchall()
-            full = [dict(r) for r in rows]
-        user_backup.save(full)
+        user_backup.save()
     except Exception:
         pass  # backup failure must never crash the main operation
 
 
 def find_by_email(email: str) -> dict | None:
     """Find active user by email (case-insensitive)."""
-    with db.get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND active = 1", (email,)
-        ).fetchone()
-        if not row:
-            return None
-        return {"username": row['username'], "name": row['name'], "role": row['role'],
-                "email": row['email'], "active": bool(row['active']), "department": _dept(row)}
+    return _user_repo.find_by_email(email)
 
 
 def authenticate(username: str, password: str) -> dict | None:
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ? AND active = 1", (username,)).fetchone()
-        if not row:
-            return None
+    row = _user_repo.get_user_with_hash(username)
+    if row and row.get('active'):
         if _check_password(password, row['password_hash'], row['salt']):
             # If this was a legacy hash, transparently migrate to bcrypt
             if row['salt'] != 'bcrypt' and not row['password_hash'].startswith(("$2b$", "$2a$", "$2y$")):
-                _migrate_password_to_bcrypt(username, password)
+                h, salt = _hash_password(password)
+                _user_repo.update_password_hash(username, h, salt)
             return {"username": row['username'], "name": row['name'], "role": row['role'],
                     "email": row['email'], "department": _dept(row)}
     return None
 
 
 def get_user(username: str) -> dict | None:
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            return None
-        return {"username": row['username'], "name": row['name'], "role": row['role'],
-                "email": row['email'], "active": bool(row['active']), "department": _dept(row)}
+    return _user_repo.get_user(username)
+
+
+def get_user_with_hash(username: str) -> dict | None:
+    """Return user dict including password_hash and salt fields."""
+    return _user_repo.get_user_with_hash(username)
 
 
 def check_password_against_user(username: str, password: str) -> bool:
     """Return True if the provided password matches the user's current password."""
-    with db.get_db() as conn:
-        row = conn.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            return False
-        return _check_password(password, row['password_hash'], row['salt'])
+    row = _user_repo.get_user_with_hash(username)
+    if not row:
+        return False
+    return _check_password(password, row['password_hash'], row['salt'])
 
 
 def list_users() -> list[dict]:
-    with db.get_db() as conn:
-        rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
-        return [{"username": r['username'], "name": r['name'], "role": r['role'],
-                 "email": r['email'], "phone": r['phone'], "active": bool(r['active']),
-                 "created": r['created_at'], "department": _dept(r)} for r in rows]
+    return _user_repo.list_users()
 
 
 def create_user(username: str, password: str, name: str, role: str = "viewer",
                 email: str = "", phone: str = "", department: str = "") -> dict:
     h, salt = _hash_password(password)
-    try:
-        with db.get_db() as conn:
-            conn.execute(
-                "INSERT INTO users (username, name, role, email, phone, password_hash, salt, active, created_at, department) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                (username, name, role, email, phone, h, salt, time.time(), department),
-            )
-    except Exception:
-        raise ValueError(f"User '{username}' already exists")
+    _user_repo.create_user(
+        username, name, role, email, phone, h, salt, 1, time.time(), department
+    )
     _trigger_backup()
-    return {"username": username, "name": name, "role": role, "email": email, "phone": phone, "department": department}
+    return {"username": username, "name": name, "role": role,
+            "email": email, "phone": phone, "department": department}
 
 
 def update_user(username: str, name: str = None, role: str = None, department: str = None,
                 password: str = None, active: bool = None, email: str = None, phone: str = None) -> dict:
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            raise ValueError(f"User '{username}' not found")
-        updates = []
-        params = []
-        if name is not None:
-            updates.append("name = ?"); params.append(name)
-        if role is not None:
-            updates.append("role = ?"); params.append(role)
-        if department is not None:
-            updates.append("department = ?"); params.append(department)
-        if email is not None:
-            updates.append("email = ?"); params.append(email)
-        if phone is not None:
-            updates.append("phone = ?"); params.append(phone)
-        if active is not None:
-            updates.append("active = ?"); params.append(1 if active else 0)
-        if password is not None:
-            h, salt = _hash_password(password)
-            updates.append("password_hash = ?"); params.append(h)
-            updates.append("salt = ?"); params.append(salt)
-        if updates:
-            params.append(username)
-            conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        result = {"username": row['username'], "name": row['name'], "role": row['role'],
-                  "active": bool(row['active']), "email": row['email'], "phone": row['phone'],
-                  "department": _dept(row)}
+    result = _user_repo.update_user(
+        username, name=name, role=role, department=department,
+        password=password, active=active, email=email, phone=phone
+    )
     _trigger_backup()
     return result
 
@@ -274,11 +190,7 @@ def update_user(username: str, name: str = None, role: str = None, department: s
 def delete_user(username: str):
     """Soft-delete: deactivates the user (active=0). Row is kept so it can be restored.
     Use this instead of hard DELETE to prevent accidental permanent data loss."""
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            raise ValueError(f"User '{username}' not found")
-        conn.execute("UPDATE users SET active = 0 WHERE username = ?", (username,))
+    _user_repo.delete_user(username)
     with _sess_lock:
         to_remove = [t for t, s in _sessions.items() if s["user"] == username]
         for t in to_remove:
@@ -288,14 +200,7 @@ def delete_user(username: str):
 
 def restore_user(username: str) -> dict:
     """Restore a soft-deleted (inactive) user by setting active=1."""
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        if not row:
-            raise ValueError(f"User '{username}' not found")
-        conn.execute("UPDATE users SET active = 1 WHERE username = ?", (username,))
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        result = {"username": row['username'], "name": row['name'], "role": row['role'],
-                  "active": bool(row['active']), "email": row['email'], "department": _dept(row)}
+    result = _user_repo.restore_user(username)
     _trigger_backup()
     return result
 

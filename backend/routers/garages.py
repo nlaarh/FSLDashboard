@@ -52,7 +52,7 @@ def list_garages():
             primary_zones = 0
             secondary_zones = 0
             for entry in zone_entries:
-                rank = matrix['rank_lookup'].get((entry['parent_id'], tid))
+                rank = matrix['rank_lookup'].get(f"{entry['parent_id']}|{tid}")
                 if rank == 1:
                     primary_zones += 1
                 elif rank and rank >= 2:

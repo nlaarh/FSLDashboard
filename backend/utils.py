@@ -95,25 +95,23 @@ def totally_satisfied_pct(rows, field):
 
 
 def load_ai_settings():
-    """Load AI provider/key/model. Priority: env var (stable, survives deploys) > DB override.
+    """Load AI provider/key/model from env vars + DB config (non-sensitive only).
     Returns (provider, api_key, model). api_key is empty string if unconfigured.
     """
     import os
-    # Env var is authoritative — set OPENAI_API_KEY in Azure App Settings and it persists forever.
-    env_key = os.environ.get('OPENAI_API_KEY', '')
-    env_model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
-    # DB can override env (Admin → AI Assistant panel), but only if explicitly configured.
     try:
-        import database
-        cb = database.get_setting('chatbot') or {}
-        db_key = cb.get('api_key', '')
-        if db_key:
-            return cb.get('provider', 'openai'), db_key, cb.get('primary_model', '') or env_model
+        from repositories import settings
+        cb = settings.get_setting('chatbot') or {}
     except Exception:
-        pass
-    if env_key:
-        return 'openai', env_key, env_model
-    return '', '', ''
+        cb = {}
+    provider = cb.get('provider', 'openai')
+    model = cb.get('primary_model', '') or os.environ.get('OPENAI_MODEL', 'gpt-4o')
+    if provider == 'anthropic':
+        api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    else:
+        provider = 'openai'
+        api_key = os.environ.get('OPENAI_API_KEY', '')
+    return provider, api_key, model
 
 
 def call_openai_simple(api_key, model, system_prompt, user_prompt, max_tokens=1024, temperature=0.2):

@@ -11,7 +11,6 @@ from pathlib import Path
 import requests as _requests
 from sf_client import get_auth, refresh_auth
 import optimizer_db
-import database
 from optimizer_parser import parse_run
 
 log = logging.getLogger('optimizer_sync')
@@ -404,7 +403,8 @@ def sync_tick(days: int = 30):
         finished_at = datetime.now(timezone.utc).isoformat()
         duration_ms = int((time.time() - start_ts) * 1000)
         try:
-            database.write_sync_audit(
+            from repositories import optimizer as _opt_repo
+            _opt_repo.write_sync_audit(
                 started_at=started_at, finished_at=finished_at, status=status,
                 runs_found=counts['found'], runs_inserted=counts['inserted'],
                 runs_skipped=counts['skipped'], runs_failed=counts['failed'],
@@ -503,7 +503,8 @@ def backfill(days: int = 30, max_runs: int = 500) -> dict:
     counts['duration_ms'] = int((time.time() - start_ts) * 1000)
     log.info(f"backfill: done — {counts}")
     try:
-        database.write_sync_audit(
+        from repositories import optimizer as _opt_repo
+        _opt_repo.write_sync_audit(
             started_at=started_at,
             finished_at=finished_at,
             status='backfill' if counts.get('failed', 0) == 0 else 'backfill_partial',

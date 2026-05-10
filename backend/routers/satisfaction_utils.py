@@ -202,7 +202,8 @@ def _build_zone_satisfaction(all_garages, matrix):
     zone_sat = {}
     rank_lookup = matrix.get('rank_lookup', {})
     by_parent = {}
-    for (parent_id, spotted_id), rank in rank_lookup.items():
+    for key, rank in rank_lookup.items():
+        parent_id, spotted_id = key.split('|', 1)
         if rank == 1:  # Primary garage
             by_parent[parent_id] = spotted_id
 

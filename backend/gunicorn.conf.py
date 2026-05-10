@@ -6,13 +6,12 @@ import os
 port = os.environ.get('PORT', '8000')
 bind = f"0.0.0.0:{port}"
 
-# Worker configuration — auto-scale based on CPU cores
-# Each UvicornWorker runs an async event loop + threadpool (40 threads default)
-# B1 (1 core): 3 workers = 120 concurrent slots
-# P2v2 (2 cores): 5 workers = 200 concurrent slots
-# P3v2 (4 cores): 9 workers = 360 concurrent slots
+# Worker configuration — capped to stay within Azure Postgres connection limit.
+# Each worker owns its own pg_pool (reader_max=10, writer_max=4).
+# Formula: (10 + 4) × 5 workers = 70 connections + background threads ≈ 75 total.
+# Azure Postgres Flexible Server limit is 96 — this leaves a 20-connection safety buffer.
 import multiprocessing
-workers = min(2 * multiprocessing.cpu_count() + 1, 9)
+workers = min(2 * multiprocessing.cpu_count() + 1, 5)
 worker_class = "uvicorn.workers.UvicornWorker"
 timeout = 120
 

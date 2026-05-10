@@ -16,8 +16,8 @@ log = logging.getLogger('garages_scorecard')
 
 def _bonus_for_pct(pct):
     """Return (bonus_per_sa, tier_label) — reads configurable tiers from SQLite."""
-    import database
-    return database.bonus_for_pct(pct)
+    from repositories import accounting
+    return accounting.bonus_for_pct(pct)
 
 
 _SCORECARD_SYSTEM = (
@@ -372,13 +372,13 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
     # Overall SA stats (all SAs combined)
     overall_sa_stats = _sa_stats(sas)
 
-    import database as _db
+    from repositories import accounting
     result = {
         'territory_id': territory_id,
         'start_date': start_date,
         'end_date': end_date,
         'garage_type': 'fleet' if _is_fleet else 'contractor',
-        'bonus_tiers': _db.get_bonus_tiers(),
+        'bonus_tiers': accounting.get_bonus_tiers(),
         'garage_summary': {
             'overall_pct': overall_pct,
             'response_time_pct': rt_pct,

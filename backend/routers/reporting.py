@@ -11,7 +11,6 @@ from typing import List
 from openpyxl.utils import get_column_letter
 
 import cache
-import database
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
@@ -245,7 +244,8 @@ def _compute_bulk_report(territory_ids: list, start_date: str, end_date: str) ->
         if is_fleet:
             bonus_tier, bonus_per_sa, total_bonus = 'N/A (Fleet)', 0, 0
         else:
-            bonus_per_sa, bonus_tier = database.bonus_for_pct(tech_pct)
+            from repositories import accounting
+            bonus_per_sa, bonus_tier = accounting.bonus_for_pct(tech_pct)
             total_bonus = bonus_per_sa * n_completed
 
         rows.append({

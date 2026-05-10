@@ -11,10 +11,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { clsx } from 'clsx'
 import {
-  Search, Radio, AlertTriangle, Clock, Star, RefreshCw,
+  Search, AlertTriangle, RefreshCw,
   Filter, Activity, Loader2, X, HelpCircle,
 } from 'lucide-react'
-import { fetchLiveDispatch, fetchWatchlistManual, followSA, unfollowSA } from '../api'
+import { fetchLiveDispatch } from '../api'
 import { KpiStrip, PhaseFunnel, DriverRow, FlagBadge, AgingBadge, StatusChip, SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
 import CheckpointTracker from './CheckpointTracker'
 import { DrillDown } from './CommandCenterUtils'
@@ -163,7 +163,7 @@ function SADrillDetail({ saNumber }) {
 }
 
 // ── Expandable table row ─────────────────────────────────────────────────────
-function ExpandableDriverRow({ driver, onDriverClick, isFollowed, onToggleFollow }) {
+function ExpandableDriverRow({ driver, onDriverClick }) {
 
   return (
     <div className={clsx(
@@ -172,7 +172,7 @@ function ExpandableDriverRow({ driver, onDriverClick, isFollowed, onToggleFollow
       !driver.flag && 'hover:bg-slate-800/60',
     )}>
       {/* Main row */}
-      <div className="grid grid-cols-[40px_1fr_2.5fr_36px] items-center gap-2 px-3 py-2">
+      <div className="grid grid-cols-[40px_1fr_2.5fr] items-center gap-2 px-3 py-2">
         {/* Avatar */}
         <div className="flex items-center justify-center">
           <div className={clsx(
@@ -204,20 +204,6 @@ function ExpandableDriverRow({ driver, onDriverClick, isFollowed, onToggleFollow
         <div className="px-1">
           <CheckpointTracker phases={driver.phases || []} isStuck={!!driver.flag} saInfo={{ work_type: driver.work_type, address: driver.address, description: driver.description }} />
         </div>
-
-        {/* Follow / unfollow star */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleFollow?.(driver) }}
-          title={isFollowed ? 'Remove from Watchlist' : 'Add to Watchlist'}
-          className={clsx(
-            'p-1.5 rounded-md transition-all flex-shrink-0',
-            isFollowed
-              ? 'text-amber-400 bg-amber-500/15 hover:bg-amber-500/25'
-              : 'text-slate-600 hover:text-amber-400 hover:bg-slate-800/60',
-          )}
-        >
-          <Star className={clsx('w-3.5 h-3.5', isFollowed && 'fill-amber-400')} />
-        </button>
       </div>
     </div>
   )
@@ -252,24 +238,6 @@ export default function LiveDispatchBoard() {
     const iv = setInterval(load, 60000)
     return () => clearInterval(iv)
   }, [])
-
-  // ── Manual watchlist follow state (shared across all dispatchers) ─────────
-  const [followedSAs, setFollowedSAs] = useState(new Set())
-
-  useEffect(() => {
-    fetchWatchlistManual().then(d => setFollowedSAs(new Set(d.followed || []))).catch(() => {})
-  }, [])
-
-  const toggleFollow = useCallback((driver) => {
-    const saNum = driver.sa_number
-    if (followedSAs.has(saNum)) {
-      unfollowSA(saNum).catch(() => {})
-      setFollowedSAs(prev => { const s = new Set(prev); s.delete(saNum); return s })
-    } else {
-      followSA(saNum, driver.sa_id || '').catch(() => {})
-      setFollowedSAs(prev => new Set(prev).add(saNum))
-    }
-  }, [followedSAs])
 
   // ── Countdown timer ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -482,17 +450,16 @@ export default function LiveDispatchBoard() {
         {/* ── Driver table ───────────────────────────────────────────── */}
         <div className="bg-slate-800/50 backdrop-blur border border-slate-700/50 rounded-xl overflow-visible">
           {/* Column headers */}
-          <div className="grid grid-cols-[40px_1fr_2.5fr_36px] items-center gap-2 px-3 py-2 border-b border-slate-700/50 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+          <div className="grid grid-cols-[40px_1fr_2.5fr] items-center gap-2 px-3 py-2 border-b border-slate-700/50 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
             <div />
             <div>Driver / SA</div>
             <div>Progress</div>
-            <div />
           </div>
 
           {/* Rows */}
           {filtered.length > 0 ? (
             filtered.map((driver, i) => (
-              <ExpandableDriverRow key={driver.sa_number || i} driver={driver} onDriverClick={setMapDriver} isFollowed={followedSAs.has(driver.sa_number)} onToggleFollow={toggleFollow} />
+              <ExpandableDriverRow key={driver.sa_number || i} driver={driver} onDriverClick={setMapDriver} />
             ))
           ) : (
             <div className="py-12 text-center">
@@ -560,10 +527,6 @@ export default function LiveDispatchBoard() {
               <div>
                 <h3 className="font-bold text-white mb-1">Driver Name → Map</h3>
                 <p className="text-slate-400">Click a <span className="text-blue-400">driver name</span> to see a mini map showing their GPS location vs. the customer, with distance and estimated drive time.</p>
-              </div>
-              <div>
-                <h3 className="font-bold text-white mb-1">★ Star — Add to Watchlist</h3>
-                <p className="text-slate-400"><span className="text-slate-200">☆ Outline star</span> = not on watchlist. Click to add. <span className="text-amber-400">★ Filled star</span> = on watchlist. Click to remove. Starred SAs appear on the SA Watchlist tab for all dispatchers. Stars auto-clear when the SA completes.</p>
               </div>
               <div>
                 <h3 className="font-bold text-white mb-1">Filters</h3>

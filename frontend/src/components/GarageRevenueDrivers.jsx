@@ -351,9 +351,12 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
             <span className="text-base">🔋</span>
             <span className="text-sm font-semibold text-white">Battery Revenue per Driver</span>
             <InfoTip text={"HOW THIS IS CALCULATED:\n\nFor each driver: sum of Total_Amount_Invoiced__c for Battery Jump Start WOs only.\n\nPIPELINE:\n  AssignedResource → SA (Completed, WorkType contains 'Battery')\n  → ParentRecordId → WOLI → WO → sum(Total_Amount_Invoiced__c)\n\nSame deduplication rule: same WO counted once per driver.\nSorted descending by battery revenue.\n\nWHY SEPARATE FROM TOW/LIGHT:\nBattery calls have a different rate and different billing profile. Mixing them with tow revenue distorts per-driver comparisons. This chart isolates battery-specific revenue contribution."} />
-            <span className="text-[10px] text-slate-500 ml-auto">
-              {battDrivers.length} drivers · {fmtRevFull(summary.total_battery_revenue ?? 0)} total
-            </span>
+            <div className="ml-auto flex items-center gap-4">
+              <span className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Top earners</span>
+              <span className="text-[10px] text-slate-500">
+                {battDrivers.length} drivers · {fmtRevFull(summary.total_battery_revenue ?? 0)} total
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-0.5">
@@ -382,14 +385,13 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
                 </div>
               ))}
             </div>
-            <div className="text-[11px] text-slate-500 space-y-2 pt-1">
-              <div className="font-semibold text-slate-400 text-[10px] uppercase tracking-wider mb-3">Top battery earners</div>
+            <div className="space-y-0.5">
               {battDrivers.slice(0, 5).map((d, i) => (
-                <div key={d.name} className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-600 w-4">{i + 1}.</span>
-                  <span className="text-slate-300 flex-1 truncate">{d.name}</span>
-                  <span className="text-amber-400 font-semibold">{fmtRevFull(d.battery_revenue)}</span>
-                  <span className="text-slate-600 text-[10px]">({d.battery_calls} calls)</span>
+                <div key={d.name} className="flex items-center gap-2 px-2 py-1">
+                  <span className="text-[10px] text-slate-600 w-4 shrink-0">{i + 1}.</span>
+                  <span className="text-slate-300 flex-1 truncate text-[11px]">{d.name}</span>
+                  <span className="text-amber-400 font-semibold text-[11px] text-right w-20 shrink-0">{fmtRevFull(d.battery_revenue)}</span>
+                  <span className="text-slate-600 text-[10px] text-right w-14 shrink-0">({d.battery_calls} calls)</span>
                 </div>
               ))}
             </div>

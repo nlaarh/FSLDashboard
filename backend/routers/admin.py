@@ -6,6 +6,8 @@ import users
 import cache
 from password_policy import password_policy_error
 from sf_client import get_stats as sf_stats
+from repositories import settings, activity, accounting
+from email_templates import welcome_email_url, password_changed_email_url
 import time
 
 router = APIRouter()
@@ -35,15 +37,13 @@ _DEFAULT_FEATURES = {
 
 def _load_settings():
     try:
-        import database
-        return database.get_all_settings()
+        return settings.get_all_settings()
     except Exception:
         return {}
 
-def _save_settings(settings: dict):
-    import database
-    for key, value in settings.items():
-        database.put_setting(key, value)
+def _save_settings(data: dict):
+    for key, value in data.items():
+        settings.put_setting(key, value)
 
 
 # ── Startup time (imported from main at wire-up, but we need our own for status) ──
@@ -137,7 +137,20 @@ def admin_create_user(request: Request, body: dict):
     if department not in valid_depts:
         raise HTTPException(status_code=400, detail=f"department must be one of: ers, finance, executive (or empty)")
     try:
-        return users.create_user(username, password, name, role, email=email, phone=phone, department=department)
+        result = users.create_user(username, password, name, role, email=email, phone=phone, department=department)
+        email = welcome_email_url(
+            username=username,
+            name=name,
+            email=email or "",
+            password=password,
+            role=role,
+            department=department,
+        )
+        result["welcome_email_url"] = email["url"]
+        result["email_subject"] = email["subject"]
+        result["email_body"] = email["body"]
+        result["email_to"] = email["to"]
+        return result
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -152,7 +165,7 @@ def admin_update_user(request: Request, username: str, body: dict):
         if password_error:
             raise HTTPException(status_code=400, detail=password_error)
     try:
-        return users.update_user(
+        result = users.update_user(
             username,
             name=body.get("name"),
             role=body.get("role"),
@@ -162,6 +175,18 @@ def admin_update_user(request: Request, username: str, body: dict):
             email=body.get("email"),
             phone=body.get("phone"),
         )
+        if password:
+            email = password_changed_email_url(
+                username=username,
+                name=result.get("name", username),
+                email=result.get("email", ""),
+                password=password,
+            )
+            result["password_changed_email_url"] = email["url"]
+            result["email_subject"] = email["subject"]
+            result["email_body"] = email["body"]
+            result["email_to"] = email["to"]
+        return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -205,39 +230,19 @@ def admin_seed_restore(request: Request):
 
 @router.post("/api/admin/users/restore-missing")
 def admin_restore_backup(request: Request):
-    """Restore only missing users from Postgres mirror (or encrypted file fallback).
-    Existing users are never touched — no duplicates possible."""
+    """Restore missing rows in Postgres core.* from the latest Azure Blob backup.
+    Uses ON CONFLICT DO NOTHING — never overwrites existing Postgres data."""
     _check_pin(request)
-    import user_backup, database as db
-    try:
-        backed_up = user_backup.load()
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    restored = 0
-    skipped = 0
-    with db.get_db() as conn:
-        for row in backed_up:
-            result = conn.execute(
-                """INSERT OR IGNORE INTO users
-                   (username, name, role, email, phone, password_hash, salt, active, created_at, department)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [row.get('username'), row.get('name'), row.get('role'),
-                 row.get('email', ''), row.get('phone', ''),
-                 row['password_hash'], row['salt'],
-                 row.get('active', 1), row.get('created_at'), row.get('department', '')]
-            )
-            if result.rowcount:
-                restored += 1
-            else:
-                skipped += 1
-
-    return {"ok": True, "restored": restored, "skipped": skipped, "total_in_backup": len(backed_up)}
+    import db_backup
+    ok = db_backup.restore_latest()
+    if not ok:
+        raise HTTPException(status_code=503, detail="No backup found or restore failed")
+    return {"ok": True, "source": "azure_blob"}
 
 
 @router.get("/api/admin/users/mirror-status")
 def admin_backup_info(request: Request):
-    """Show sync status of Postgres users mirror and file fallback."""
+    """Show sync status of Postgres core.users and file fallback."""
     _check_pin(request)
     import user_backup
     return user_backup.backup_info()
@@ -276,15 +281,9 @@ def admin_update_settings(request: Request, body: dict):
         settings['chatbot'] = {
             'enabled': cb.get('enabled', False),
             'provider': cb.get('provider', 'openai'),
-            'api_key': cb.get('api_key', ''),
             'primary_model': cb.get('primary_model', ''),
             'fallback_model': cb.get('fallback_model', ''),
         }
-    # Shared provider API keys (used by both chatbot and optimizer chat)
-    if 'anthropic_api_key' in body:
-        settings['anthropic_api_key'] = (body['anthropic_api_key'] or '').strip()
-    if 'openai_api_key' in body:
-        settings['openai_api_key'] = (body['openai_api_key'] or '').strip()
     # Optimizer chat has its own provider + model (keys shared with above)
     if 'optimizer_chat' in body:
         oc = body['optimizer_chat']
@@ -294,11 +293,6 @@ def admin_update_settings(request: Request, body: dict):
         }
     if 'help_video_url' in body:
         settings['help_video_url'] = (body['help_video_url'] or '').strip()
-    if 'google_maps' in body:
-        gm = body['google_maps']
-        settings['google_maps'] = {
-            'api_key': gm.get('api_key', ''),
-        }
     if 'accounting' in body:
         acct = body['accounting']
         settings['accounting'] = {
@@ -320,20 +314,18 @@ def admin_update_settings(request: Request, body: dict):
 def api_get_bonus_tiers(request: Request):
     """Get configurable bonus tiers for contractor garages."""
     _check_pin(request)
-    import database
-    return database.get_bonus_tiers()
+    return accounting.get_bonus_tiers()
 
 
 @router.put("/api/admin/bonus-tiers")
 def api_set_bonus_tiers(request: Request, body: list):
     """Replace bonus tiers. Body: [{min_pct, bonus_per_sa, label}, ...]"""
     _check_pin(request)
-    import database
     for t in body:
         if 'min_pct' not in t or 'bonus_per_sa' not in t:
             raise HTTPException(400, "Each tier needs min_pct and bonus_per_sa")
-    database.set_bonus_tiers(body)
-    return database.get_bonus_tiers()
+    accounting.set_bonus_tiers(body)
+    return accounting.get_bonus_tiers()
 
 
 # ── Accounting Rates ─────────────────────────────────────────────────────────
@@ -342,15 +334,13 @@ def api_set_bonus_tiers(request: Request, body: list):
 def api_get_accounting_rates(request: Request):
     """Get all accounting reference rates (included miles, audit thresholds)."""
     _check_pin(request)
-    import database
-    return database.get_accounting_rates()
+    return accounting.get_accounting_rates()
 
 
 @router.put("/api/admin/accounting-rates/{code}")
 def api_set_accounting_rate(request: Request, code: str, body: dict):
     """Update the value for a single accounting rate."""
     _check_pin(request)
-    import database
     if 'value' not in body:
         raise HTTPException(400, "body must include 'value'")
     try:
@@ -358,7 +348,7 @@ def api_set_accounting_rate(request: Request, code: str, body: dict):
     except (TypeError, ValueError):
         raise HTTPException(400, "'value' must be a number")
     try:
-        return database.set_accounting_rate(code, val)
+        return accounting.set_accounting_rate(code, val)
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -369,17 +359,15 @@ def api_set_accounting_rate(request: Request, code: str, body: dict):
 def api_get_activity_log(request: Request, limit: int = 100, user: str = None, action: str = None):
     """Get recent activity log entries."""
     _check_pin(request)
-    import database
-    return database.get_activity_log(limit=limit, user=user, action=action)
+    return activity.get_activity_log(limit=limit, user=user, action=action)
 
 
 @router.delete("/api/admin/activity-log")
 def api_clear_activity_log(request: Request):
     """Clear all activity log entries."""
     _check_pin(request)
-    import database
-    with database.get_db() as conn:
-        count = conn.execute("DELETE FROM activity_log").rowcount
+    from repositories import activity as _activity_repo
+    count = _activity_repo.clear_activity_log()
     return {"cleared": count}
 
 
@@ -387,5 +375,4 @@ def api_clear_activity_log(request: Request):
 def api_get_activity_stats(request: Request):
     """Get activity log summary stats."""
     _check_pin(request)
-    import database
-    return database.get_activity_stats()
+    return activity.get_activity_stats()

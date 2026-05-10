@@ -1,11 +1,11 @@
-"""Automatic SQLite backup to Azure Blob Storage.
+"""Automatic Postgres core.* backup to Azure Blob Storage.
 
 Exports critical tables (users, settings, config — NOT cache/logs) as JSON
 to the same container used by optimizer_blob_sync, under db-backups/.
 
 Schedule: every 6 hours. Keeps last 7 backups.
 
-Restore: call restore_latest() at startup if SQLite is empty/fresh.
+Restore: call restore_latest() to recover Postgres core.* from the latest blob.
 """
 
 import json
@@ -14,8 +14,6 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-
-import database
 
 log = logging.getLogger('db_backup')
 
@@ -46,17 +44,19 @@ def _container():
 # ── Export / import ───────────────────────────────────────────────────────────
 
 def _export_tables() -> dict:
-    """Read all critical tables from SQLite and return as a dict."""
-    data = {'_version': 1, '_exported_at': datetime.now(timezone.utc).isoformat()}
-    with database.get_db() as conn:
-        conn.row_factory = None  # use default Row
+    """Read all critical tables from Postgres core.* and return as a dict."""
+    import pg_pool
+    data = {'_version': 2, '_exported_at': datetime.now(timezone.utc).isoformat()}
+    with pg_pool.reader() as conn:
+        conn.execute("SET search_path = core, public")
         for table in _TABLES:
             try:
-                cursor = conn.execute(f'SELECT * FROM "{table}"')
-                cols = [d[0] for d in cursor.description]
-                rows = cursor.fetchall()
-                data[table] = [dict(zip(cols, row)) for row in rows]
-                log.debug(f"Exported {table}: {len(rows)} rows")
+                with conn.cursor() as cur:
+                    cur.execute(f'SELECT * FROM "{table}"')
+                    cols = [d[0] for d in cur.description]
+                    rows = cur.fetchall()
+                    data[table] = [dict(zip(cols, row)) for row in rows]
+                    log.debug(f"Exported {table}: {len(rows)} rows")
             except Exception as e:
                 log.warning(f"Could not export {table}: {e}")
                 data[table] = []
@@ -64,31 +64,35 @@ def _export_tables() -> dict:
 
 
 def _import_tables(data: dict):
-    """Write backed-up data into SQLite (INSERT OR IGNORE — never overwrites existing)."""
+    """Write backed-up data into Postgres core.* (ON CONFLICT DO NOTHING — never overwrites existing)."""
+    import pg_pool
     restored = {}
-    with database.get_db() as conn:
+    with pg_pool.writer() as conn:
+        conn.execute("SET search_path = core, public")
         for table in _TABLES:
             rows = data.get(table, [])
             if not rows:
                 continue
             try:
                 cols = list(rows[0].keys())
-                placeholders = ','.join(['?'] * len(cols))
-                col_names = ','.join(f'"{c}"' for c in cols)
-                conn.executemany(
-                    f'INSERT OR IGNORE INTO "{table}" ({col_names}) VALUES ({placeholders})',
-                    [tuple(r[c] for c in cols) for r in rows]
-                )
+                placeholders = ', '.join(['%s'] * len(cols))
+                col_names = ', '.join(f'"{c}"' for c in cols)
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        f'INSERT INTO "{table}" ({col_names}) VALUES ({placeholders}) ON CONFLICT DO NOTHING',
+                        [tuple(r.get(c) for c in cols) for r in rows],
+                    )
                 restored[table] = len(rows)
             except Exception as e:
                 log.warning(f"Could not restore {table}: {e}")
+        conn.commit()
     log.info(f"Restored from backup: {restored}")
 
 
 # ── Backup / restore ──────────────────────────────────────────────────────────
 
 def backup_now() -> str:
-    """Export SQLite critical tables and upload to Azure Blob. Returns blob name."""
+    """Export Postgres core.* critical tables and upload to Azure Blob. Returns blob name."""
     data = _export_tables()
     ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     blob_name = f"{_FOLDER}/fslapp_{ts}.json"
@@ -116,7 +120,7 @@ def _prune_old_backups():
 
 
 def restore_latest() -> bool:
-    """Download the most recent backup and import into SQLite. Returns True if restored."""
+    """Download the most recent backup and import into Postgres core.*. Returns True if restored."""
     if not _CONN:
         log.warning("AZ_OPT_CONNECTION_STRING not set — cannot restore backup")
         return False

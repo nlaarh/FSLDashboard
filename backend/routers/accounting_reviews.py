@@ -3,7 +3,7 @@
 import os
 from fastapi import APIRouter, Query, Request, HTTPException
 from pydantic import BaseModel
-import database
+from repositories import accounting
 import users
 from routers.auth import _verify_cookie
 
@@ -44,7 +44,7 @@ def api_woa_review_statuses(ids: str = Query('', description="Comma-separated WO
     if not ids:
         return {}
     id_list = [i.strip() for i in ids.split(',') if i.strip()][:500]
-    return database.get_woa_reviews_batch(id_list)
+    return accounting.get_woa_reviews_batch(id_list)
 
 
 @router.post("/api/accounting/wo-adjustments/{woa_id}/review")
@@ -55,4 +55,4 @@ def api_set_woa_review(woa_id: str, payload: ReviewPayload, request: Request):
     if status not in valid:
         raise HTTPException(status_code=400, detail=f"status must be one of {valid}")
     reviewer = _get_reviewer(request)
-    return database.set_woa_review(woa_id, status, payload.note, reviewer)
+    return accounting.set_woa_review(woa_id, status, payload.note, reviewer)
