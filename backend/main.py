@@ -84,10 +84,10 @@ async def auth_middleware(request: Request, call_next):
     # Local dev: no auth needed
     if os.environ.get("WEBSITE_SITE_NAME") is None:
         return await call_next(request)
-    # Not authenticated → redirect to login
+    # Not authenticated — API calls get 401; page requests get the SPA so React renders <Landing />
     if path.startswith("/api/"):
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-    return RedirectResponse("/login")
+    return await call_next(request)
 
 
 @app.middleware("http")
