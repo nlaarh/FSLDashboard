@@ -4,7 +4,7 @@
  * SA Watchlist — 2 sub-tabs:
  * 1. Operational Watchlist — flag-based alerts (PTA at risk, not assigned, not closed, priority late)
  * 2. Manual Dispatch SAs — progress-tracker rows (reassigned, rejected, thrashed)
- * Auto-refreshes every 60 seconds.
+ * Auto-refreshes every 30 seconds.
  */
 
 import { useState, useEffect, useRef, useMemo } from 'react'
@@ -348,7 +348,7 @@ export default function SAWatchlist() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [countdown, setCountdown] = useState(60)
+  const [countdown, setCountdown] = useState(30)
   const [mapDriver, setMapDriver] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [activeTab, setActiveTab] = useState('alerts')
@@ -358,12 +358,12 @@ export default function SAWatchlist() {
   useEffect(() => {
     const load = () => {
       fetchWatchlist()
-        .then(d => { setData(d); setCountdown(60); setError(null) })
+        .then(d => { setData(d); setCountdown(30); setError(null) })
         .catch(e => setError(e.message))
         .finally(() => setLoading(false))
     }
     load()
-    const iv = setInterval(load, 60000)
+    const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
   }, [])
 
@@ -664,7 +664,7 @@ export default function SAWatchlist() {
                 <h3 className="font-bold text-white mb-1">What are Operational Alerts?</h3>
                 <p className="text-slate-400">
                   SAs that match one of 6 flag conditions indicating dispatcher intervention may be needed.
-                  The system evaluates all open SAs every 60 seconds and flags those that meet criteria.
+                  The system evaluates all open SAs every 30 seconds and flags those that meet criteria.
                 </p>
               </div>
               <div>

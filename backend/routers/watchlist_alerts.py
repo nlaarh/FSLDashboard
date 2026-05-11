@@ -104,7 +104,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                     pass
 
         # ── Flag 2: Call Not Assigned (Facility starts with '000') ──
-        if not is_drop_off:
+        if not is_drop_off and status not in ('En Route', 'On Location'):
             facility_name = (sa.get('AAA_ERS_Account_Facility__r') or {}).get('Name', '')
             if facility_name.startswith('000'):
                 flags_hit.append('Call Not Assigned')
@@ -128,7 +128,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                     flags_hit.append('Call Not Closed')
 
         # ── Flag 6: High Priority Call Late ──
-        if not is_drop_off:
+        if not is_drop_off and status not in ('En Route', 'On Location'):
             priority = (sa.get('WO_Priority_Code__c') or '').strip()
             if priority in _HIGH_PRIORITY_CODES:
                 created = _parse_dt(sa.get('CreatedDate'))

@@ -23,7 +23,7 @@ router = APIRouter()
 log = logging.getLogger('watchlist')
 
 CACHE_KEY = 'dispatch_watchlist'
-CACHE_TTL = 60
+CACHE_TTL = 30
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
