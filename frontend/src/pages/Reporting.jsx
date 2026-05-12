@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { FileText, Download, ChevronUp, ChevronDown, Loader2, BarChart3, Search, CheckSquare, Square } from 'lucide-react'
 import { fetchGarages, fetchReportSummary, exportReportSummary } from '../api'
 import { getMonth } from '../utils/dateHelpers'
+import UserAdoptionReport from '../components/UserAdoptionReport'
+import DispatchScoreTab from '../components/DispatchScoreTab'
 
 const ALL_METRICS = [
   // Volume
@@ -83,6 +85,19 @@ function Check({ checked, onChange, label }) {
 }
 
 export default function Reporting() {
+  const [role, setRole] = useState('')
+  const [activeTab, setActiveTab] = useState('garage')
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setRole(d?.role || ''))
+      .catch(() => {})
+  }, [])
+
+  const canViewAdoption = ['superadmin', 'admin', 'executive'].includes(role)
+  const canViewDispatchScore = ['superadmin', 'admin', 'executive'].includes(role)
+
   // ── Date range ─────────────────────────────────────────────────────────────
   const thisMonth = getMonth(0)
   const [startDate, setStartDate] = useState(thisMonth.start)
@@ -191,6 +206,44 @@ export default function Reporting() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2 border-b border-slate-800">
+        <button
+          onClick={() => setActiveTab('garage')}
+          className={`px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'garage'
+              ? 'border-brand-500 text-brand-300'
+              : 'border-transparent text-slate-500 hover:text-slate-300'
+          }`}>
+          Garage Performance
+        </button>
+        {canViewAdoption && (
+          <button
+            onClick={() => setActiveTab('adoption')}
+            className={`px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === 'adoption'
+                ? 'border-brand-500 text-brand-300'
+                : 'border-transparent text-slate-500 hover:text-slate-300'
+            }`}>
+            User Adoption
+          </button>
+        )}
+        {canViewDispatchScore && (
+          <button
+            onClick={() => setActiveTab('dispatch')}
+            className={`px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === 'dispatch'
+                ? 'border-brand-500 text-brand-300'
+                : 'border-transparent text-slate-500 hover:text-slate-300'
+            }`}>
+            Dispatcher Scorecard
+          </button>
+        )}
+      </div>
+
+      {activeTab === 'adoption' && canViewAdoption && <UserAdoptionReport />}
+      {activeTab === 'dispatch' && canViewDispatchScore && <DispatchScoreTab />}
+
+      {activeTab === 'garage' && (<>
 
       {/* ── Three-column filter bar ──────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4">
@@ -366,6 +419,7 @@ export default function Reporting() {
           </div>
         </div>
       )}
+      </>)}
     </div>
   )
 }
