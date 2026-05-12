@@ -110,8 +110,8 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
         <td style="border:1px solid #ccc;padding:4px 8px">${a.city || '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px">${a.work_type || '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px;font-family:monospace;font-size:10px">${a.work_type_id || '—'}</td>
-        <td style="border:1px solid #ccc;padding:4px 8px">${a.kmi_case_number ? `${a.kmi_case_number} (${a.kmi_case_status || '—'})` : '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px">${a.flag}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.kmi_case_number ? `${a.kmi_case_number} (${a.kmi_case_status || '—'})` : '—'}</td>
       </tr>`
     ).join('')
 
@@ -130,8 +130,8 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
             <th style="border:1px solid #ccc;padding:4px 8px">City</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Work Type</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Work Type ID</th>
-            <th style="border:1px solid #ccc;padding:4px 8px">KMI Case</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Flag</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">KMI Case</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -185,24 +185,23 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
 
       {/* Table header */}
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-xs table-fixed">
           <thead>
             <tr className="border-b border-slate-700/50 text-[10px] text-slate-500 uppercase tracking-wider">
               {[
-                ['wo_number', 'Work Order'],
-                ['sa_number', 'Appointment #'],
-                ['priority_code', 'Priority'],
-                ['gantt_label', 'Gantt Label'],
-                ['pta_delta_min', 'PTA Delta'],
-                ['current_wait', 'Current Wait'],
-                ['territory', 'Territory'],
-                ['city', 'City'],
-                ['work_type', 'Work Type'],
-                ['kmi_case_number', 'KMI Case'],
-                ['flag', 'Flag'],
-              ].map(([key, label]) => (
+                ['wo_number',      'Work Order',  'w-[88px]'],
+                ['sa_number',      'Appt #',      'w-[96px]'],
+                ['priority_code',  'Pri',         'w-[42px]'],
+                ['gantt_label',    'Gantt Label', 'w-[110px]'],
+                ['pta_delta_min',  'PTA Delta',   'w-[72px]'],
+                ['current_wait',   'Wait',        'w-[62px]'],
+                ['territory',      'Territory',   'w-[140px]'],
+                ['city',           'City',        'w-[78px]'],
+                ['work_type',      'Work Type',   'w-[86px]'],
+                ['flag',           'Flag',        'w-[172px]'],
+              ].map(([key, label, width]) => (
                 <th key={key}
-                  className="px-3 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
+                  className={clsx('px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none', width)}
                   onClick={() => handleSort(key)}>
                   <span className="inline-flex items-center gap-0.5">
                     {label}
@@ -213,7 +212,17 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   </span>
                 </th>
               ))}
-              <th className="px-2 py-2 text-center font-semibold">Assist</th>
+              <th className="w-[38px] px-1 py-2 text-center font-semibold">Assist</th>
+              <th className="w-[122px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
+                onClick={() => handleSort('kmi_case_number')}>
+                <span className="inline-flex items-center gap-0.5">
+                  KMI Case
+                  {sortCol === 'kmi_case_number' && (sortDir === 'asc'
+                    ? <ChevronUp className="w-3 h-3 text-blue-400" />
+                    : <ChevronDown className="w-3 h-3 text-blue-400" />
+                  )}
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -222,7 +231,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 id={`alert-row-${alert.sa_id}`}
                 className="border-b border-slate-800/40 hover:bg-slate-800/60 transition-colors">
                 {/* Work Order */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   {alert.wo_number ? (
                     <a href={sfLink(alert.wo_id)} target="_blank" rel="noopener noreferrer"
                       className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
@@ -232,7 +241,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* SA Number — with timeline hover */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1">
                     <SAWithTimeline number={alert.sa_number} driver={alert} />
                     <a href={sfLink(alert.sa_id)} target="_blank" rel="noopener noreferrer"
@@ -242,17 +251,17 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   </div>
                 </td>
                 {/* Priority */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   {alert.priority_code ? (
                     <span className="font-bold text-white">{alert.priority_code}</span>
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Gantt Label */}
-                <td className="px-3 py-2 text-slate-300 max-w-[140px] truncate" title={alert.gantt_label}>
+                <td className="px-2 py-1.5 text-slate-300 max-w-[110px] truncate" title={alert.gantt_label}>
                   {alert.gantt_label || '—'}
                 </td>
                 {/* PTA Delta */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   {alert.pta_delta_min != null ? (
                     <span className={clsx('font-mono font-bold',
                       alert.pta_delta_min > 0 ? 'text-red-400' : 'text-emerald-400')}>
@@ -261,17 +270,17 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Current Wait */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   {alert.current_wait != null ? (
                     <span className="font-mono text-slate-300">{Math.round(alert.current_wait)} min</span>
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Territory */}
-                <td className="px-3 py-2 text-slate-300 max-w-[160px] truncate" title={alert.territory}>
+                <td className="px-2 py-1.5 text-slate-300 max-w-[140px] truncate" title={alert.territory}>
                   {alert.territory || '—'}
                 </td>
                 {/* City */}
-                <td className="px-3 py-2 text-slate-300">
+                <td className="px-2 py-1.5 text-slate-300">
                   <div className="flex items-center gap-1">
                     {alert.city || '—'}
                     {alert.latitude && alert.longitude && (
@@ -280,28 +289,11 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   </div>
                 </td>
                 {/* Work Type */}
-                <td className="px-3 py-2 text-slate-300 text-xs">
+                <td className="px-2 py-1.5 text-slate-300 text-xs">
                   {alert.work_type || '—'}
                 </td>
-                {/* KMI Case */}
-                <td className="px-3 py-2">
-                  {alert.kmi_case_number ? (
-                    <div className="space-y-0.5">
-                      <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
-                        {alert.kmi_case_number}
-                        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                      </a>
-                      <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border',
-                        KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
-                        {alert.kmi_case_status || '—'}
-                      </span>
-                    </div>
-                  ) : <span className="text-slate-600">—</span>}
-                </td>
                 {/* Flag */}
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <div>
                     <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap',
                       FLAG_COLORS[alert.flag] || 'bg-slate-700/50 text-slate-300 border-slate-600/50')}>
@@ -334,7 +326,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   </div>
                 </td>
                 {/* Dispatch Assist */}
-                <td className="px-2 py-2 text-center">
+                <td className="px-1 py-1.5 text-center">
                   <button
                     onClick={() => {
                       setAssistSaId(alert.sa_id)
@@ -355,6 +347,23 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   >
                     <Navigation className="w-3.5 h-3.5" />
                   </button>
+                </td>
+                {/* KMI Case */}
+                <td className="px-2 py-1.5">
+                  {alert.kmi_case_number ? (
+                    <div className="space-y-0.5">
+                      <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
+                        {alert.kmi_case_number}
+                        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                      </a>
+                      <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border',
+                        KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
+                        {alert.kmi_case_status || '—'}
+                      </span>
+                    </div>
+                  ) : <span className="text-slate-600">—</span>}
                 </td>
               </tr>
             ))}
