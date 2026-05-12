@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { Loader2, DollarSign, Clock, BarChart2, Mail, Download, FileText, ArrowUp, ArrowDown } from 'lucide-react'
+import { Loader2, DollarSign, Clock, BarChart2, Mail, Download, FileText, ArrowUp, ArrowDown, ExternalLink } from 'lucide-react'
 import { clsx } from 'clsx'
 import { fetchDriverRevenue, exportDriverRevenue, emailDriverRevenue } from '../api'
 import { InfoTip } from './CommandCenterUtils'
@@ -72,6 +72,7 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
   const [emailSending, setEmailSending] = useState(false)
   const [emailSent, setEmailSent]     = useState(false)
   const [exporting, setExporting]     = useState(false)
+  const [mcExpanded, setMcExpanded]   = useState(null)
 
   useEffect(() => {
     if (!startDate || !endDate) return
@@ -105,22 +106,26 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
     </div>
   )
 
+  // Total revenue per driver = AAA billed (tow + battery) + member collected
+  const driverTotal = (d) => (d.revenue || 0) + (d.battery_revenue || 0) + (d.member_collected || 0)
+  const driverRph   = (d) => d.hours > 0 ? Math.round(driverTotal(d) / d.hours * 10) / 10 : 0
+
   // Revenue per Driver: top 20, direction toggleable
   const sortedByRev = sortRevDir === 'desc'
     ? drivers.slice(0, 20)
-    : [...drivers].sort((a, b) => a.revenue - b.revenue).slice(0, 20)
-  const maxRev = Math.max(...sortedByRev.map(d => d.revenue), 1)
+    : [...drivers].sort((a, b) => driverTotal(a) - driverTotal(b)).slice(0, 20)
+  const maxRev = Math.max(...sortedByRev.map(d => driverTotal(d)), 1)
 
-  // Revenue per Hour: sorted by rev/hour, direction toggleable
+  // Revenue per Hour: sorted by rev/hour (total), direction toggleable
   const withHours = [...drivers.filter(d => d.hours > 0)]
-    .sort((a, b) => sortRphDir === 'desc' ? b.rev_per_hour - a.rev_per_hour : a.rev_per_hour - b.rev_per_hour)
-  const maxRph = Math.max(...withHours.map(d => d.rev_per_hour), 1)
-
-  // Battery chart: all drivers with battery calls, sorted by battery revenue desc
-  const battDrivers = [...drivers.filter(d => d.battery_calls > 0)].sort((a, b) => b.battery_revenue - a.battery_revenue).slice(0, 20)
-  const maxBattRev  = Math.max(...battDrivers.map(d => d.battery_revenue), 1)
+    .sort((a, b) => sortRphDir === 'desc' ? driverRph(b) - driverRph(a) : driverRph(a) - driverRph(b))
+  const maxRph = Math.max(...withHours.map(d => driverRph(d)), 1)
 
   const toggle = (name) => setExpanded(e => e === name ? null : name)
+
+  // Member collected — only drivers with tow revenue (only tow WOs have over-mileage charges)
+  const driversWithMC = drivers.filter(d => (d.member_collected || 0) > 0)
+    .sort((a, b) => b.member_collected - a.member_collected)
 
   return (
     <div className="space-y-6">
@@ -152,18 +157,20 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
           )}
         </div>
         <button onClick={() => {
-          const allDrivers = [...drivers].sort((a, b) => b.revenue - a.revenue)
+          const allDrivers = [...drivers].sort((a, b) => ((b.revenue||0)+(b.battery_revenue||0)+(b.member_collected||0)) - ((a.revenue||0)+(a.battery_revenue||0)+(a.member_collected||0)))
           const fmt = v => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          const dRows = allDrivers.map(d =>
-            `<tr><td>${d.name}</td><td>${d.calls}</td>` +
-            `<td style="text-align:right;color:#16a34a">$${fmt(d.revenue)}</td>` +
-            `<td style="text-align:right;color:#b45309">$${fmt(d.battery_revenue||0)}</td>` +
-            `<td style="text-align:right">${d.hours > 0 ? d.hours + 'h' : '—'}</td>` +
-            `<td style="text-align:right">${d.rev_per_hour > 0 ? '$' + d.rev_per_hour + '/h' : '—'}</td></tr>`
-          ).join('')
-          const bRows = [...drivers].filter(d => d.battery_calls > 0)
-            .sort((a, b) => b.battery_revenue - a.battery_revenue)
-            .map(d => `<tr><td>${d.name}</td><td style="text-align:right">${d.battery_calls}</td><td style="text-align:right;color:#b45309">$${fmt(d.battery_revenue||0)}</td></tr>`).join('')
+          const dRows = allDrivers.map(d => {
+            const tot = (d.revenue||0)+(d.battery_revenue||0)+(d.member_collected||0)
+            const rph = d.hours > 0 ? Math.round(tot / d.hours * 10) / 10 : 0
+            return `<tr><td>${d.name}</td><td>${d.calls}</td>` +
+              `<td style="text-align:right;color:#16a34a">$${fmt((d.revenue||0)+(d.battery_revenue||0))}</td>` +
+              `<td style="text-align:right;color:#0284c7">$${fmt(d.member_collected||0)}</td>` +
+              `<td style="text-align:right;font-weight:700">$${fmt(tot)}</td>` +
+              `<td style="text-align:right">${d.hours > 0 ? d.hours + 'h' : '—'}</td>` +
+              `<td style="text-align:right">${rph > 0 ? '$' + rph + '/h' : '—'}</td></tr>`
+          }).join('')
+          const totalAAA = (summary.total_attributed||0)+(summary.total_battery_revenue||0)
+          const totalMC  = summary.total_member_collected||0
           const w = window.open('', '_blank')
           w.document.write(`<!DOCTYPE html><html><head><title>${garageName} Driver Revenue</title>
 <style>
@@ -184,15 +191,15 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
 <h2>${garageName} — Driver Revenue Report</h2>
 <p class="sub">${startDate} to ${endDate}</p>
 <div class="cards">
-  <div class="card"><div class="clabel">Tow/Light Revenue</div><div class="cval" style="color:#16a34a">$${fmt(summary.total_attributed||0)}</div></div>
-  <div class="card"><div class="clabel">Battery Revenue</div><div class="cval" style="color:#b45309">$${fmt(summary.total_battery_revenue||0)}</div></div>
+  <div class="card"><div class="clabel">AAA Revenue</div><div class="cval" style="color:#16a34a">$${fmt(totalAAA)}</div></div>
+  <div class="card"><div class="clabel">Member Collected</div><div class="cval" style="color:#0284c7">$${fmt(totalMC)}</div></div>
+  <div class="card"><div class="clabel">Total Revenue</div><div class="cval">$${fmt(totalAAA+totalMC)}</div></div>
   <div class="card"><div class="clabel">Active Drivers</div><div class="cval">${summary.total_drivers}</div></div>
   <div class="card"><div class="clabel">Total Calls</div><div class="cval">${(summary.total_calls||0).toLocaleString()}</div></div>
 </div>
 <div class="sec">Revenue per Driver</div>
-<table><thead><tr><th>Driver</th><th>Calls</th><th style="text-align:right">Tow/Light Rev</th><th style="text-align:right">Battery Rev</th><th style="text-align:right">Hours</th><th style="text-align:right">Rev/Hour</th></tr></thead><tbody>${dRows}</tbody></table>
-${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><th>Driver</th><th style="text-align:right">Battery Calls</th><th style="text-align:right">Battery Revenue</th></tr></thead><tbody>${bRows}</tbody></table>` : ''}
-<p class="note">Revenue = SA → WOLI → WO → Total_Amount_Invoiced__c · Battery excluded from Tow/Light · Drop-Off SAs excluded from revenue</p>
+<table><thead><tr><th>Driver</th><th>Calls</th><th style="text-align:right">AAA Revenue</th><th style="text-align:right">Member Collected</th><th style="text-align:right">Total</th><th style="text-align:right">Hours</th><th style="text-align:right">Rev/Hour</th></tr></thead><tbody>${dRows}</tbody></table>
+<p class="note">Revenue = SA → WOLI → WO cost fields · Member Collected = over-mileage charges · Drop-Off SAs excluded</p>
 </body></html>`)
           w.document.close(); setTimeout(() => w.print(), 300)
         }} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg transition text-slate-300 bg-slate-800/60 hover:bg-slate-700/60 border-slate-700/40">
@@ -208,22 +215,30 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <div className="glass rounded-xl p-4 border border-slate-700/30">
           <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-            Tow/Light Revenue
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nSum of Total_Amount_Invoiced__c for WorkOrders where a driver completed a non-battery Pick-Up SA in the period.\n\nPIPELINE: SA → ParentRecordId → WorkOrderLineItem → WorkOrderId → all billing WOLIs → sum(Total_Amount_Invoiced__c)\n\nEXCLUDED from this figure:\n  • Tow Drop-Off SAs (revenue credited to Pick-Up only)\n  • Battery Jump Start SAs (shown separately in Battery Revenue card)\n\nWHY THIS ≠ INVOICE TOTAL:\nInvoices include calls billed in this period but completed before it (~7-day billing lag) and cancelled-but-billed calls. No scale factor applied."} />
+            AAA Revenue
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nSum of billing WOLI cost fields (Basic + Plus + Premier + RV + Other) for all completed non-Drop-Off SAs — tow/light AND battery combined.\n\nPIPELINE: SA → ParentRecordId → WOLI → WO → sum cost fields\n\nDoes NOT include member-collected over-mileage charges (shown separately).\n\nWHY THIS ≠ INVOICE TOTAL: Invoices include calls billed in this period but completed before it (~7-day billing lag). No scale factor applied."} />
           </div>
-          <div className="text-2xl font-black text-emerald-400">{fmtRevFull(summary.total_attributed)}</div>
-          <div className="text-[10px] text-slate-600 mt-0.5">Excl. Battery · billing WOLIs</div>
+          <div className="text-2xl font-black text-emerald-400">{fmtRevFull((summary.total_attributed || 0) + (summary.total_battery_revenue || 0))}</div>
+          <div className="text-[10px] text-slate-600 mt-0.5">Tow + Battery · AAA billed</div>
         </div>
         <div className="glass rounded-xl p-4 border border-slate-700/30">
           <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-            Battery Revenue
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nSame pipeline as Tow/Light Revenue but for Battery Jump Start SAs only.\n\nPIPELINE: Battery SA → ParentRecordId → WOLI → WO → sum(Total_Amount_Invoiced__c)\n\nBattery calls are separated from tow/light revenue because they have a different billing profile and volume pattern. See the Battery Revenue per Driver chart below.\n\nNOTE: Battery Drop-Off SAs (if any) are excluded the same way as Tow Drop-Off."} />
+            Member Collected
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nEst_Tow_Over_Mileage_Cost_to_Member1__c on the WorkOrder — the estimated cost billed directly to the member for tow over-mileage (distance beyond covered miles).\n\nNOTE: Only tow WorkOrders have this field. Battery, Lockout, Tire, and other call types do not generate member-collected charges."} />
           </div>
-          <div className="text-2xl font-black text-amber-400">{fmtRevFull(summary.total_battery_revenue ?? 0)}</div>
-          <div className="text-[10px] text-slate-600 mt-0.5">Battery Jump Start only</div>
+          <div className="text-2xl font-black text-sky-400">{fmtRevFull(summary.total_member_collected ?? 0)}</div>
+          <div className="text-[10px] text-slate-600 mt-0.5">Member over-mileage</div>
+        </div>
+        <div className="glass rounded-xl p-4 border border-slate-700/30">
+          <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+            Total Revenue
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nTotal Revenue = AAA Revenue (tow + battery) + Member Collected (over-mileage).\n\nThis is the full economic value generated by drivers in this period regardless of who pays (AAA or member)."} />
+          </div>
+          <div className="text-2xl font-black text-white">{fmtRevFull((summary.total_attributed || 0) + (summary.total_battery_revenue || 0) + (summary.total_member_collected || 0))}</div>
+          <div className="text-[10px] text-slate-600 mt-0.5">AAA + Member Collected</div>
         </div>
         <div className="glass rounded-xl p-4 border border-slate-700/30">
           <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
@@ -236,7 +251,7 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
         <div className="glass rounded-xl p-4 border border-slate-700/30">
           <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
             Total Calls
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nCount of all completed ServiceAppointments (SA) assigned to this garage's drivers in the selected period — all call types included.\n\nIncludes: Tow Pick-Up, Tow Drop-Off, Battery Jump Start, Tire Change, Lock-Out, Fuel Delivery, etc.\n\nTow Drop-Off is INCLUDED in this count (total activity) but EXCLUDED from all revenue figures. Battery is counted here and shown in its own revenue chart.\n\nSOURCE: AssignedResource → ServiceAppointment WHERE Status = 'Completed' AND CreatedDate IN period"} />
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nCount of all completed ServiceAppointments (SA) assigned to this garage's drivers in the selected period — all call types included.\n\nIncludes: Tow Pick-Up, Tow Drop-Off, Battery Jump Start, Tire Change, Lock-Out, Fuel Delivery, etc.\n\nTow Drop-Off is INCLUDED in this count (total activity) but EXCLUDED from all revenue figures.\n\nSOURCE: AssignedResource → ServiceAppointment WHERE Status = 'Completed' AND CreatedDate IN period"} />
           </div>
           <div className="text-2xl font-black text-white">{summary.total_calls?.toLocaleString()}</div>
           <div className="text-[10px] text-slate-600 mt-0.5">All types incl. Drop-Off</div>
@@ -251,7 +266,7 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-emerald-400" />
             <span className="text-sm font-semibold text-white">Revenue per Driver</span>
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nFor each driver: sum of Total_Amount_Invoiced__c for Tow/Light call WOs only (Battery excluded — see chart below).\n\nPIPELINE:\n  AssignedResource → SA (Completed, non-Drop-Off, non-Battery)\n  → ParentRecordId → WOLI → WO → sum(Total_Amount_Invoiced__c)\n\nDeduplication: same WO counted once per driver.\nTop 20 by revenue. Sorted descending.\n\nBAR COLORS: Blue = top 5 · Amber = 6–15 · Grey = 16–20\n\nClick a bar to expand daily breakdown."} />
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nTotal Revenue per driver = AAA Revenue (tow + battery) + Member Collected (over-mileage).\n\nThis matches the Total column shown in the daily drill-down.\n\nPIPELINE:\n  AssignedResource → SA (Completed, non-Drop-Off)\n  → ParentRecordId → WOLI → WO → sum cost fields\n  + Est_Tow_Over_Mileage_Cost_to_Member1__c\n\nDeduplication: same WO counted once per driver.\nTop 20 by total revenue. Sorted descending.\n\nBAR COLORS: Blue = top 5 · Amber = 6–15 · Grey = 16–20\n\nClick a bar to expand daily breakdown."} />
             <button onClick={() => setSortRevDir(d => d === 'desc' ? 'asc' : 'desc')}
               title={sortRevDir === 'desc' ? 'Switch to lowest first' : 'Switch to highest first'}
               className="ml-1 p-0.5 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300 transition">
@@ -265,10 +280,10 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
                 <HBar
                   label={d.name}
                   subtitle={`${d.calls} calls`}
-                  value={d.revenue}
+                  value={driverTotal(d)}
                   maxValue={maxRev}
                   barClass={i < 5 ? 'bg-brand-500' : i < 15 ? 'bg-amber-500' : 'bg-slate-500'}
-                  labelRight={fmtRev(d.revenue)}
+                  labelRight={fmtRev(driverTotal(d))}
                   active={expanded === d.name}
                   onClick={() => toggle(d.name)}
                 />
@@ -295,7 +310,7 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
           <div className="flex items-center gap-2 mb-3">
             <Clock className="w-4 h-4 text-amber-400" />
             <span className="text-sm font-semibold text-white">Revenue per Hour</span>
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nRevenue per Hour = Tow/Light Revenue ÷ Hours Worked  (Battery excluded from revenue numerator)\n\nSORTED: Descending by Revenue per Hour\n\nHOW HOURS ARE MEASURED:\n  Source: AssetHistory (Salesforce) — field ERS_Driver__c on ERS Truck assets\n  Login  = NewValue written  · Logout = OldValue cleared\n  Sessions capped at 16 h (forgotten logout guard)\n  Open sessions (no logout) discarded\n  ~955 ERS Trucks queried in parallel batches of 200\n\nDRIVERS NOT SHOWN: zero tracked hours excluded (can't divide). Still appear in Revenue per Driver chart.\n\nCOLOR THRESHOLDS: Green ≥ $100/h · Amber $60–$99/h · Red < $60/h\n\nNOTE: Depends on drivers logging truck time in Salesforce FSL app."} />
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nRevenue per Hour = Total Revenue (tow + battery + member collected) ÷ Hours Worked\n\nSORTED: Descending by Revenue per Hour\n\nHOW HOURS ARE MEASURED:\n  Source: AssetHistory (Salesforce) — field ERS_Driver__c on ERS Truck assets\n  Login  = NewValue written  · Logout = OldValue cleared\n  Sessions capped at 16 h (forgotten logout guard)\n  Open sessions (no logout) discarded\n  ~955 ERS Trucks queried in parallel batches of 200\n\nDRIVERS NOT SHOWN: zero tracked hours excluded (can't divide). Still appear in Revenue per Driver chart.\n\nCOLOR THRESHOLDS: Green ≥ $100/h · Amber $60–$99/h · Red < $60/h\n\nNOTE: Depends on drivers logging truck time in Salesforce FSL app."} />
             <button onClick={() => setSortRphDir(d => d === 'desc' ? 'asc' : 'desc')}
               title={sortRphDir === 'desc' ? 'Switch to lowest first' : 'Switch to highest first'}
               className="ml-1 p-0.5 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300 transition">
@@ -318,10 +333,10 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
                 <HBar
                   label={d.name}
                   subtitle={`${d.shift_days}d / ${d.hours}h`}
-                  value={d.rev_per_hour}
+                  value={driverRph(d)}
                   maxValue={maxRph}
-                  barClass={rphColor(d.rev_per_hour)}
-                  labelRight={`$${d.rev_per_hour}/h`}
+                  barClass={rphColor(driverRph(d))}
+                  labelRight={`$${driverRph(d)}/h`}
                   active={expanded === d.name}
                   onClick={() => toggle(d.name)}
                 />
@@ -344,66 +359,136 @@ ${bRows ? `<div class="sec">Battery Revenue per Driver</div><table><thead><tr><t
         </div>
       </div>
 
-      {/* Battery Revenue per Driver chart */}
-      {battDrivers.length > 0 && (
-        <div className="glass rounded-xl border border-amber-700/20 p-4">
+      {/* Member Collected Revenue table */}
+      {driversWithMC.length > 0 && (
+        <div className="glass rounded-xl border border-sky-700/20 p-4">
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-base">🔋</span>
-            <span className="text-sm font-semibold text-white">Battery Revenue per Driver</span>
-            <InfoTip text={"HOW THIS IS CALCULATED:\n\nFor each driver: sum of Total_Amount_Invoiced__c for Battery Jump Start WOs only.\n\nPIPELINE:\n  AssignedResource → SA (Completed, WorkType contains 'Battery')\n  → ParentRecordId → WOLI → WO → sum(Total_Amount_Invoiced__c)\n\nSame deduplication rule: same WO counted once per driver.\nSorted descending by battery revenue.\n\nWHY SEPARATE FROM TOW/LIGHT:\nBattery calls have a different rate and different billing profile. Mixing them with tow revenue distorts per-driver comparisons. This chart isolates battery-specific revenue contribution."} />
-            <div className="ml-auto flex items-center gap-4">
-              <span className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Top earners</span>
-              <span className="text-[10px] text-slate-500">
-                {battDrivers.length} drivers · {fmtRevFull(summary.total_battery_revenue ?? 0)} total
-              </span>
-            </div>
+            <DollarSign className="w-4 h-4 text-sky-400" />
+            <span className="text-sm font-semibold text-white">Member Collected Revenue</span>
+            <InfoTip text={"HOW THIS IS CALCULATED:\n\nMember Collected = Est_Tow_Over_Mileage_Cost_to_Member1__c on the WorkOrder.\nThis is the estimated cost billed directly to the member for tow over-mileage (distance beyond covered miles).\n\nAAA Billed = sum of billing WOLI cost fields (Basic + Plus + Premier + RV + Other)\nTotal = AAA Billed + Member Collected\n\nNOTE: Only tow WorkOrders have an over-mileage member charge field. Battery, Lockout, Tire, and other call types do not have an equivalent field in Salesforce."} />
+            <span className="text-[10px] text-slate-500 ml-auto">
+              {driversWithMC.length} driver{driversWithMC.length !== 1 ? 's' : ''} with member charges
+            </span>
           </div>
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-0.5">
-              {battDrivers.map(d => (
-                <div key={d.name}>
-                  <HBar
-                    label={d.name}
-                    subtitle={`${d.battery_calls} battery call${d.battery_calls !== 1 ? 's' : ''}`}
-                    value={d.battery_revenue}
-                    maxValue={maxBattRev}
-                    barClass="bg-amber-500"
-                    labelRight={fmtRev(d.battery_revenue)}
-                    active={expanded === `batt_${d.name}`}
-                    onClick={() => setExpanded(e => e === `batt_${d.name}` ? null : `batt_${d.name}`)}
-                  />
-                  {expanded === `batt_${d.name}` && (
-                    <div className="mx-2 mb-2 mt-1 rounded-lg bg-slate-900/60 border border-slate-700/30 px-3">
-                      <DriverDrillDown
-                        garageId={garageId}
-                        driverName={d.name}
-                        startDate={startDate}
-                        endDate={endDate}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="space-y-0.5">
-              {battDrivers.slice(0, 5).map((d, i) => (
-                <div key={d.name} className="flex items-center gap-2 px-2 py-1">
-                  <span className="text-[10px] text-slate-600 w-4 shrink-0">{i + 1}.</span>
-                  <span className="text-slate-300 flex-1 truncate text-[11px]">{d.name}</span>
-                  <span className="text-amber-400 font-semibold text-[11px] text-right w-20 shrink-0">{fmtRevFull(d.battery_revenue)}</span>
-                  <span className="text-slate-600 text-[10px] text-right w-14 shrink-0">({d.battery_calls} calls)</span>
-                </div>
-              ))}
-            </div>
+          <div className="overflow-x-auto">
+            <table className="text-[11px] w-auto min-w-full">
+              <colgroup>
+                <col />
+                <col className="w-32" />
+                <col className="w-28" />
+                <col className="w-28" />
+                <col className="w-24" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-slate-700/40">
+                  <th className="text-left py-1.5 px-3 text-slate-500 font-medium">Driver</th>
+                  <th className="text-right py-1.5 px-3 text-slate-500 font-medium whitespace-nowrap">Calls w/ Member Charge</th>
+                  <th className="text-right py-1.5 px-3 text-emerald-600/80 font-medium whitespace-nowrap">AAA Billed (MC WOs)</th>
+                  <th className="text-right py-1.5 px-3 text-sky-500/80 font-medium whitespace-nowrap">Member Collected</th>
+                  <th className="text-right py-1.5 px-3 text-white font-medium whitespace-nowrap">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {driversWithMC.map(d => {
+                  const wos = d.member_wo_details ?? []
+                  const isOpen = mcExpanded === d.name
+                  const rowTotal = (d.member_aaa_billed ?? 0) + d.member_collected
+                  return (
+                    <>
+                      <tr
+                        key={d.name}
+                        className={clsx(
+                          'border-b border-slate-800/30 cursor-pointer select-none',
+                          isOpen ? 'bg-slate-800/40' : 'hover:bg-slate-800/20'
+                        )}
+                        onClick={() => setMcExpanded(isOpen ? null : d.name)}
+                      >
+                        <td className="py-1.5 px-3 text-slate-300">
+                          {wos.length > 0 && (
+                            <span className="mr-1 text-slate-500">{isOpen ? '▾' : '▸'}</span>
+                          )}
+                          {d.name}
+                        </td>
+                        <td className="py-1.5 px-3 text-right text-slate-400">{wos.length}</td>
+                        <td className="py-1.5 px-3 text-right text-emerald-400 font-medium whitespace-nowrap">{fmtRevFull(d.member_aaa_billed ?? 0)}</td>
+                        <td className="py-1.5 px-3 text-right text-sky-400 font-medium whitespace-nowrap">{fmtRevFull(d.member_collected)}</td>
+                        <td className="py-1.5 px-3 text-right text-white font-bold whitespace-nowrap">{fmtRevFull(rowTotal)}</td>
+                      </tr>
+                      {isOpen && wos.length > 0 && (
+                        <tr key={`${d.name}-wos`} className="bg-slate-900/60">
+                          <td colSpan={5} className="px-6 py-2">
+                            <table className="text-[10px] w-auto min-w-[480px]">
+                              <colgroup>
+                                <col className="w-32" />
+                                <col className="w-24" />
+                                <col className="w-24" />
+                                <col className="w-24" />
+                                <col className="w-14" />
+                              </colgroup>
+                              <thead>
+                                <tr className="border-b border-slate-700/30">
+                                  <th className="text-left py-1 px-2 text-slate-500">Work Order</th>
+                                  <th className="text-left py-1 px-2 text-slate-500">Date</th>
+                                  <th className="text-right py-1 px-2 text-emerald-600/70">AAA Billed</th>
+                                  <th className="text-right py-1 px-2 text-sky-500/70">Member Collected</th>
+                                  <th className="py-1 px-2" />
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {wos.map(w => (
+                                  <tr key={w.wo_id} className="border-b border-slate-800/20 hover:bg-slate-800/20">
+                                    <td className="py-1 px-2">
+                                      <a href={w.sf_url} target="_blank" rel="noreferrer"
+                                        className="text-blue-400 hover:text-blue-300 flex items-center gap-1 font-mono whitespace-nowrap"
+                                        onClick={e => e.stopPropagation()}>
+                                        {w.wo_number}
+                                        <ExternalLink size={9} />
+                                      </a>
+                                    </td>
+                                    <td className="py-1 px-2 text-slate-400 whitespace-nowrap">{w.date}</td>
+                                    <td className="py-1 px-2 text-right text-emerald-400 whitespace-nowrap">{fmtRevFull(w.aaa_billed ?? 0)}</td>
+                                    <td className="py-1 px-2 text-right text-sky-400 font-medium whitespace-nowrap">{fmtRevFull(w.amount)}</td>
+                                    <td className="py-1 px-2" />
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-700/50">
+                  <td className="py-2 px-3 text-slate-400 font-semibold">Total</td>
+                  <td className="py-2 px-3 text-right text-slate-300 font-semibold">
+                    {driversWithMC.reduce((s, d) => s + (d.member_wo_details?.length ?? 0), 0)} calls
+                  </td>
+                  <td className="py-2 px-3 text-right text-emerald-300 font-bold whitespace-nowrap">
+                    {fmtRevFull(driversWithMC.reduce((s, d) => s + (d.member_aaa_billed ?? 0), 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right text-sky-300 font-bold whitespace-nowrap">
+                    {fmtRevFull(summary.total_member_collected ?? 0)}
+                  </td>
+                  <td className="py-2 px-3 text-right text-white font-bold whitespace-nowrap">
+                    {fmtRevFull(
+                      driversWithMC.reduce((s, d) => s + (d.member_aaa_billed ?? 0) + d.member_collected, 0)
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
           <div className="text-[9px] text-slate-600 mt-3 pt-2 border-t border-slate-800/40">
-            Battery revenue = SA → WOLI → WO → Total_Amount_Invoiced__c · Battery Jump Start type only · Drop-Off excluded
+            Member Collected = Est_Tow_Over_Mileage_Cost_to_Member1__c on WorkOrder · Tow over-mileage only · No equivalent field exists for Battery/Lockout/Tire
           </div>
         </div>
       )}
 
       <div className="text-[9px] text-slate-700 text-center">
-        Tow/Light revenue excludes Battery and Drop-Off SAs · Battery revenue shown separately above · Pipeline: SA → WOLI → WO → Total_Amount_Invoiced__c
+        Tow/Light revenue excludes Battery and Drop-Off SAs · Pipeline: SA → WOLI → WO → billing cost fields
       </div>
     </div>
   )

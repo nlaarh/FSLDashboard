@@ -70,7 +70,7 @@ export function Th({ label, col, sort, onSort, activeDef, setActiveDef, right = 
   const showDef = activeDef === col
   return (
     <th className={clsx(
-        'px-3 py-3 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap relative',
+        'px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap relative',
         'hover:text-slate-200 transition-colors',
         right ? 'text-right' : 'text-left',
         active ? 'text-brand-400' : 'text-slate-500'

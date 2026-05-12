@@ -146,7 +146,7 @@ from routers import (
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
     garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
-    garages_revenue_export, password_reset,
+    garages_revenue_export, password_reset, dispatch_score,
 )
 
 app.include_router(auth.router)
@@ -189,6 +189,7 @@ app.include_router(optimizer.router)
 app.include_router(optimizer_chat.router)
 app.include_router(reporting.router)
 app.include_router(password_reset.router)
+app.include_router(dispatch_score.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -282,8 +283,31 @@ def _scrub_sensitive_db_keys():
         settings.put_setting('chatbot', cb)
 
 
+def _ensure_cache_table():
+    """Create core.cache table if it doesn't exist — missing from original schema migration."""
+    try:
+        import db_adapter
+        with db_adapter.writer() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS cache (
+                    key        TEXT PRIMARY KEY,
+                    data       TEXT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS cache_expires_idx ON cache (expires_at)")
+        import logging
+        logging.getLogger('startup').info("core.cache table ensured")
+    except Exception as e:
+        import logging
+        logging.getLogger('startup').warning("Could not ensure cache table: %s", e)
+
+
 @app.on_event("startup")
 async def startup():
+    _ensure_cache_table()
+
     import users
     users.seed_users()
 

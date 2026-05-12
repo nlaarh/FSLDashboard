@@ -31,7 +31,7 @@ const SkeletonCard = () => (
   </div>
 )
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf, onOpenWoa }) {
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, onOpenWoa }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -80,10 +80,6 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   // If low-materiality override was applied in the list, honour it here too
   const displayRec = (isLowMateriality && recRaw === 'REVIEW') ? 'APPROVE' : recRaw
   const rec = displayRec === 'APPROVE' ? 'PAY' : displayRec
-  // AI recommendation is stored separately (ai_recommendation) — rule engine owns 'recommendation'
-  const aiRecRaw = audit.ai_recommendation ? audit.ai_recommendation.toUpperCase() : null
-  const aiRec = aiRecRaw === 'APPROVE' ? 'PAY' : aiRecRaw
-  const aiRecDiffers = aiRec && aiRec !== rec
   const urls = audit?.sf_urls || {}
   const timeline = audit?.sa_timeline || []
   const secondaryTimelines = audit?.secondary_sa_timelines || []
@@ -203,11 +199,6 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">
           {audit ? headerSummary(ev, code) : (recReason || <span className="text-slate-600 italic">Loading details…</span>)}
         </span>
-        {(audit?.confidence || rowConf) && (
-          <span className="text-[10px] text-slate-600 shrink-0">
-            Conf: <span className="text-slate-400 font-semibold">{audit?.confidence || rowConf}</span>
-          </span>
-        )}
         <button onClick={handleRecalculate} disabled={recalcing}
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 shrink-0">
           <RefreshCw className={clsx('w-3 h-3', recalcing && 'animate-spin')} />
@@ -221,15 +212,6 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
       {isLowMateriality && recRaw === 'REVIEW' && (
         <div className="text-[9px] text-slate-500 px-1">Auto-approved: below materiality threshold</div>
-      )}
-      {aiRecDiffers && (
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/30">
-          <span className="text-[9px] text-slate-500">AI assessed:</span>
-          <span className={clsx('text-[9px] font-bold uppercase', REC_BADGE[aiRec] || REC_BADGE.REVIEW, 'px-1.5 py-0.5 rounded')}>
-            {aiRec}
-          </span>
-          <span className="text-[9px] text-slate-600">— rule engine takes precedence</span>
-        </div>
       )}
       {status.startsWith('BAD') && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-700/30">

@@ -249,6 +249,13 @@ export const emailDriverRevenue = (id, to, startDate, endDate, garageName) =>
   api.post(`/garages/${id}/driver-revenue/email`, { to, start_date: startDate, end_date: endDate, garage_name: garageName }).then(r => r.data)
 
 // Reporting
+export const fetchUserAdoptionReport = () => api.get('/reporting/user-adoption').then(r => r.data)
+export const fetchDispatchScore = (forceRefresh = false) =>
+  api.get(`/reporting/dispatch-score${forceRefresh ? '?force_refresh=true' : ''}`).then(r => r.data)
+export const refreshDispatchScore = () => api.post('/reporting/dispatch-score/refresh').then(r => r.data)
+export const fetchDispatcherInsight = (username, forceRefresh = false) =>
+  api.get(`/reporting/dispatch-score/${encodeURIComponent(username)}/insight${forceRefresh ? '?force_refresh=true' : ''}`).then(r => r.data)
+
 export const fetchReportSummary = (garageIds, startDate, endDate) => {
   const params = new URLSearchParams()
   garageIds.forEach(id => params.append('garage_ids', id))

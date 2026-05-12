@@ -9,9 +9,12 @@ import hashlib, os, secrets, time, threading
 import bcrypt
 import user_backup
 from repositories import users as _user_repo
+from repositories import user_sessions as _session_repo
 
 _sess_lock = threading.Lock()
 _sessions: dict[str, dict] = {}
+_sess_last_flush: dict[str, float] = {}   # token -> last DB touch timestamp
+_TOUCH_INTERVAL = 60                       # max one DB write per session per minute
 
 
 # ── Password hashing ─────────────────────────────────────────────────────────
@@ -220,38 +223,57 @@ def create_session(username: str, role: str, name: str, department: str = '') ->
     with _sess_lock:
         _sessions[token] = {"user": username, "name": name, "role": role, "department": department,
                             "login_time": time.time(), "last_seen": time.time()}
+    _session_repo.record_login(token, username, name, role, department)
     return token
+
+
+def _maybe_touch(token: str, now: float) -> None:
+    """Write to DB at most once per _TOUCH_INTERVAL seconds per session."""
+    if now - _sess_last_flush.get(token, 0) >= _TOUCH_INTERVAL:
+        _sess_last_flush[token] = now
+        _session_repo.touch_session(token)
 
 
 def get_session(token: str) -> dict | None:
     with _sess_lock:
         sess = _sessions.get(token)
-        if not sess:
-            return None
-        if time.time() - sess["login_time"] > 86400:
+        now = time.time()
+        if sess and now - sess["login_time"] > 36000:  # 10 hours
             del _sessions[token]
+            _sess_last_flush.pop(token, None)
             return None
-        sess["last_seen"] = time.time()
-        return dict(sess)
+        if sess:
+            sess["last_seen"] = now
+            _maybe_touch(token, now)
+            return dict(sess)
+    persisted = _session_repo.get_session(token)
+    if not persisted:
+        return None
+    now = time.time()
+    _maybe_touch(token, now)
+    return {
+        "user": persisted["username"],
+        "name": persisted.get("name") or persisted["username"],
+        "role": persisted.get("role") or "",
+        "department": persisted.get("department") or "",
+        "login_time": persisted["login_time"],
+        "last_seen": persisted["last_seen"],
+    }
 
 
 def destroy_session(token: str):
     with _sess_lock:
         _sessions.pop(token, None)
+    _session_repo.close_session(token)
 
 
 def list_sessions() -> list[dict]:
-    now = time.time()
-    result = []
     with _sess_lock:
+        now = time.time()
         expired = []
         for token, sess in _sessions.items():
-            if now - sess["login_time"] > 86400:
+            if now - sess["login_time"] > 36000:  # 10 hours
                 expired.append(token)
-                continue
-            result.append({"user": sess["user"], "name": sess["name"], "role": sess["role"],
-                           "login_time": sess["login_time"], "last_seen": sess["last_seen"],
-                           "idle_min": round((now - sess["last_seen"]) / 60)})
         for t in expired:
             del _sessions[t]
-    return sorted(result, key=lambda s: s["last_seen"], reverse=True)
+    return _session_repo.list_active_sessions()

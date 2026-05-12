@@ -108,6 +108,7 @@ def _process_drivers(rows: list, sa_lat, sa_lon, busy_map: dict = None,
 
     Filters:
       - Hard cap: travel > 60 min → excluded
+      - No skills at all → excluded (placeholder/system accounts, not real dispatchable drivers)
       - Busy + no required skills → excluded (can't do the job and won't be free soon enough)
 
     Sort: skilled first → available first → closest first.
@@ -140,6 +141,9 @@ def _process_drivers(rows: list, sa_lat, sa_lon, busy_map: dict = None,
                 d_skills.add(label)
 
         has_skills = _skills_match(d_skills, required_frags)
+
+        if not d_skills:
+            continue  # skip drivers with no skills configured
 
         if busy_map is not None:
             busy_info = busy_map.get(rid)
@@ -233,9 +237,26 @@ def _fetch_territory_drivers(territory: str, sa_lat, sa_lon, work_type: str = No
               AND ServiceAppointment.StatusCategory IN ('Scheduled','Dispatched','InProgress')
         """)
 
-    data = sf_parallel(drivers=_q_drivers, busy=_q_busy)
+    def _q_logged_in():
+        return sf_query_all("""
+            SELECT ERS_Driver__c
+            FROM Asset
+            WHERE RecordType.Name = 'ERS Truck'
+              AND ERS_Driver__c != null
+        """)
+
+    def _q_absent():
+        return sf_query_all("""
+            SELECT ResourceId
+            FROM ResourceAbsence
+            WHERE Start <= TODAY AND End >= TODAY
+        """)
+
+    data = sf_parallel(drivers=_q_drivers, busy=_q_busy, logged_in=_q_logged_in, absent=_q_absent)
     busy_map = _build_busy_map(data['busy'])
-    rows = data['drivers']
+    logged_in_ids = {a.get('ERS_Driver__c') for a in data['logged_in'] if a.get('ERS_Driver__c')}
+    absent_ids = {a.get('ResourceId') for a in data['absent'] if a.get('ResourceId')}
+    rows = [r for r in data['drivers'] if r.get('Id') in logged_in_ids and r.get('Id') not in absent_ids]
     drivers = _process_drivers(rows, sa_lat, sa_lon, busy_map=busy_map, work_type=work_type)
     return {
         'mode': 'normal',
@@ -302,9 +323,27 @@ def _fetch_000_resources(sa_lat, sa_lon, parent_territory_id: str, work_type: st
               AND ServiceAppointment.CreatedDate >= LAST_N_DAYS:2
         """)
 
-    data = sf_parallel(garages=_q_garages, fsl_drivers=_q_fsl_drivers, fsl_busy=_q_fsl_busy)
+    def _q_logged_in():
+        return sf_query_all("""
+            SELECT ERS_Driver__c
+            FROM Asset
+            WHERE RecordType.Name = 'ERS Truck'
+              AND ERS_Driver__c != null
+        """)
+
+    def _q_absent():
+        return sf_query_all("""
+            SELECT ResourceId
+            FROM ResourceAbsence
+            WHERE Start <= TODAY AND End >= TODAY
+        """)
+
+    data = sf_parallel(garages=_q_garages, fsl_drivers=_q_fsl_drivers, fsl_busy=_q_fsl_busy,
+                       logged_in=_q_logged_in, absent=_q_absent)
     pm_rows = data['garages']
-    sr_rows = data['fsl_drivers']
+    logged_in_ids = {a.get('ERS_Driver__c') for a in data['logged_in'] if a.get('ERS_Driver__c')}
+    absent_ids = {a.get('ResourceId') for a in data['absent'] if a.get('ResourceId')}
+    sr_rows = [r for r in data['fsl_drivers'] if r.get('Id') in logged_in_ids and r.get('Id') not in absent_ids]
 
     # Build garage list from Priority Matrix
     garages = []

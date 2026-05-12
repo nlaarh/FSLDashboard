@@ -102,7 +102,7 @@ function Th({ label, col, sort, onSort, right = false }) {
   return (
     <th
       className={clsx(
-        'px-3 py-3 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
+        'px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
         'hover:text-slate-200 transition-colors',
         right ? 'text-right' : 'text-left',
         active ? 'text-brand-400' : 'text-slate-500',
@@ -120,12 +120,12 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, rowConf, onOpenWoa }) {
+function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, onOpenWoa }) {
   return (
     <div>
       <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
         allWoSiblings={allWoSiblings}
-        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec} rowConf={rowConf}
+        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec}
         onOpenWoa={onOpenWoa} />
     </div>
   )
@@ -357,7 +357,7 @@ export default function Accounting() {
           <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="px-1 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-5">#</th>
+                <th className="px-1 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
                 <Th label="WOA #"      col="woa_number"    sort={sort} onSort={onSort} />
                 <Th label="Facility"   col="facility"      sort={sort} onSort={onSort} />
                 <Th label="Program" col="program" sort={sort} onSort={onSort} />
@@ -366,29 +366,27 @@ export default function Accounting() {
                 <Th label="Requested"  col="requested_qty" sort={sort} onSort={onSort} right />
                 <Th label="SF Billed"  col="currently_paid" sort={sort} onSort={onSort} right />
                 <Th label="Delta"      col="delta"         sort={sort} onSort={onSort} right />
-                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap cursor-pointer"
+                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap cursor-pointer"
                   onClick={() => onSort('recommendation')}>
                   Recommendation
                   {sort.col === 'recommendation'
                     ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
                     : <span className="inline-block w-3 ml-0.5" />}
                 </th>
-                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Conf.</th>
                 <Th label="Owner"      col="owner"         sort={sort} onSort={onSort} />
                 <Th label="WOA Age"    col="woa_age_days"  sort={sort} onSort={onSort} right />
                 <Th label="WO→WOA"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
                 <Th label="Created"    col="created_date"  sort={sort} onSort={onSort} />
-                <Th label="Created By" col="created_by"    sort={sort} onSort={onSort} />
-                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Description</th>
+                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Description</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/40">
               {loading && [...Array(10)].map((_, i) => (
                 <tr key={i}>
-                  <td className="px-2 py-3"><div className="skeleton h-3 rounded w-4" /></td>
-                  {[...Array(13)].map((__, j) => (
-                    <td key={j} className="px-3 py-3.5">
-                      <div className={clsx('skeleton h-3.5 rounded', j === 1 ? 'w-32' : 'w-16')} />
+                  <td className="px-1 py-2"><div className="skeleton h-3 rounded w-4" /></td>
+                  {[...Array(14)].map((__, j) => (
+                    <td key={j} className="px-2 py-2">
+                      <div className={clsx('skeleton h-3.5 rounded', j === 1 ? 'w-28' : 'w-14')} />
                     </td>
                   ))}
                 </tr>
@@ -425,7 +423,7 @@ export default function Accounting() {
                       <td className="px-1 py-2 text-[10px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
 
                       {/* WOA # */}
-                      <td className="px-3 py-2.5">
+                      <td className="px-2 py-2">
                         <div className="flex flex-col gap-0.5">
                           {r.id ? (
                             <a href={`https://aaawcny.lightning.force.com/${r.id}`} target="_blank" rel="noopener noreferrer"
@@ -446,12 +444,12 @@ export default function Accounting() {
                       </td>
 
                       {/* Facility */}
-                      <td className="px-3 py-2.5">
-                        <span className="text-slate-300 font-medium truncate max-w-[180px] block">{r.facility || '--'}</span>
+                      <td className="px-2 py-2">
+                        <span className="text-slate-300 font-medium truncate max-w-[120px] block">{r.facility || '--'}</span>
                       </td>
 
                       {/* Program */}
-                      <td className="px-3 py-2.5 whitespace-nowrap">
+                      <td className="px-2 py-2 whitespace-nowrap">
                         {r.program ? (
                           <span className={clsx(
                             'px-1.5 py-0.5 rounded text-[9px] font-semibold border',
@@ -471,7 +469,7 @@ export default function Accounting() {
                       </td>
 
                       {/* WO # */}
-                      <td className="px-3 py-2.5">
+                      <td className="px-2 py-2">
                         {r.wo_id ? (
                           <a href={`https://aaawcny.lightning.force.com/${r.wo_id}`} target="_blank" rel="noopener noreferrer"
                             onClick={e => e.stopPropagation()}
@@ -484,7 +482,7 @@ export default function Accounting() {
                       </td>
 
                       {/* Product */}
-                      <td className="px-3 py-2.5">
+                      <td className="px-2 py-2">
                         {code || r.product ? (
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1.5">
@@ -530,19 +528,19 @@ export default function Accounting() {
                       </td>
 
                       {/* Requested — unit-aware */}
-                      <td className="px-3 py-2.5 text-right text-slate-300 font-mono">
+                      <td className="px-2 py-2 text-right text-slate-300 font-mono">
                         {formatQty(r.requested_qty, r.product)}
                       </td>
 
                       {/* Paid — unit-aware */}
-                      <td className="px-3 py-2.5 text-right font-mono">
+                      <td className="px-2 py-2 text-right font-mono">
                         <span className={r.currently_paid > 0 ? 'text-emerald-400' : 'text-slate-600'}>
                           {r.currently_paid != null ? formatQty(r.currently_paid, r.product) : '--'}
                         </span>
                       </td>
 
                       {/* Delta — unit-aware */}
-                      <td className="px-3 py-2.5 text-right font-mono">
+                      <td className="px-2 py-2 text-right font-mono">
                         <span className={clsx(
                           'font-bold',
                           delta > 0 ? 'text-amber-400' : delta < 0 ? 'text-red-400' : 'text-slate-600',
@@ -552,7 +550,7 @@ export default function Accounting() {
                       </td>
 
                       {/* Recommendation — use audit result once opened, fall back to pre-computed */}
-                      <td className="px-3 py-2.5">
+                      <td className="px-2 py-2">
                         <div className="flex flex-col gap-0.5">
                           {(() => {
                             const audited = !!auditOverrides[rowKey]
@@ -580,53 +578,41 @@ export default function Accounting() {
                         </div>
                       </td>
 
-                      {/* Confidence */}
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <span className={clsx('text-[9px] font-bold uppercase',
-                          r.confidence === 'HIGH' ? 'text-emerald-500' :
-                          r.confidence === 'MEDIUM' ? 'text-amber-500' : 'text-slate-500')}>
-                          {r.confidence || '--'}
-                        </span>
-                      </td>
-
                       {/* Owner */}
-                      <td className="px-3 py-2.5 text-slate-500 truncate max-w-[120px]">{r.owner || '--'}</td>
+                      <td className="px-2 py-2 text-slate-500 truncate max-w-[80px]">{r.owner || '--'}</td>
 
                       {/* WOA Age */}
-                      <td className="px-3 py-2.5 text-right font-mono text-[10px]">
+                      <td className="px-2 py-2 text-right font-mono text-[10px]">
                         {r.woa_age_days != null
                           ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
                           : <span className="text-slate-700">--</span>}
                       </td>
 
                       {/* WO→WOA */}
-                      <td className="px-3 py-2.5 text-right font-mono text-[10px]">
+                      <td className="px-2 py-2 text-right font-mono text-[10px]">
                         {r.woa_age_from_wo_days != null
                           ? <span className={clsx(r.woa_age_from_wo_days > 90 ? 'text-red-400' : r.woa_age_from_wo_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_from_wo_days}d</span>
                           : <span className="text-slate-700">--</span>}
                       </td>
 
                       {/* Created */}
-                      <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{r.created_date || '--'}</td>
-
-                      {/* Created By */}
-                      <td className="px-3 py-2.5 text-slate-500 truncate max-w-[140px]">{r.created_by || '--'}</td>
+                      <td className="px-2 py-2 text-slate-500 whitespace-nowrap">{r.created_date || '--'}</td>
 
                       {/* Description */}
-                      <td className="px-3 py-2.5 text-slate-500 max-w-[200px]">
+                      <td className="px-2 py-2 text-slate-500 max-w-[150px]">
                         {r.description
-                          ? <span title={r.description} className="truncate block cursor-help">{r.description.slice(0, 60)}{r.description.length > 60 ? '…' : ''}</span>
+                          ? <span title={r.description} className="truncate block cursor-help">{r.description.slice(0, 50)}{r.description.length > 50 ? '…' : ''}</span>
                           : <span className="text-slate-700">—</span>}
                       </td>
                     </tr>
 
                     {isExpanded && (
                       <tr>
-                        <td colSpan={17} className="p-0 border-b border-slate-700/30">
+                        <td colSpan={15} className="p-0 border-b border-slate-700/30">
                           <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
                             allWoSiblings={allWoSiblings}
                             isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}
-                            rowRec={r.recommendation} rowConf={r.confidence}
+                            rowRec={r.recommendation}
                             onOpenWoa={(targetKey) => setExpanded(targetKey)} />
                         </td>
                       </tr>

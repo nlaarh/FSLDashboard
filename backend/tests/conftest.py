@@ -101,6 +101,21 @@ def sqlite_db(monkeypatch):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE user_sessions (
+            token TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            role TEXT DEFAULT '',
+            department TEXT DEFAULT '',
+            login_time REAL NOT NULL,
+            last_seen REAL NOT NULL,
+            logout_time REAL,
+            expires_at REAL NOT NULL
+        )
+        """
+    )
     conn.commit()
 
     @contextmanager

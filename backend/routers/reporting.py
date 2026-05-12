@@ -11,8 +11,10 @@ from typing import List
 from openpyxl.utils import get_column_letter
 
 import cache
-from fastapi import APIRouter, Query
+import users
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from repositories import user_sessions
 
 from sf_batch import batch_soql_parallel
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
@@ -22,6 +24,23 @@ from utils import soql_date_range, parse_dt as _parse_dt, is_fleet_territory, to
 
 router = APIRouter()
 log = logging.getLogger('reporting')
+
+_USER_ADOPTION_ROLES = {"superadmin", "admin", "executive"}
+
+
+def _require_user_adoption_role(request: Request) -> None:
+    from routers.auth import _verify_cookie
+
+    cookie = request.cookies.get("fslapp_auth")
+    payload = _verify_cookie(cookie) if cookie else None
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    parts = payload.split(":")
+    username = parts[0] if parts else ""
+    cookie_role = parts[1] if len(parts) > 1 else ""
+    role = (users.get_user(username) or {}).get("role") or cookie_role
+    if role not in _USER_ADOPTION_ROLES:
+        raise HTTPException(status_code=403, detail="User adoption report restricted")
 
 # ── Single-garage fallback (used when < 5 garages requested) ──────────────────
 
@@ -320,6 +339,19 @@ def api_reporting_garage_summary(
         rows.sort(key=lambda r: r.get('garage_name', ''))
 
     return {'rows': rows, 'start_date': start_date, 'end_date': end_date}
+
+
+@router.get('/api/reporting/user-adoption')
+def api_reporting_user_adoption(request: Request):
+    """Current-month user adoption report for superadmin, admin, and executive roles."""
+    _require_user_adoption_role(request)
+    all_users = [
+        u for u in users.list_users()
+        if u.get('username') != 'admin'
+        and 'test' not in (u.get('name') or '').lower()
+        and 'test' not in (u.get('username') or '').lower()
+    ]
+    return user_sessions.adoption_report(all_users)
 
 
 @router.get('/api/reporting/garage-summary/export')

@@ -224,6 +224,9 @@ export default function AdminUsers({ pin }) {
 
   const inactiveCount = userList.filter(u => !u.active).length
   const displayedUsers = userList.filter(u => showInactive || u.active)
+  const fmtSessionTime = (epoch) => epoch
+    ? new Date(epoch * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '—'
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -381,7 +384,7 @@ export default function AdminUsers({ pin }) {
       <div className="glass rounded-xl overflow-hidden">
         <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
           <Radio className="w-4 h-4 text-emerald-400" />
-          <h2 className="text-sm font-semibold text-white">Who's Online</h2>
+          <h2 className="text-sm font-semibold text-white">Who's Online Now</h2>
           <span className="ml-1 text-xs text-slate-500">({sessions.length})</span>
         </div>
         <div className="p-3 space-y-2">
@@ -394,6 +397,9 @@ export default function AdminUsers({ pin }) {
                 <div className="text-xs font-semibold text-white truncate">{s.name || s.user}</div>
                 <div className="text-[10px] text-slate-500">
                   {s.role} — {s.idle_min === 0 ? 'active now' : `idle ${s.idle_min}m`}
+                </div>
+                <div className="text-[10px] text-slate-600">
+                  In {fmtSessionTime(s.login_time)} · seen {fmtSessionTime(s.last_seen)}
                 </div>
               </div>
               <div className={`w-2 h-2 rounded-full ${s.idle_min < 5 ? 'bg-emerald-400' : s.idle_min < 30 ? 'bg-amber-400' : 'bg-slate-600'}`} />

@@ -32,7 +32,6 @@ def call_audit_ai(data_context: dict, garage_history: dict | None = None) -> dic
     _provider, api_key, model = _load_ai_settings()
     if not api_key:
         return {
-            'recommendation': 'REVIEW', 'confidence': 'LOW',
             'headline': None, 'story': 'AI not configured. Go to Admin → AI Assistant to set up.',
             'fraud_signals': [], 'anomalies': [], 'what_to_do': [], 'ask_garage': [],
             'ai_summary': 'AI not configured. Go to Admin → AI Assistant to set up.',
@@ -46,7 +45,6 @@ def call_audit_ai(data_context: dict, garage_history: dict | None = None) -> dic
     raw = _call_openai_simple(api_key, model, _DEFAULT_AUDIT_PROMPT, user_prompt)
 
     result = {
-        'recommendation': 'REVIEW', 'confidence': 'LOW',
         'headline': None, 'story': raw,
         'fraud_signals': [], 'anomalies': [], 'what_to_do': [], 'ask_garage': [],
         'ai_summary': raw,
@@ -59,8 +57,6 @@ def call_audit_ai(data_context: dict, garage_history: dict | None = None) -> dic
                 clean = clean.split('\n', 1)[1] if '\n' in clean else clean[3:]
                 clean = clean.rsplit('```', 1)[0]
             parsed = _json.loads(clean)
-            result['recommendation'] = parsed.get('recommendation', 'REVIEW')
-            result['confidence'] = parsed.get('confidence', 'LOW')
             result['headline'] = parsed.get('headline')
             result['story'] = parsed.get('story') or raw
             result['fraud_signals'] = parsed.get('fraud_signals') or []
@@ -124,11 +120,7 @@ def _build_woa_audit(woa_id: str) -> dict:
     ctx = data.pop('_ai_context', {})
     gh = data.pop('_garage_history', None)
     ai = call_audit_ai(ctx, gh)
-    # Keep rule engine's recommendation as the authoritative signal.
-    # The rule engine is deterministic; AI can hallucinate or commingle WOA data.
-    # Store AI's assessment separately as ai_recommendation so the UI can show it alongside.
     data.update({
-        'ai_recommendation': ai['recommendation'], 'confidence': ai['confidence'],
         'ai_summary': ai['ai_summary'], 'ai_headline': ai.get('headline'),
         'ai_story': ai.get('story'), 'ai_fraud_signals': ai.get('fraud_signals') or [],
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],

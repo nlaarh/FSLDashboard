@@ -213,7 +213,7 @@ export default function Layout() {
         </div>
       </nav>
 
-      <main className="max-w-[1600px] mx-auto px-6 py-6">
+      <main className={`${pathname === '/accounting' ? 'max-w-[1920px]' : 'max-w-[1600px]'} mx-auto px-6 py-6`}>
         <Outlet />
       </main>
 

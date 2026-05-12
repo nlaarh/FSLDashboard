@@ -218,11 +218,11 @@ export default function Dashboard() {
       {/* ── Table ─────────────────────────────────────────────────────── */}
       <div className="glass rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-slate-800">
                 <th className="w-2 px-0" />{/* status border */}
-                <th className="px-1 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-5">#</th>
+                <th className="px-1 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
                 <Th label="Garage"     col="name"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="City"       col="city"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="Open"       col="open"         sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
@@ -233,7 +233,7 @@ export default function Dashboard() {
                 <Th label="Avg PTA"    col="avg_pta"      sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="Avg ATA"    col="resp_time"    sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
                 <Th label="Max Wait"   col="max_wait"     sort={sort} onSort={onSort} activeDef={activeDef} setActiveDef={setActiveDef} />
-                <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right">
+                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right">
                   Actions
                 </th>
               </tr>
@@ -247,7 +247,7 @@ export default function Dashboard() {
                   <td className="w-1 py-3 bg-slate-700/30" />
                   <td className="px-2 py-3"><div className="skeleton h-3 rounded w-4" /></td>
                   {[...Array(10)].map((__, j) => (
-                    <td key={j} className="px-3 py-3.5">
+                    <td key={j} className="px-2 py-2">
                       <div className={clsx('skeleton h-3.5 rounded', j === 0 ? 'w-40' : 'w-16')} />
                     </td>
                   ))}
@@ -273,8 +273,8 @@ export default function Dashboard() {
                       <td className="px-1 py-2 align-top text-[10px] text-slate-500 text-right">{idx + 1}</td>
 
                       {/* Name */}
-                      <td className="px-3 py-3 align-top">
-                        <div className="font-semibold text-white text-sm leading-tight max-w-[280px] truncate flex items-center gap-1.5">
+                      <td className="px-2 py-2 align-top">
+                        <div className="font-semibold text-white leading-tight max-w-[160px] truncate flex items-center gap-1.5">
                           {r.name}
                           {r.primary_zones > 0 && (
                             <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-emerald-950/40 text-emerald-400 border border-emerald-800/30">Primary</span>
@@ -295,12 +295,12 @@ export default function Dashboard() {
                       </td>
 
                       {/* City */}
-                      <td className="px-3 py-3 align-top text-xs text-slate-500 whitespace-nowrap">
+                      <td className="px-2 py-2 align-top text-[10px] text-slate-500 whitespace-nowrap">
                         {r.city ?? '\u2014'}
                       </td>
 
                       {/* Open */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         {r.hasLive
                           ? <div>
                               <span className={clsx(
@@ -317,12 +317,12 @@ export default function Dashboard() {
                       </td>
 
                       {/* Total today */}
-                      <td className="px-3 py-3 align-top text-slate-300 font-medium">
+                      <td className="px-2 py-2 align-top text-slate-300 font-medium">
                         {r.hasLive ? r.total : <span className="text-slate-700 text-xs">\u2014</span>}
                       </td>
 
                       {/* Completion % */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         {r.completion != null
                           ? <div>
                               <span className={clsx('font-bold', compColor(r.completion))}>
@@ -335,7 +335,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* 1st Call % (primary) */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         <div className="font-bold leading-tight">
                           {r.pct_primary != null
                             ? <span className={r.pct_primary >= 80 ? 'text-emerald-400' : r.pct_primary >= 60 ? 'text-amber-400' : 'text-red-400'}>
@@ -347,7 +347,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* 2nd+ Call % (secondary) */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         <div className="font-bold leading-tight">
                           {r.pct_secondary != null
                             ? <span className={r.pct_secondary >= 80 ? 'text-emerald-400' : r.pct_secondary >= 60 ? 'text-amber-400' : 'text-red-400'}>
@@ -359,7 +359,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* Avg PTA (Promise) */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         <div className="font-bold leading-tight">
                           {r.avg_pta != null
                             ? <span className={r.avg_pta <= 60 ? 'text-emerald-400' : r.avg_pta <= 90 ? 'text-amber-400' : 'text-red-400'}>
@@ -371,7 +371,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* Avg ATA (actual response time) */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         <div className="font-bold leading-tight">
                           {r.resp_time != null
                             ? <span className={respColor(r.resp_time)}>
@@ -387,7 +387,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* Max wait */}
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-2 py-2 align-top">
                         <div className="font-bold leading-tight">
                           {r.max_wait > 0
                             ? <span className={waitColor(r.max_wait)}>{r.max_wait} min</span>
@@ -397,7 +397,7 @@ export default function Dashboard() {
                       </td>
 
                       {/* Quick actions */}
-                      <td className="px-3 py-3 align-top" onClick={e => e.stopPropagation()}>
+                      <td className="px-2 py-2 align-top" onClick={e => e.stopPropagation()}>
                         <QuickActions id={r.id} name={r.name} onNav={onNav} />
                       </td>
                     </tr>
