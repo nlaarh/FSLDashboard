@@ -54,6 +54,15 @@ const FLAG_COLORS = {
   'Potential Duplicate': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
 }
 
+// ── KMI case status colors ──────────────────────────────────────────────────
+const KMI_STATUS_COLORS = {
+  'New': 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+  'Working': 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+  'Dispatched': 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40',
+  'Waiting on Customer': 'bg-orange-500/20 text-orange-400 border-orange-500/40',
+  'Closed': 'bg-slate-600/20 text-slate-400 border-slate-600/40',
+}
+
 // ── Operational Alerts Table ────────────────────────────────────────────────
 
 function OperationalAlertsTable({ alerts, onShowHelp }) {
@@ -101,6 +110,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
         <td style="border:1px solid #ccc;padding:4px 8px">${a.city || '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px">${a.work_type || '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px;font-family:monospace;font-size:10px">${a.work_type_id || '—'}</td>
+        <td style="border:1px solid #ccc;padding:4px 8px">${a.kmi_case_number ? `${a.kmi_case_number} (${a.kmi_case_status || '—'})` : '—'}</td>
         <td style="border:1px solid #ccc;padding:4px 8px">${a.flag}</td>
       </tr>`
     ).join('')
@@ -120,6 +130,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
             <th style="border:1px solid #ccc;padding:4px 8px">City</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Work Type</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Work Type ID</th>
+            <th style="border:1px solid #ccc;padding:4px 8px">KMI Case</th>
             <th style="border:1px solid #ccc;padding:4px 8px">Flag</th>
           </tr>
         </thead>
@@ -187,6 +198,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 ['territory', 'Territory'],
                 ['city', 'City'],
                 ['work_type', 'Work Type'],
+                ['kmi_case_number', 'KMI Case'],
                 ['flag', 'Flag'],
               ].map(([key, label]) => (
                 <th key={key}
@@ -270,6 +282,23 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 {/* Work Type */}
                 <td className="px-3 py-2 text-slate-300 text-xs">
                   {alert.work_type || '—'}
+                </td>
+                {/* KMI Case */}
+                <td className="px-3 py-2">
+                  {alert.kmi_case_number ? (
+                    <div className="space-y-0.5">
+                      <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
+                        {alert.kmi_case_number}
+                        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                      </a>
+                      <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border',
+                        KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
+                        {alert.kmi_case_status || '—'}
+                      </span>
+                    </div>
+                  ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Flag */}
                 <td className="px-3 py-2">

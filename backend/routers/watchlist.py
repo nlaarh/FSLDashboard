@@ -17,7 +17,7 @@ import cache
 from sf_client import sf_query_all, sf_parallel
 from utils import parse_dt as _parse_dt, _ET
 from sf_batch import batch_soql_parallel
-from routers.watchlist_alerts import build_operational_alerts, fetch_wo_data
+from routers.watchlist_alerts import build_operational_alerts, fetch_wo_data, enrich_alerts_with_kmi
 
 router = APIRouter()
 log = logging.getLogger('watchlist')
@@ -233,6 +233,7 @@ def _build_watchlist() -> dict:
             alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
             alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
             alert['work_type_id'] = sa.get('WorkTypeId') or ''
+        enrich_alerts_with_kmi(operational_alerts)
 
     return {
         'watchlist': entries,

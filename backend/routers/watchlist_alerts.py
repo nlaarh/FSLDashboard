@@ -386,3 +386,43 @@ def fetch_wo_data(woli_ids: list) -> dict:
         log.warning(f"Failed to fetch WO data for alerts: {e}")
 
     return result
+
+
+def fetch_kmi_cases(wo_ids: list) -> dict:
+    """Fetch most recent ERS KMI Alert case per WorkOrder Id.
+
+    Returns {wo_id: {case_number, case_id, case_status}}.
+    """
+    if not wo_ids:
+        return {}
+    result = {}
+    try:
+        rows = batch_soql_parallel("""
+            SELECT Id, CaseNumber, Status, ERS_Work_Order__c
+            FROM Case
+            WHERE ERS_Work_Order__c IN ('{id_list}')
+              AND RecordType.DeveloperName = 'ERS_KMI_Alerts'
+            ORDER BY CreatedDate DESC
+        """, wo_ids, chunk_size=200)
+        for r in rows:
+            wo_id = r.get('ERS_Work_Order__c')
+            if wo_id and wo_id not in result:
+                result[wo_id] = {
+                    'case_number': r.get('CaseNumber', ''),
+                    'case_id': r.get('Id', ''),
+                    'case_status': r.get('Status', ''),
+                }
+    except Exception as e:
+        log.warning(f"KMI case lookup failed: {e}")
+    return result
+
+
+def enrich_alerts_with_kmi(alerts: list) -> None:
+    """Merge most-recent KMI case data into operational alert dicts (in-place)."""
+    wo_ids = list({a['wo_id'] for a in alerts if a.get('wo_id')})
+    kmi_map = fetch_kmi_cases(wo_ids) if wo_ids else {}
+    for alert in alerts:
+        kmi = kmi_map.get(alert.get('wo_id'), {})
+        alert['kmi_case_number'] = kmi.get('case_number', '')
+        alert['kmi_case_id'] = kmi.get('case_id', '')
+        alert['kmi_case_status'] = kmi.get('case_status', '')
