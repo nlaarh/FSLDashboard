@@ -15,11 +15,15 @@ from collections import defaultdict
 from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, timezone
 
+import cache as _cache
 from sf_batch import batch_soql_parallel
 from sf_client import sf_query_all
 from utils import parse_dt as _parse_dt
 
 log = logging.getLogger('watchlist.alerts')
+
+_KMI_CACHE_KEY = 'kmi_by_wo'
+_KMI_CACHE_TTL = 120  # 2 min — longer than watchlist TTL so stale data survives a failed rebuild
 
 # Priority codes that trigger "High Priority Call Late"
 _HIGH_PRIORITY_CODES = {'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'}
@@ -392,35 +396,54 @@ def fetch_kmi_cases(wo_ids: list) -> dict:
     """Fetch most recent ERS KMI Alert case per WorkOrder Id.
 
     Returns {wo_id: {case_number, case_id, case_status}}.
+    Raises on SF error so callers can fall back to cached data.
     """
     if not wo_ids:
         return {}
     result = {}
-    try:
-        rows = batch_soql_parallel("""
-            SELECT Id, CaseNumber, Status, ERS_Work_Order__c
-            FROM Case
-            WHERE ERS_Work_Order__c IN ('{id_list}')
-              AND RecordType.DeveloperName = 'ERS_KMI_Alerts'
-            ORDER BY CreatedDate DESC
-        """, wo_ids, chunk_size=200)
-        for r in rows:
-            wo_id = r.get('ERS_Work_Order__c')
-            if wo_id and wo_id not in result:
-                result[wo_id] = {
-                    'case_number': r.get('CaseNumber', ''),
-                    'case_id': r.get('Id', ''),
-                    'case_status': r.get('Status', ''),
-                }
-    except Exception as e:
-        log.warning(f"KMI case lookup failed: {e}")
+    rows = batch_soql_parallel("""
+        SELECT Id, CaseNumber, Status, ERS_Work_Order__c
+        FROM Case
+        WHERE ERS_Work_Order__c IN ('{id_list}')
+          AND RecordType.DeveloperName = 'ERS_KMI_Alerts'
+        ORDER BY CreatedDate DESC
+    """, wo_ids, chunk_size=200)
+    for r in rows:
+        wo_id = r.get('ERS_Work_Order__c')
+        if wo_id and wo_id not in result:
+            result[wo_id] = {
+                'case_number': r.get('CaseNumber', ''),
+                'case_id': r.get('Id', ''),
+                'case_status': r.get('Status', ''),
+            }
     return result
 
 
 def enrich_alerts_with_kmi(alerts: list) -> None:
-    """Merge most-recent KMI case data into operational alert dicts (in-place)."""
+    """Merge most-recent KMI case data into operational alert dicts (in-place).
+
+    Falls back to the last successful lookup if the SF query fails, so KMI
+    data doesn't flicker away on a transient SF error.
+    """
     wo_ids = list({a['wo_id'] for a in alerts if a.get('wo_id')})
-    kmi_map = fetch_kmi_cases(wo_ids) if wo_ids else {}
+    if not wo_ids:
+        for alert in alerts:
+            alert['kmi_case_number'] = ''
+            alert['kmi_case_id'] = ''
+            alert['kmi_case_status'] = ''
+        return
+
+    try:
+        fresh = fetch_kmi_cases(wo_ids)
+        # Update cache with new results (merge so evicted WOs don't wipe others)
+        stored = _cache.get(_KMI_CACHE_KEY) or {}
+        stored.update(fresh)
+        _cache.put(_KMI_CACHE_KEY, stored, _KMI_CACHE_TTL)
+        kmi_map = fresh
+    except Exception as e:
+        log.warning("KMI case lookup failed, using cached data: %s", e)
+        kmi_map = _cache.get(_KMI_CACHE_KEY) or {}
+
     for alert in alerts:
         kmi = kmi_map.get(alert.get('wo_id'), {})
         alert['kmi_case_number'] = kmi.get('case_number', '')

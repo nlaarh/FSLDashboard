@@ -351,6 +351,26 @@ def api_reporting_user_adoption(request: Request):
         and 'test' not in (u.get('name') or '').lower()
         and 'test' not in (u.get('username') or '').lower()
     ]
+
+    # Attach SF LastLoginDate per user (best-effort — skip on failure)
+    try:
+        sf_rows = sf_query_all(
+            "SELECT Username, LastLoginDate FROM User WHERE IsActive = TRUE"
+        )
+        sf_last = {
+            r['Username']: r['LastLoginDate']
+            for r in sf_rows
+            if r.get('Username') and r.get('LastLoginDate')
+        }
+        for u in all_users:
+            iso = sf_last.get(u.get('username') or '')
+            if iso:
+                from datetime import datetime, timezone
+                dt = datetime.strptime(iso[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
+                u['sf_last_login'] = dt.timestamp()
+    except Exception:
+        pass  # SF unavailable — report still works without it
+
     return user_sessions.adoption_report(all_users)
 
 

@@ -304,9 +304,125 @@ def _ensure_cache_table():
         logging.getLogger('startup').warning("Could not ensure cache table: %s", e)
 
 
+_DISPATCHER_SEED = [
+    ('Amanda',   'Grover',       'agrover@nyaaa.com',       'Dispatcher'),
+    ('Catherine','Alger',        'calger@nyaaa.com',        'Supervisor'),
+    ('Chantele', 'Ross',         'cross@nyaaa.com',         'Dispatcher'),
+    ('Chris',    'MacNeil',      'cmacneil@nyaaa.com',      'Manager'),
+    ('Daniel',   'Fisher',       'dfisher@nyaaa.com',       'Manager'),
+    ('Debbie',   'Taylor',       'dtaylor@nyaaa.com',       'Dispatcher'),
+    ('Deborah',  'Kalenda',      'dkalenda@nyaaa.com',      'Dispatcher'),
+    ('Deonna',   'Massey',       'dmassey@nyaaa.com',       'Dispatcher'),
+    ('Diana',    'Oakes',        'doakes@nyaaa.com',        'Dispatcher'),
+    ('Domingo',  'Santiago',     'dsantiago@nyaaa.com',     'Dispatcher'),
+    ('Janice',   'Sims',         'jsims@nyaaa.com',         'Dispatcher'),
+    ('Jay',      'Miller',       'jay.miller@nyaaa.com',    'Dispatcher'),
+    ('Jeremy',   'Harrington',   'jharrington@nyaaa.com',   'Manager'),
+    ('Jon',      'Carroll',      'jcarroll@nyaaa.com',      'Manager'),
+    ('Joseph',   'Hoefner',      'jhoefner@nyaaa.com',      'Dispatcher'),
+    ('Justine',  'Semple',       'jsemple@nyaaa.com',       'Dispatcher'),
+    ('Kateri',   'Filippi',      'kfilippi@nyaaa.com',      'Dispatcher'),
+    ('Kathleen', 'Reeve',        'kreeve@nyaaa.com',        'Dispatcher'),
+    ('Katie',    'Tamez',        'ktamez@nyaaa.com',        'Dispatcher'),
+    ('Kenneth',  'White',        'kwhite@nyaaa.com',        'Dispatcher'),
+    ('Kristin',  'Jackson',      'kjackson@nyaaa.com',      'Dispatcher'),
+    ('Kristen',  'Hartman',      'khartman@nyaaa.com',      'Supervisor'),
+    ('Lynn',     'Pilarski',     'lpilarski@nyaaa.com',     'Dispatcher'),
+    ('Mark',     'Mika',         'mmika@nyaaa.com',         'Manager'),
+    ('Marisa',   'Tanner',       'mtanner@nyaaa.com',       'Dispatcher'),
+    ('Marneen',  'Carter',       'mcarter@nyaaa.com',       'Dispatcher'),
+    ('Mary',     'Trichilo',     'mtrichilo@nyaaa.com',     'Supervisor'),
+    ('Matthew',  'Spencer',      'mspencer@nyaaa.com',      'Dispatcher'),
+    ('Michael',  'Martinick',    'mmartinick@nyaaa.com',    'Supervisor'),
+    ('Paige',    'White',        'pwhite@nyaaa.com',        'Dispatcher'),
+    ('Robert',   'Lyle',         'rlyle@nyaaa.com',         'Manager'),
+    ('Robert',   'Prendergast',  'rprendergast@nyaaa.com',  'Manager'),
+    ('Samantha', 'Hendrix',      'shendrix@nyaaa.com',      'Dispatcher'),
+    ('Shawn',    'Gancasz',      'sgancasz@nyaaa.com',      'Assistant Manager'),
+    ('Stephen',  'Horn',         'shorn@nyaaa.com',         'Manager'),
+    ('Todd',     'Coulter',      'tcoulter@nyaaa.com',      'Manager'),
+    ('Tyler',    'LaFave',       'tlafave@nyaaa.com',       'Dispatcher'),
+]
+
+# Known SF IDs, channels, and observer flags — sourced from verified registry
+_DISPATCHER_SF_SEED = [
+    ('jharrington@nyaaa.com',  '005Pb0000009r4FIAQ', 'Fleet',      False),
+    ('jcarroll@nyaaa.com',     '005Pb0000009r4LIAQ', 'Fleet',      False),
+    ('calger@nyaaa.com',       '005Pb0000009qjBIAQ', 'Towbook',    False),
+    ('khartman@nyaaa.com',     '005Pb0000009qjDIAQ', 'Towbook',    False),
+    ('sgancasz@nyaaa.com',     '005Pb0000009r4CIAQ', 'Mixed',      False),
+    ('dkalenda@nyaaa.com',     '005Pb0000009qjGIAQ', 'Towbook',    False),
+    ('mtrichilo@nyaaa.com',    '005Pb0000009qjUIAQ', 'Supervisor', False),
+    ('cmacneil@nyaaa.com',     '005Pb0000009qjbIAA', 'Overnight',  False),
+    ('shorn@nyaaa.com',        '005Pb0000009qjaIAA', 'Overnight',  False),
+    ('rprendergast@nyaaa.com', '005Pb0000009qjgIAA', None,         True),
+    ('tcoulter@nyaaa.com',     '005Pb0000009qjXIAQ', None,         True),
+    ('mmika@nyaaa.com',        '005Pb0000009qjcIAA', None,         True),
+    ('rlyle@nyaaa.com',        '005Pb00000qNc6gIAC', None,         True),
+]
+
+
+def _ensure_dispatchers_table():
+    """Create core.dispatchers table with sf_user_id/channel/observer and seed roster."""
+    try:
+        import db_adapter
+        with db_adapter.writer() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS dispatchers (
+                    id         SERIAL PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name  TEXT NOT NULL,
+                    email      TEXT UNIQUE NOT NULL,
+                    position   TEXT NOT NULL,
+                    sf_user_id TEXT,
+                    channel    TEXT,
+                    observer   BOOLEAN NOT NULL DEFAULT FALSE,
+                    active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            # Add columns that may be absent from earlier schema version
+            for col_ddl in (
+                "ALTER TABLE dispatchers ADD COLUMN IF NOT EXISTS sf_user_id TEXT",
+                "ALTER TABLE dispatchers ADD COLUMN IF NOT EXISTS channel TEXT",
+                "ALTER TABLE dispatchers ADD COLUMN IF NOT EXISTS observer BOOLEAN NOT NULL DEFAULT FALSE",
+            ):
+                db.execute(col_ddl)
+
+            for first, last, email, position in _DISPATCHER_SEED:
+                db.execute("""
+                    INSERT INTO dispatchers (first_name, last_name, email, position)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (email) DO NOTHING
+                """, (first, last, email, position))
+
+            # Seed SF IDs and channels; always set observer flag from authoritative list
+            for email, sf_id, channel, observer in _DISPATCHER_SF_SEED:
+                db.execute("""
+                    UPDATE dispatchers
+                    SET sf_user_id = COALESCE(sf_user_id, %s),
+                        channel    = COALESCE(channel, %s),
+                        observer   = %s
+                    WHERE email = %s
+                """, (sf_id, channel, observer, email))
+
+            # dfisher excluded from dispatch scoring per spec
+            db.execute("UPDATE dispatchers SET observer = TRUE WHERE email = 'dfisher@nyaaa.com'")
+
+        import logging
+        logging.getLogger('startup').info(
+            "dispatchers table ensured (%d rows, %d sf_ids seeded)",
+            len(_DISPATCHER_SEED), len(_DISPATCHER_SF_SEED),
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger('startup').warning("Could not ensure dispatchers table: %s", e)
+
+
 @app.on_event("startup")
 async def startup():
     _ensure_cache_table()
+    _ensure_dispatchers_table()
 
     import users
     users.seed_users()

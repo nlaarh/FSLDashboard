@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { X, Sparkles, Loader2, ChevronRight, AlertCircle, Printer, Mail, AlertTriangle, HelpCircle } from 'lucide-react'
 import { fetchDispatcherInsight } from '../api'
+import { MetricHelpPanel } from './DispatchScoreDetailHelp'
 
 const TIER_COLOR = {
   Elite:           'text-amber-300',
@@ -26,97 +27,6 @@ function ScoreBar({ label, value, max, color = 'bg-brand-500' }) {
       </div>
       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  )
-}
-
-const METRIC_HELP = [
-  {
-    label: 'Score (0–100)',
-    color: 'text-slate-200',
-    def: 'Overall score built from four areas: Completion Quality (40 pts) + Speed (25 pts) + Reliability (20 pts) + Volume (15 pts). Tiers: Elite 85+, Proficient 70–84, Developing 50–69, Needs Support under 50.',
-    use: 'Use to rank dispatchers and set coaching priorities. Click into the four bars below the score to see which area is pulling the number down.',
-  },
-  {
-    label: 'Completion Quality (40 pts)',
-    color: 'text-emerald-400',
-    def: 'Did the drivers this dispatcher assigned actually complete the call? Harder call types count more than easy ones — a tow pick-up or winch-out is worth more than a battery call. This way a dispatcher handling tough calls is not unfairly compared to one handling easy ones.',
-    use: 'Low here almost always means driver selection — wrong skill, wrong territory, or a lower-tier driver sent on a complex call. Look at the Call Type Mix to see what types are in the queue.',
-  },
-  {
-    label: 'Speed (25 pts)',
-    color: 'text-blue-400',
-    def: 'Typical minutes from when a service call lands in the queue to when the dispatcher assigns a driver. Calls that waited over 2 hours are excluded — those are usually calls inherited from the previous shift and are not fair to count.',
-    use: 'If this score is low, the dispatcher is slow to pick up new calls. Coach on checking the queue more frequently and staying on top of FSLPulse Live Dispatch.',
-  },
-  {
-    label: 'Reliability (20 pts)',
-    color: 'text-amber-400',
-    def: 'What percentage of calls took over 30 minutes to get a driver? A dispatcher can have a decent average and still leave many members waiting a long time because of specific spikes.',
-    use: 'High percentage here with an acceptable average usually points to a specific time window — shift change, busy hours, or certain call types. Look at the Response Time chart to spot the pattern.',
-  },
-  {
-    label: 'Volume (15 pts)',
-    color: 'text-purple-400',
-    def: 'Total calls dispatched in the last 90 days. With fewer than 20 calls, the other scores are not reliable enough to act on.',
-    use: 'Low volume means interpret the other scores cautiously. This applies to supervisors and part-time dispatchers. Volume is weighted lowest so full-time dispatchers are not penalized against part-time.',
-  },
-  {
-    label: 'Completion Rate',
-    color: 'text-slate-300',
-    def: 'Simple percentage of assigned calls that were completed — no adjustments for call difficulty.',
-    use: 'Compare to Fair Completion Rate below. A big gap between the two means this dispatcher handles many hard calls and should be recognized for it.',
-  },
-  {
-    label: 'Fair Completion Rate',
-    color: 'text-slate-300',
-    def: 'Completion rate where harder calls count more than easy ones — tow pick-ups and winch-outs are worth more than lockouts or battery calls. This is the most accurate way to compare dispatchers with different call mixes.',
-    use: 'This is the number that matters most for outcome coaching. Under 80% is a concern regardless of what types of calls this dispatcher handles.',
-  },
-  {
-    label: 'Typical Response Time',
-    color: 'text-slate-300',
-    def: 'The midpoint speed — half of all assignments happened faster, half took longer. Calls over 2 hours are excluded to avoid overnight backlog distorting the number.',
-    use: 'The single best speed indicator. Above 20 minutes means the dispatcher is routinely slow to assign drivers, not just occasionally.',
-  },
-  {
-    label: 'Late Assignments',
-    color: 'text-slate-300',
-    def: 'Percentage of calls where it took more than 30 minutes to assign a driver.',
-    use: 'Catches patterns that the average misses. High Late Assignments with a decent Typical Response Time = specific hours or situations causing delays. Use FSLPulse Dispatch Trends to find when.',
-  },
-  {
-    label: 'Typical Arrival',
-    color: 'text-slate-300',
-    def: 'Median time from driver assignment to the driver arriving On Location. This is what the member actually experiences — how long they wait after being told a driver is on the way. Calls over 4 hours are excluded.',
-    use: 'The most direct signal of driver selection quality. A dispatcher who assigns quickly but picks a driver 90 minutes away still creates a bad experience. Compare within the same channel (Fleet vs Towbook) — contractor travel inherently takes longer.',
-  },
-  {
-    label: 'Late Arrivals',
-    color: 'text-slate-300',
-    def: 'Percentage of assignments where the driver took over 60 minutes to arrive after being assigned.',
-    use: 'High late arrivals with a reasonable Typical Arrival = specific calls or times where driver selection went wrong. Look at the call type mix for clues — complex calls with under-qualified or distant drivers drive this number up.',
-  },
-]
-
-function MetricHelpPanel({ onClose }) {
-  return (
-    <div className="mx-6 mt-0 mb-2 rounded-xl border border-slate-700/50 bg-slate-900/80 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700/40">
-        <span className="text-xs font-semibold text-slate-300">Score Definitions &amp; How to Use</span>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors">
-          <X className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-        {METRIC_HELP.map(m => (
-          <div key={m.label} className="bg-slate-800/40 rounded-lg border border-slate-700/30 p-3 space-y-1.5">
-            <span className={`text-[11px] font-bold ${m.color}`}>{m.label}</span>
-            <p className="text-[10px] text-slate-400 leading-relaxed"><span className="text-slate-500 font-semibold">What: </span>{m.def}</p>
-            <p className="text-[10px] text-slate-500 leading-relaxed"><span className="text-slate-600 font-semibold">Use: </span>{m.use}</p>
-          </div>
-        ))}
       </div>
     </div>
   )
@@ -241,17 +151,22 @@ export default function DispatchScoreDetail({ dispatcher: d, onClose }) {
 
     const insightRows = insight && !insight.error
       ? `<tr><td colspan="2" style="padding:8px 0 4px;font-weight:bold;color:#374151">AI Coaching Summary</td></tr>
-         <tr><td colspan="2" style="padding:4px 0 12px;color:#4b5563;font-style:italic">${insight.summary || ''}</td></tr>`
+         <tr><td colspan="2" style="padding:4px 0 8px;color:#111827;font-weight:600">${insight.headline || insight.summary || ''}</td></tr>
+         ${insight.manager_action ? `<tr><td colspan="2" style="padding:4px 0 12px;color:#2563eb;border-left:3px solid #3b82f6;padding-left:8px"><strong>Manager's Next Step:</strong> ${insight.manager_action}</td></tr>` : ''}`
       : ''
 
-    const strengthRows = insight?.strengths?.length
-      ? insight.strengths.map(s =>
+    const strengthItems = insight?.what_works || insight?.strengths || []
+    const strengthRows = strengthItems.length
+      ? strengthItems.map(s =>
           `<tr><td style="padding:3px 8px 3px 0;color:#059669;font-weight:600;white-space:nowrap">✓ ${s.title}</td><td style="padding:3px 0;color:#4b5563">${s.detail}</td></tr>`
         ).join('')
       : ''
 
-    const devRows = insight?.development_areas?.length
-      ? insight.development_areas.map(s =>
+    const devItems = insight?.the_gap
+      ? [{ title: insight.the_gap.title, detail: `${insight.the_gap.detail}${insight.the_gap.root_cause ? ' Root cause: ' + insight.the_gap.root_cause : ''}` }]
+      : (insight?.development_areas || [])
+    const devRows = devItems.length
+      ? devItems.map(s =>
           `<tr><td style="padding:3px 8px 3px 0;color:#d97706;font-weight:600;white-space:nowrap">△ ${s.title}</td><td style="padding:3px 0;color:#4b5563">${s.detail}</td></tr>`
         ).join('')
       : ''
@@ -266,16 +181,16 @@ export default function DispatchScoreDetail({ dispatcher: d, onClose }) {
       <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Score</th>
       <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Tier</th>
       <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Fair Completion</th>
-      <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Typical Response Time</th>
-      <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Late Assignments</th>
+      <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">PTA Rate</th>
+      <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Avg Response</th>
       <th style="border:1px solid #d1d5db;padding:6px 10px;text-align:left;font-size:12px">Dispatches</th>
     </tr>
     <tr>
       <td style="border:1px solid #d1d5db;padding:6px 10px;font-weight:bold">${d.score}/100</td>
       <td style="border:1px solid #d1d5db;padding:6px 10px">${tierStr}</td>
       <td style="border:1px solid #d1d5db;padding:6px 10px">${d.adj_comp_pct}%</td>
+      <td style="border:1px solid #d1d5db;padding:6px 10px">${d.pta_rate != null ? d.pta_rate + '%' : '—'}</td>
       <td style="border:1px solid #d1d5db;padding:6px 10px">${d.median_rt_min}m</td>
-      <td style="border:1px solid #d1d5db;padding:6px 10px">${d.slow_pct}%</td>
       <td style="border:1px solid #d1d5db;padding:6px 10px">${d.total?.toLocaleString()}</td>
     </tr>
   </table>
@@ -327,11 +242,20 @@ export default function DispatchScoreDetail({ dispatcher: d, onClose }) {
         <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-700/50 px-6 py-4 flex items-start justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-100">{d.name}</h2>
-            <p className="text-xs text-slate-500 mt-0.5 capitalize flex items-center gap-2">
+            <p className="text-xs text-slate-500 mt-0.5 capitalize flex items-center gap-2 flex-wrap">
               {d.role.replace('ers-', '')} · 90-day rolling window · {d.total?.toLocaleString()} dispatches
               {d.channel && (
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-slate-700/30 text-slate-400 border-slate-700/40 normal-case">
                   {d.channel}
+                </span>
+              )}
+              {d.channel_rank != null && d.channel_size != null && (
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border normal-case ${
+                  d.channel_rank === 1
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    : 'bg-slate-700/30 text-slate-400 border-slate-700/40'
+                }`}>
+                  {d.channel} #{d.channel_rank} of {d.channel_size}
                 </span>
               )}
             </p>
@@ -411,15 +335,25 @@ export default function DispatchScoreDetail({ dispatcher: d, onClose }) {
           </div>
 
           {/* Key stats */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: 'Completion Rate',      value: `${d.raw_comp_pct}%`,  tone: d.raw_comp_pct >= 90 ? 'text-emerald-400' : d.raw_comp_pct >= 80 ? 'text-amber-400' : 'text-red-400' },
-              { label: 'Fair Completion Rate', value: `${d.adj_comp_pct}%`,  tone: d.adj_comp_pct >= 90 ? 'text-emerald-400' : d.adj_comp_pct >= 80 ? 'text-amber-400' : 'text-red-400' },
-              { label: 'Late Assignments',     value: `${d.slow_pct}%`,      tone: d.slow_pct < 15 ? 'text-emerald-400' : d.slow_pct < 30 ? 'text-amber-400' : 'text-red-400' },
-            ].map(({ label, value, tone }) => (
+              { label: 'Fair Completion',  value: `${d.adj_comp_pct}%`,
+                tone: d.adj_comp_pct >= 90 ? 'text-emerald-400' : d.adj_comp_pct >= 80 ? 'text-amber-400' : 'text-red-400',
+                sub: 'complexity-adjusted' },
+              { label: 'PTA Rate',         value: d.pta_rate != null ? `${d.pta_rate}%` : '—',
+                tone: d.pta_rate == null ? 'text-slate-500' : d.pta_rate >= 80 ? 'text-emerald-400' : d.pta_rate >= 65 ? 'text-amber-400' : 'text-red-400',
+                sub: 'on-time arrivals' },
+              { label: 'Late Assignments', value: `${d.slow_pct}%`,
+                tone: d.slow_pct < 15 ? 'text-emerald-400' : d.slow_pct < 30 ? 'text-amber-400' : 'text-red-400',
+                sub: '>30 min to assign' },
+              { label: 'Fast Dispatch',    value: `${d.fast_pct}%`,
+                tone: d.fast_pct >= 50 ? 'text-emerald-400' : d.fast_pct >= 25 ? 'text-amber-400' : 'text-red-400',
+                sub: '≤5 min response' },
+            ].map(({ label, value, tone, sub }) => (
               <div key={label} className="glass rounded-xl border border-slate-700/40 p-3 text-center">
                 <div className={`text-xl font-bold ${tone}`}>{value}</div>
                 <div className="text-[10px] text-slate-500 mt-1">{label}</div>
+                {sub && <div className="text-[9px] text-slate-700 mt-0.5">{sub}</div>}
               </div>
             ))}
           </div>
@@ -509,7 +443,55 @@ export default function DispatchScoreDetail({ dispatcher: d, onClose }) {
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     {insight.error}
                   </div>
+                ) : insight.headline ? (
+                  /* v2/v3 format: headline + what_works + the_gap + coaching_starters + development_plan + manager_action */
+                  <>
+                    {insight.headline && (
+                      <p className="text-sm font-bold text-slate-100 leading-snug border-l-2 border-purple-500/50 pl-3">
+                        {insight.headline}
+                      </p>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <InsightSection
+                        title="What's Working"
+                        items={insight.what_works}
+                        tone="text-emerald-400"
+                        dot="bg-emerald-500"
+                      />
+                      {insight.the_gap && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Focus Area</p>
+                          <div className="flex gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 bg-amber-500" />
+                            <div>
+                              <span className="text-xs font-semibold text-amber-400">{insight.the_gap.title} — </span>
+                              <span className="text-xs text-slate-400">{insight.the_gap.detail}</span>
+                              {insight.the_gap.root_cause && (
+                                <p className="text-[10px] text-slate-600 mt-1 italic">Root cause: {insight.the_gap.root_cause}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {insight.coaching_starters?.length > 0 && (
+                      <CoachingStarters items={insight.coaching_starters} />
+                    )}
+                    {insight.development_plan && (
+                      <div className="rounded-lg border border-slate-700/40 bg-slate-800/30 p-3 space-y-1">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">30-Day Development Plan</p>
+                        <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{insight.development_plan}</p>
+                      </div>
+                    )}
+                    {insight.manager_action && (
+                      <div className="rounded-lg border border-brand-500/30 bg-brand-500/5 p-3">
+                        <p className="text-[10px] font-bold text-brand-400 uppercase tracking-wider mb-1.5">Manager&apos;s Next Step</p>
+                        <p className="text-xs text-slate-200">{insight.manager_action}</p>
+                      </div>
+                    )}
+                  </>
                 ) : (
+                  /* Legacy v1 format: summary + strengths + development_areas + coaching_starters */
                   <>
                     {insight.summary && (
                       <p className="text-sm text-slate-300 leading-relaxed border-l-2 border-purple-500/40 pl-3">

@@ -148,7 +148,8 @@ export default function UserAdoptionReport() {
                 {[
                   { key: 'name',               label: 'User',             align: 'left'   },
                   { key: 'status_sort',         label: 'Status',           align: 'center' },
-                  { key: 'last_login',          label: 'Last Login',       align: 'center' },
+                  { key: 'sf_last_login',        label: 'SF Last Login',    align: 'center' },
+                  { key: 'last_login',          label: 'App Last Login',   align: 'center' },
                   { key: 'last_seen',           label: 'Last Active',      align: 'center' },
                   { key: 'session_count',       label: 'Sessions',         align: 'center' },
                   { key: 'minutes_this_month',  label: 'Time This Month',  align: 'center' },
@@ -199,6 +200,7 @@ export default function UserAdoptionReport() {
                         </span>
                       )}
                     </td>
+                    <td className="px-3 py-2 text-center text-slate-300 text-xs">{fmtDateTime(row.sf_last_login)}</td>
                     <td className="px-3 py-2 text-center text-slate-300 text-xs">{fmtDateTime(row.last_login)}</td>
                     <td className="px-3 py-2 text-center text-slate-300 text-xs">{fmtDateTime(row.last_seen)}</td>
                     <td className="px-3 py-2 text-center text-slate-300">{row.session_count || '—'}</td>
@@ -212,7 +214,7 @@ export default function UserAdoptionReport() {
                 )
               })}
               {rows.length === 0 && (
-                <tr><td colSpan={7} className="py-8 text-center text-slate-600">No users found</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-slate-600">No users found</td></tr>
               )}
             </tbody>
           </table>

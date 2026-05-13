@@ -195,7 +195,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 ['gantt_label',    'Gantt Label', 'w-[110px]'],
                 ['pta_delta_min',  'PTA Delta',   'w-[72px]'],
                 ['current_wait',   'Wait',        'w-[62px]'],
-                ['territory',      'Territory',   'w-[140px]'],
+                ['territory',      'Territory',   'w-[165px]'],
                 ['city',           'City',        'w-[78px]'],
                 ['work_type',      'Work Type',   'w-[86px]'],
                 ['flag',           'Flag',        'w-[172px]'],
@@ -213,21 +213,11 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 </th>
               ))}
               <th className="w-[38px] px-1 py-2 text-center font-semibold">Assist</th>
-              <th className="w-[100px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
+              <th className="w-[120px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
                 onClick={() => handleSort('kmi_case_number')}>
                 <span className="inline-flex items-center gap-0.5">
                   KMI Case
                   {sortCol === 'kmi_case_number' && (sortDir === 'asc'
-                    ? <ChevronUp className="w-3 h-3 text-blue-400" />
-                    : <ChevronDown className="w-3 h-3 text-blue-400" />
-                  )}
-                </span>
-              </th>
-              <th className="w-[110px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
-                onClick={() => handleSort('kmi_case_status')}>
-                <span className="inline-flex items-center gap-0.5">
-                  KMI Status
-                  {sortCol === 'kmi_case_status' && (sortDir === 'asc'
                     ? <ChevronUp className="w-3 h-3 text-blue-400" />
                     : <ChevronDown className="w-3 h-3 text-blue-400" />
                   )}
@@ -286,7 +276,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Territory */}
-                <td className="px-2 py-1.5 text-slate-300 max-w-[140px] truncate" title={alert.territory}>
+                <td className="px-2 py-1.5 text-slate-300 max-w-[165px] truncate" title={alert.territory}>
                   {alert.territory || '—'}
                 </td>
                 {/* City */}
@@ -358,24 +348,21 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                     <Navigation className="w-3.5 h-3.5" />
                   </button>
                 </td>
-                {/* KMI Case number */}
+                {/* KMI Case + status */}
                 <td className="px-2 py-1.5">
                   {alert.kmi_case_number ? (
-                    <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
-                      target="_blank" rel="noopener noreferrer"
-                      className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
-                      {alert.kmi_case_number}
-                      <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                    </a>
-                  ) : <span className="text-slate-600">—</span>}
-                </td>
-                {/* KMI Status */}
-                <td className="px-2 py-1.5">
-                  {alert.kmi_case_status ? (
-                    <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap',
-                      KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
-                      {alert.kmi_case_status}
-                    </span>
+                    <div className="space-y-0.5">
+                      <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
+                        {alert.kmi_case_number}
+                        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                      </a>
+                      <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border',
+                        KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
+                        {alert.kmi_case_status || '—'}
+                      </span>
+                    </div>
                   ) : <span className="text-slate-600">—</span>}
                 </td>
               </tr>

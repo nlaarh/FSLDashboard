@@ -191,6 +191,7 @@ def adoption_report(user_rows: list[dict]) -> dict:
             "active_since": None,
             "session_count": 0,
             "minutes_this_month": 0,
+            "sf_last_login": row.get("sf_last_login"),
         }
 
     for sess in sessions:
