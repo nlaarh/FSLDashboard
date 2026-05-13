@@ -101,9 +101,9 @@ def touch_session(token: str) -> None:
         with db_adapter.writer() as db:
             db.execute(
                 """UPDATE user_sessions
-                   SET last_seen = %s
-                   WHERE token = %s AND logout_time IS NULL AND expires_at > %s""",
-                (now, token, now),
+                   SET last_seen = %s, expires_at = %s
+                   WHERE token = %s AND logout_time IS NULL""",
+                (now, now + SESSION_TTL_SECONDS, token),
             )
             db.commit()
     except Exception:

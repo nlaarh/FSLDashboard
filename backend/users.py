@@ -238,7 +238,7 @@ def get_session(token: str) -> dict | None:
     with _sess_lock:
         sess = _sessions.get(token)
         now = time.time()
-        if sess and now - sess["login_time"] > 36000:  # 10 hours
+        if sess and now - sess.get("last_seen", sess["login_time"]) > 36000:  # 10h idle
             del _sessions[token]
             _sess_last_flush.pop(token, None)
             return None
