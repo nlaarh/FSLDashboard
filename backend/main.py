@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed
 import cache
 import refresher
+import users as _users
 from repositories import settings, activity
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -71,7 +72,10 @@ async def auth_middleware(request: Request, call_next):
     payload = _verify_cookie(cookie) if cookie else None
     if payload:
         # Access control by department and role
-        username = payload.split(":")[0]
+        parts = payload.split(":")
+        username = parts[0]
+        if len(parts) > 2:
+            _users.keep_alive(parts[2])  # extend expires_at in user_sessions (throttled 1/min)
         dept = _get_department(username)
         if dept == 'finance' and path.startswith('/api/') and not _finance_ok(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted to Accounting only"})

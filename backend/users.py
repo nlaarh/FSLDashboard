@@ -58,7 +58,7 @@ _SEED_USER_DEFS = [
     ('admin',               'SEED_PASS_ADMIN',          'Admin',              'admin',          '',                        ''),
     ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI',      'Nour Laaroubi',     'superadmin',     'nlaaroubi@nyaaa.com',     'executive'),
     # ERS managers — full access
-    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM',      'Tina Ingraham',     'ers-manager',    'tingraham@nyaaa.com',     'ers'),
+    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM',      'Todd Ingraham',     'ers-manager',    'tingraham@nyaaa.com',     'ers'),
     ('dfisher@nyaaa.com',   'SEED_PASS_DFISHER',        'D Fisher',          'ers-manager',    'dfisher@nyaaa.com',       'ers'),
     ('shorn@nyaaa.com',     'SEED_PASS_SHORN',          'S Horn',            'ers-manager',    'shorn@nyaaa.com',         'ers'),
     ('rprendergast@nyaaa.com','SEED_PASS_RPRENDERGAST', 'Robert Prendergast','ers-manager',    'rprendergast@nyaaa.com',  'ers'),
@@ -92,8 +92,10 @@ def seed_users():
     for username, env_var, name, role, email, department in _SEED_USER_DEFS:
         existing = _user_repo.get_user(username)
         if existing:
+            # Don't overwrite name — admin edits should survive restarts.
+            # Only sync role/department/email which are seed-controlled config.
             _user_repo.update_user(
-                username, name=name, role=role, department=department, email=email
+                username, role=role, department=department, email=email
             )
             continue
         password = os.getenv(env_var)
@@ -232,6 +234,11 @@ def _maybe_touch(token: str, now: float) -> None:
     if now - _sess_last_flush.get(token, 0) >= _TOUCH_INTERVAL:
         _sess_last_flush[token] = now
         _session_repo.touch_session(token)
+
+
+def keep_alive(token: str) -> None:
+    """Touch the session on every authenticated request (throttled). Call from auth middleware."""
+    _maybe_touch(token, time.time())
 
 
 def get_session(token: str) -> dict | None:
