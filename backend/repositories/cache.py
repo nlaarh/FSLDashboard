@@ -56,6 +56,18 @@ def cache_get_meta(key: str) -> dict | None:
     return {}
 
 
+def cache_get_any(key: str):
+    """Get cached value regardless of expiry — for stale-while-revalidate."""
+    with db_adapter.reader() as db:
+        row = db.execute("SELECT data FROM cache WHERE key = %s", (key,)).fetchone()
+        if row:
+            try:
+                return json.loads(row["data"])
+            except (json.JSONDecodeError, TypeError):
+                return None
+    return None
+
+
 def cache_delete_stale() -> int:
     """Remove expired cache entries. Returns count deleted."""
     with db_adapter.writer() as db:

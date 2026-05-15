@@ -29,13 +29,27 @@ _DEFAULT_AUDIT_PROMPT = (
     "\n\nFraud signals to watch: GPS-recorded miles much lower than claimed; En Route and On Location timestamps "
     "seconds apart (driver never actually drove to the scene); claimed minutes >> on-scene time; "
     "same member called multiple garages same day; woa_description mentions discrepancies or flags the driver. "
+    "\n\nMH RULE (Medium/Heavy Duty): Follow this decision tree — NEVER tell the accountant to look up or verify weight. "
+    "Threshold: ≥10,000 lbs GVWR OR vehicle_group in (MD, HD, DW). "
+    "Step 1: If vehicle.weight ≥10,000 lbs → state 'Vehicle qualifies for MH: [weight] lbs ≥ 10,000'. Done. "
+    "Step 2: If vehicle.group is MD/HD/DW → state 'Vehicle qualifies for MH: group [group]'. Done. "
+    "Step 3: If vehicle.weight is null/0 → compute estimated_gvw_lbs from vehicle.make + vehicle.model. "
+    "  Use your knowledge of published GVWR specs (Ram 2500=10000, F-250=10000, F-350=14000, Ram 3500=14000, semi=80000, F-150=7050). "
+    "  If estimated_gvw_lbs ≥10,000 → state 'Vehicle qualifies for MH based on make/model: [Make Model] has a GVWR of ~[N] lbs ≥ 10,000'. "
+    "  If estimated_gvw_lbs <10,000 → state 'Vehicle does not qualify: [Make Model] GVWR ~[N] lbs < 10,000'. "
+    "  Only if make+model is completely unknown → note 'SF weight field is empty and make/model is unknown'. "
+    "NEVER say 'verify weight' or 'check axles' when you can determine the answer from make/model. "
     "\n\nRespond ONLY with valid JSON — no markdown fences, no commentary outside the JSON: "
     '{"headline":"One sentence: what service was claimed and the key finding",'
     '"story":"3-5 sentences for the accountant: what service was done, what GPS/timing data shows, key facts to know",'
     '"fraud_signals":["red flag if found — omit array entirely if none"],'
     '"anomalies":["yellow flag / unusual finding — omit if none"],'
     '"what_to_do":["specific action for the accountant, e.g. Verify GPS trace in SF, Call garage about X"],'
-    '"ask_garage":["specific question to ask the garage if something is unclear — omit if everything is consistent"]}'
+    '"ask_garage":["specific question to ask the garage if something is unclear — omit if everything is consistent"],'
+    '"estimated_gvw_lbs":null}'
+    "\n\nestimated_gvw_lbs: integer GVWR in lbs based on vehicle_make + vehicle_model in the data. "
+    "Use published specs (e.g. Ford F-350 = 14000, Ram 2500 = 10000, semi = 80000, F-150 = 7050). "
+    "Return null for passenger cars or if make/model is unknown."
 )
 
 
@@ -98,7 +112,8 @@ def _google_distance(api_key, origin_lat, origin_lon, dest_lat, dest_lon, origin
 
 def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est_tow,
                          on_loc_minutes=None, vehicle_weight=None, vehicle_group=None,
-                         all_wolis=None, long_tow_used=False):
+                         all_wolis=None, long_tow_used=False,
+                         vehicle_make=None, vehicle_model=None):
     """Pure math recommendation. Returns (rec, step_by_step_reason, verification)."""
     NAMES = {'ER': 'Enroute Miles', 'TW': 'Tow Miles', 'TB': 'Tow Miles Basic',
              'TT': 'Tow Miles Plus (5-30mi)', 'TU': 'Tow Miles Plus (30-100mi)',
@@ -204,7 +219,18 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
             L.append(f'→ Group {vehicle_group} = heavy → APPROVE'); return 'approve', '\n'.join(L), v
         if vehicle_weight and vehicle_weight < 10000:
             L.append(f'→ {vehicle_weight} lbs < 10,000 → REVIEW'); return 'review', '\n'.join(L), v
-        L.append(f'→ No weight data → REVIEW'); return 'review', '\n'.join(L), v
+        # No SF weight — try make/model lookup as fallback
+        if vehicle_make or vehicle_model:
+            est_gvw = _lookup_gvw_by_vehicle(vehicle_make or '', vehicle_model or '')
+            if est_gvw:
+                v['estimated_gvw_from_lookup'] = est_gvw
+                L.append(f'  Lookup estimate: {vehicle_make or ""} {vehicle_model or ""} ≈ {est_gvw} lbs')
+                if est_gvw >= 10000:
+                    L.append(f'→ Estimated {est_gvw} lbs ≥ 10,000 (from make/model lookup) → APPROVE')
+                    return 'approve', '\n'.join(L), v
+                L.append(f'→ Estimated {est_gvw} lbs < 10,000 (from make/model lookup) → REVIEW')
+                return 'review', '\n'.join(L), v
+        L.append(f'→ No weight data and make/model unknown → REVIEW'); return 'review', '\n'.join(L), v
     elif code == 'TL':
         wolis = all_wolis or []
         has_tow = any(w.get('code') in TOW_CODES for w in wolis)
@@ -426,3 +452,98 @@ def match_best_woli(wolis: list, requested_qty, wo: dict | None = None) -> dict:
             return {'product': '(not on WO)', 'code': '', 'quantity': None,
                     'description': None, 'id': '', '_synthetic': True, '_no_match': True}
     return non_ba[0]
+
+
+# ── GVW Estimation ────────────────────────────────────────────────────────────
+
+def _lookup_gvw_by_vehicle(make: str, model: str) -> int | None:
+    """Return typical max GVWR (lbs) for common vehicles. None if unknown."""
+    combined = f"{make} {model}".lower()
+    patterns = [
+        # Super heavy duty
+        (['f-450','f450'],                                       16500),
+        (['f-550','f550'],                                       19500),
+        (['f-650','f650','f-750','f750'],                        33000),
+        # HD pickups
+        (['f-350','f350','ram 3500','3500 hd','silverado 3500','sierra 3500','gmc 3500'], 14000),
+        (['f-250','f250','ram 2500','2500 hd','silverado 2500','sierra 2500','gmc 2500'], 10000),
+        # LD pickups
+        (['f-150','f150','ram 1500','silverado 1500','sierra 1500',
+          'tacoma','tundra','colorado','ranger','frontier','titan'],                       7050),
+        # Cargo vans
+        (['transit 350','transit 250','promaster',
+          'express 3500','express 2500','savana'],                                         8600),
+        # Semis / Class 8
+        (['semi','tractor-trailer','peterbilt','kenworth','freightliner',
+          'volvo','mack','international','western star'],                                  80000),
+        # Generic box/straight
+        (['box truck','straight truck'],                                                   26000),
+    ]
+    for keywords, gvw in patterns:
+        if any(kw in combined for kw in keywords):
+            return gvw
+    return None
+
+
+_CLASS_GVW = {1: 6000, 2: 10000, 3: 14000, 4: 16000, 5: 19500, 6: 26000, 7: 33000, 8: 80000}
+
+
+def estimate_gvw(make: str, model: str, axle_count: float,
+                 vehicle_group: str, description: str, sf_weight: float) -> dict | None:
+    """Estimate GVW independently from make/model to cross-check SF Weight_lbs__c.
+    Never uses sf_weight as the answer — always computes from vehicle identity.
+    sf_weight is stored separately so auditors can compare.
+    """
+    desc = (description or '').lower()
+
+    def _result(gvw, source, confidence):
+        r = {'gvw': gvw, 'source': source, 'confidence': confidence}
+        if sf_weight and sf_weight > 0:
+            r['sf_weight'] = int(sf_weight)
+        return r
+
+    # 1. Parse explicit weight from description ("26,000 lbs", "26000 lb")
+    m = _re.search(r'(\d{1,3})[,](\d{3})\s*(?:lb|lbs|pound)', desc)
+    if not m:
+        m = _re.search(r'(\d{5,6})\s*(?:lb|lbs|pound)', desc)
+    if m:
+        try:
+            raw = m.group(0).replace(',', '')
+            lbs = int(_re.search(r'\d+', raw).group())
+            if 2000 < lbs < 150000:
+                return _result(lbs, 'description', 'medium')
+        except Exception:
+            pass
+
+    # 2. DOT class from description ("class 6", "class 8")
+    m = _re.search(r'class\s*([1-8])', desc)
+    if m:
+        return _result(_CLASS_GVW[int(m.group(1))], 'description_class', 'medium')
+
+    # 3. Keywords for heavy vehicles in description
+    if any(kw in desc for kw in ['semi','tractor-trailer','18-wheel','18 wheel','big rig','peterbilt','kenworth','freightliner','volvo truck','mack truck']):
+        return _result(80000, 'description_keyword', 'medium')
+    if any(kw in desc for kw in ['box truck','straight truck','medium duty','heavy duty','medium-duty','heavy-duty']):
+        return _result(26000, 'description_keyword', 'low')
+    if any(kw in desc for kw in ['motorhome','motor home','rv ',' rv,','coach']):
+        return _result(26000, 'description_keyword', 'low')
+
+    # 4. Make + model lookup
+    if make or model:
+        gvw = _lookup_gvw_by_vehicle(make or '', model or '')
+        if gvw:
+            return _result(gvw, 'make_model', 'low')
+
+    # 5. Axle count (3+ axles → at least medium duty)
+    if axle_count and axle_count >= 3:
+        return _result(26001, 'axle_count', 'low')
+
+    # 6. Vehicle group field
+    if vehicle_group:
+        grp = vehicle_group.upper()
+        if 'HEAVY' in grp:
+            return _result(26001, 'vehicle_group', 'low')
+        if 'MEDIUM' in grp:
+            return _result(14000, 'vehicle_group', 'low')
+
+    return None

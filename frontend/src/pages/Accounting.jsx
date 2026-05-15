@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, Fragment, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
-  Search, ChevronUp, ChevronDown, RefreshCw,
-  AlertTriangle, HelpCircle, X, Download,
+  ChevronUp, ChevronDown,
+  AlertTriangle, HelpCircle, X, Camera,
 } from 'lucide-react'
-import { fetchWOAdjustments, fetchWOAAudit } from '../api'
-import AccountingAuditPanel from '../components/AccountingAuditPanel'
+import { fetchWOAdjustments, fetchWOAAudit, refreshAccountingWOAs } from '../api'
 import AccountingAnalytics from '../components/AccountingAnalytics'
+import AccountingToolbar from '../components/AccountingToolbar'
 import HelpAccounting from '../components/HelpAccounting'
 import { productCode, formatQty } from '../utils/formatting'
 
@@ -120,21 +121,12 @@ function Th({ label, col, sort, onSort, right = false }) {
   )
 }
 
-function AuditToggle({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, onOpenWoa }) {
-  return (
-    <div>
-      <AccountingAuditPanel woaId={woaId} onComplete={onComplete} recReason={recReason} siblingWoas={siblingWoas}
-        allWoSiblings={allWoSiblings}
-        isLowMateriality={isLowMateriality} estimatedUsd={estimatedUsd} rowRec={rowRec}
-        onOpenWoa={onOpenWoa} />
-    </div>
-  )
-}
-
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Accounting() {
+  const navigate = useNavigate()
   const [items, setItems] = useState([])
+  const [listCachedAt, setListCachedAt] = useState('')
   const [total, setTotal] = useState(0)
   const [totals, setTotals] = useState({})
   const [loading, setLoading] = useState(true)
@@ -143,11 +135,10 @@ export default function Accounting() {
   const [searchDebounce, setSearchDebounce] = useState('')
   const [product, setProduct] = useState('All')
   const [recFilter, setRecFilter] = useState('All')
-  const [statusFilter, setStatusFilter] = useState('open')
+  const [statusFilter, setStatusFilter] = useState('New')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [sort, setSort] = useState({ col: 'created_date', dir: 'desc' })
-  const [expanded, setExpanded] = useState(null)
   const [page, setPage] = useState(0)
   const [activeTab, setActiveTab] = useState('woa')
   const [auditOverrides, setAuditOverrides] = useState({})
@@ -175,8 +166,42 @@ export default function Accounting() {
     setLoading(true)
     setError(null)
     fetchWOAdjustments(statusFilter, page, PAGE_SIZE, product === 'All' ? '' : product, recFilter === 'All' ? '' : recFilter, searchDebounce, sort.col, sort.dir, startDate, endDate)
-      .then(data => { setItems(data.items || []); setTotal(data.total || 0); setTotals(data.totals || {}) })
+      .then(data => {
+        setItems(data.items || [])
+        setListCachedAt(data.cached_at || '')
+        // Stagger-prefetch first 15 New WOAs so drill-down is instant
+        const toWarm = (data.items || []).filter(r => r.status === 'New').slice(0, 15)
+        if (toWarm.length > 0) {
+          setTimeout(() => {
+            toWarm.forEach((item, i) => {
+              setTimeout(() => {
+                if (item.id && !_prefetching.current.has(item.id)) {
+                  _prefetching.current.add(item.id)
+                  fetchWOAAudit(item.id).catch(() => {}).finally(() => _prefetching.current.delete(item.id))
+                }
+              }, i * 400)
+            })
+          }, 2000)
+        }
+        setTotal(data.total || 0)
+        setTotals(data.totals || {})
+      })
       .catch(e => setError(e.message || 'Failed to load adjustments'))
+      .finally(() => setLoading(false))
+  }, [statusFilter, page, product, recFilter, searchDebounce, sort, startDate, endDate])
+
+  const handleRefresh = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    refreshAccountingWOAs()
+      .then(() => fetchWOAdjustments(
+        statusFilter, page, PAGE_SIZE,
+        product === 'All' ? '' : product,
+        recFilter === 'All' ? '' : recFilter,
+        searchDebounce, sort.col, sort.dir, startDate, endDate,
+      ))
+      .then(data => { setItems(data.items || []); setTotal(data.total || 0); setTotals(data.totals || {}); setListCachedAt(data.cached_at || '') })
+      .catch(e => setError(e.message || 'Failed to refresh adjustments'))
       .finally(() => setLoading(false))
   }, [statusFilter, page, product, recFilter, searchDebounce, sort, startDate, endDate])
 
@@ -203,7 +228,6 @@ export default function Accounting() {
       : { col, dir: SORT_DEF[col] ?? 'asc' }
     )
     setPage(0)
-    setExpanded(null)
   }
 
   const totalRequested = totals.requested || 0
@@ -212,46 +236,29 @@ export default function Accounting() {
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Accounting</h1>
-          <p className="text-slate-500 text-xs mt-0.5">
-            Work Order Adjustments · {total} pending review
-          </p>
-          <p className="text-slate-600 text-[10px] mt-0.5">
-            {statusFilter === 'open'
-              ? 'Showing open adjustments (Status = New)'
-              : 'Showing all adjustments including already reviewed'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-        <a href={`/api/accounting/wo-adjustments/export?status=${statusFilter}&product_filter=${product === 'All' ? '' : product}&rec_filter=${recFilter === 'All' ? '' : recFilter}&start_date=${startDate}&end_date=${endDate}&q=${encodeURIComponent(searchDebounce)}&_t=${Date.now()}`}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700
-                     text-slate-400 hover:text-white text-xs font-medium transition-all">
-          <Download className="w-3.5 h-3.5" />Export
-        </a>
-        <button onClick={load} disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700
-                     text-slate-400 hover:text-white text-xs font-medium transition-all disabled:opacity-50">
-          <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} />
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
-        </div>
-      </div>
-
-      {/* Tab Bar */}
-      <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60 -mx-0">
-        {[{ id: 'woa', label: 'WO Adjustments' }, { id: 'analytics', label: 'Analytics' }, { id: 'help', label: 'Help & Guide' }].map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={clsx('px-4 py-2 text-xs font-medium border-b-2 transition-colors -mb-px',
-              activeTab === t.id
-                ? 'border-brand-400 text-brand-300'
-                : 'border-transparent text-slate-500 hover:text-slate-300')}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <AccountingToolbar
+        total={total}
+        listCachedAt={listCachedAt}
+        statusFilter={statusFilter}
+        product={product}
+        recFilter={recFilter}
+        startDate={startDate}
+        endDate={endDate}
+        search={search}
+        searchDebounce={searchDebounce}
+        loading={loading}
+        activeTab={activeTab}
+        products={PRODUCTS}
+        onStatusFilterChange={(value) => { setStatusFilter(value); setPage(0) }}
+        onProductChange={(value) => { setProduct(value); setPage(0) }}
+        onRecFilterChange={(value) => { setRecFilter(value); setPage(0) }}
+        onStartDateChange={(value) => { setStartDate(value); setPage(0) }}
+        onEndDateChange={(value) => { setEndDate(value); setPage(0) }}
+        onClearDates={() => { setStartDate(''); setEndDate(''); setPage(0) }}
+        onSearchChange={(value) => { setSearch(value); setPage(0) }}
+        onRefresh={handleRefresh}
+        onTabChange={setActiveTab}
+      />
 
       {activeTab === 'analytics' && <AccountingAnalytics status={statusFilter}
         onDrillDown={(prod) => { setProduct(prod); setActiveTab('woa'); setPage(0); }} />}
@@ -281,69 +288,6 @@ export default function Accounting() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <div className="relative">
-          <select value={product} onChange={e => { setProduct(e.target.value); setExpanded(null); setPage(0); }}
-            className="bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2 pr-8
-                       focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
-            {PRODUCTS.map(p => (
-              <option key={p.val} value={p.val}>{p.label}</option>
-            ))}
-          </select>
-          <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-        </div>
-
-        <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
-          {['open', 'all'].map(s => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={clsx(
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                statusFilter === s ? 'bg-brand-600/20 text-brand-300' : 'text-slate-500 hover:text-white',
-              )}>
-              {s === 'open' ? 'Open' : 'All'}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
-          {['All', 'Approve', 'Review', 'Credit'].map(f => (
-            <button key={f} onClick={() => { setRecFilter(f); setPage(0); setExpanded(null) }}
-              className={clsx(
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                recFilter === f
-                  ? f === 'Approve' ? 'bg-emerald-600/20 text-emerald-300'
-                    : f === 'Review' ? 'bg-amber-600/20 text-amber-300'
-                    : f === 'Credit' ? 'bg-red-600/20 text-red-300'
-                    : 'bg-brand-600/20 text-brand-300'
-                  : 'text-slate-500 hover:text-white',
-              )}>
-              {f}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); setPage(0) }}
-            className="bg-slate-900 border border-slate-700 rounded-lg text-xs px-2 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand-500/40 [color-scheme:dark]" />
-          <span className="text-slate-600 text-xs">to</span>
-          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); setPage(0) }}
-            className="bg-slate-900 border border-slate-700 rounded-lg text-xs px-2 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand-500/40 [color-scheme:dark]" />
-          {(startDate || endDate) && (
-            <button onClick={() => { setStartDate(''); setEndDate(''); setPage(0) }}
-              className="text-[10px] text-slate-500 hover:text-white">✕</button>
-          )}
-        </div>
-
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-          <input value={search} onChange={e => { setSearch(e.target.value); setExpanded(null); setPage(0) }}
-            placeholder="Search WOA#, WO#, facility…"
-            className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-sm
-                       placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 transition-all" />
-        </div>
-      </div>
-
       {error && !loading && (
         <div className="mb-4 px-4 py-2.5 rounded-xl border border-red-800/30 bg-red-950/10 flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
@@ -363,6 +307,14 @@ export default function Accounting() {
                 <Th label="Program" col="program" sort={sort} onSort={onSort} />
                 <Th label="WO #"       col="wo_number"     sort={sort} onSort={onSort} />
                 <Th label="Product"    col="product"       sort={sort} onSort={onSort} />
+                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
+                  onClick={() => onSort('requested_usd')}
+                  title="Estimated dollar value of the claim — requested qty × reference rate. Rates are configurable in Admin → Accounting Rates. May not match your contract.">
+                  Est. $<span className="text-slate-600 ml-0.5">?</span>
+                  {sort.col === 'requested_usd'
+                    ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
+                    : <span className="inline-block w-3 ml-0.5" />}
+                </th>
                 <Th label="Requested"  col="requested_qty" sort={sort} onSort={onSort} right />
                 <Th label="SF Billed"  col="currently_paid" sort={sort} onSort={onSort} right />
                 <Th label="Delta"      col="delta"         sort={sort} onSort={onSort} right />
@@ -384,7 +336,7 @@ export default function Accounting() {
               {loading && [...Array(10)].map((_, i) => (
                 <tr key={i}>
                   <td className="px-1 py-2"><div className="skeleton h-3 rounded w-4" /></td>
-                  {[...Array(14)].map((__, j) => (
+                  {[...Array(15)].map((__, j) => (
                     <td key={j} className="px-2 py-2">
                       <div className={clsx('skeleton h-3.5 rounded', j === 1 ? 'w-28' : 'w-14')} />
                     </td>
@@ -394,30 +346,19 @@ export default function Accounting() {
 
               {!loading && rows.map((r, idx) => {
                 const rowKey = r.id || r.woa_number || idx
-                const isExpanded = expanded === rowKey
                 const code = productCode(r.product)
                 const productClass = PRODUCT_COLORS[code] || PRODUCT_COLORS.MI
                 const delta = r.delta || 0
                 const isLowMat = r.is_low_materiality
-                const siblings = rows.filter(row =>
-                  (row.id || row.woa_number) !== rowKey &&
-                  row.wo_id && row.wo_id === r.wo_id &&
-                  productCode(row.product) === code
-                )
-                const allWoSiblings = rows.filter(row =>
-                  (row.id || row.woa_number) !== rowKey &&
-                  row.wo_id && row.wo_id === r.wo_id
-                )
                 return (
                   <Fragment key={rowKey}>
                     <tr
-                      onClick={() => setExpanded(isExpanded ? null : rowKey)}
-                      onMouseEnter={() => !isExpanded && prefetchAudit(r.id)}
+                      onClick={() => navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } })}
+                      onMouseEnter={() => prefetchAudit(r.id)}
                       onMouseLeave={cancelPrefetch}
                       className={clsx(
-                        'cursor-pointer transition-colors group',
-                        isExpanded ? 'bg-slate-800/70' : 'hover:bg-slate-800/40',
-                        isLowMat && !isExpanded && 'opacity-60',
+                        'cursor-pointer transition-colors group hover:bg-slate-800/40',
+                        isLowMat && 'opacity-60',
                       )}
                     >
                       <td className="px-1 py-2 text-[10px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
@@ -425,15 +366,20 @@ export default function Accounting() {
                       {/* WOA # */}
                       <td className="px-2 py-2">
                         <div className="flex flex-col gap-0.5">
-                          {r.id ? (
-                            <a href={`https://aaawcny.lightning.force.com/${r.id}`} target="_blank" rel="noopener noreferrer"
-                              onClick={e => e.stopPropagation()}
-                              className="text-brand-400 hover:text-brand-300 font-mono font-medium hover:underline">
-                              {r.woa_number || '--'}
-                            </a>
-                          ) : (
-                            <span className="font-mono text-slate-300">{r.woa_number || '--'}</span>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {r.id ? (
+                              <a href={`https://aaawcny.lightning.force.com/${r.id}`} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="text-brand-400 hover:text-brand-300 font-mono font-medium hover:underline">
+                                {r.woa_number || '--'}
+                              </a>
+                            ) : (
+                              <span className="font-mono text-slate-300">{r.woa_number || '--'}</span>
+                            )}
+                            {r.has_photos && (
+                              <Camera className="w-3.5 h-3.5 text-emerald-400 shrink-0" title="Service photos on file" />
+                            )}
+                          </div>
                           {r.wo_woa_count > 1 && (
                             <span className="text-[9px] text-slate-500"
                               title={`This Work Order has ${r.wo_woa_count} adjustments submitted`}>
@@ -443,9 +389,14 @@ export default function Accounting() {
                         </div>
                       </td>
 
-                      {/* Facility */}
+                      {/* Facility / Territory */}
                       <td className="px-2 py-2">
-                        <span className="text-slate-300 font-medium truncate max-w-[120px] block">{r.facility || '--'}</span>
+                        <div className="flex flex-col gap-0">
+                          {r.parent_territory && (
+                            <span className="text-[9px] text-brand-400 font-mono font-semibold tracking-wide">{r.parent_territory}</span>
+                          )}
+                          <span className="text-slate-300 font-medium truncate max-w-[120px] block">{r.facility || '--'}</span>
+                        </div>
                       </td>
 
                       {/* Program */}
@@ -504,6 +455,12 @@ export default function Accounting() {
                                   MULTI
                                 </span>
                               )}
+                              {r.is_oot_private_service && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-orange-500/20 text-orange-400 border border-orange-500/40 cursor-help"
+                                  title="OOT – Verify Private Service: Work Order is marked Unable To Complete (Dupe), Out of Territory, and Type = Private Service. Verify service legitimacy before approving.">
+                                  OOT PS
+                                </span>
+                              )}
                               {r.woli_id && (
                                 <a href={`https://aaawcny.lightning.force.com/${r.woli_id}`} target="_blank" rel="noopener noreferrer"
                                   onClick={e => e.stopPropagation()}
@@ -525,6 +482,14 @@ export default function Accounting() {
                         ) : (
                           <span className="text-[10px] text-slate-600 italic cursor-help" title="No Work Order Line Items found on this WO. The product type could not be determined.">No WOLI</span>
                         )}
+                      </td>
+
+                      {/* Est. $ — estimated dollar value of the claim */}
+                      <td className="px-2 py-2 text-right font-mono"
+                        title="Estimated dollar value — requested qty × reference rate. See Admin → Accounting Rates to update rates.">
+                        {r.requested_usd != null
+                          ? <span className="text-slate-300">~${r.requested_usd.toFixed(2)}</span>
+                          : <span className="text-slate-700">—</span>}
                       </td>
 
                       {/* Requested — unit-aware */}
@@ -558,23 +523,23 @@ export default function Accounting() {
                             const isTimeProduct = ['MI','E1','E2','Z8'].includes(code)
                             const provisional = !audited && isTimeProduct
                             return effectiveRec === 'approve'
-                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
                                   className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
                                   title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
                                   ✓ Approve{provisional ? '*' : ''}
                                 </a>
-                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); setExpanded(isExpanded ? null : rowKey) }}
+                              : effectiveRec === 'reject'
+                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
+                                  className="text-[10px] font-bold text-red-400 underline hover:text-red-300"
+                                  title="No drop-off photos found — E1 time > 14 min. Reject and request resubmission with photos.">
+                                  ✗ Reject
+                                </a>
+                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
                                   className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300"
                                   title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : undefined}>
                                   ⚠ Review{provisional ? '*' : ''}
                                 </a>
                           })()}
-                          {r.estimated_usd != null && (
-                            <span className="text-[9px] text-slate-600 font-mono"
-                              title="Estimated dollar impact if approved (requested qty × WOLI unit rate)">
-                              ~${r.estimated_usd.toFixed(2)}
-                            </span>
-                          )}
                         </div>
                       </td>
 
@@ -606,17 +571,6 @@ export default function Accounting() {
                       </td>
                     </tr>
 
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={15} className="p-0 border-b border-slate-700/30">
-                          <AuditToggle woaId={r.id || r.woa_number} onComplete={handleAuditComplete} recReason={r.rec_reason} siblingWoas={siblings}
-                            allWoSiblings={allWoSiblings}
-                            isLowMateriality={r.is_low_materiality} estimatedUsd={r.estimated_usd}
-                            rowRec={r.recommendation}
-                            onOpenWoa={(targetKey) => setExpanded(targetKey)} />
-                        </td>
-                      </tr>
-                    )}
                   </Fragment>
                 )
               })}
@@ -639,7 +593,7 @@ export default function Accounting() {
               {product !== 'All' && ` (${product})`}
             </span>
             <div className="flex items-center gap-2">
-              <button onClick={() => { setPage(p => Math.max(0, p - 1)); setExpanded(null) }}
+              <button onClick={() => { setPage(p => Math.max(0, p - 1)) }}
                 disabled={page === 0}
                 className="px-2.5 py-1 rounded text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 disabled:opacity-30 transition-all">
                 ← Prev
@@ -647,7 +601,7 @@ export default function Accounting() {
               <span className="text-[10px] text-slate-500">
                 Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}
               </span>
-              <button onClick={() => { setPage(p => p + 1); setExpanded(null) }}
+              <button onClick={() => { setPage(p => p + 1) }}
                 disabled={(page + 1) * PAGE_SIZE >= total}
                 className="px-2.5 py-1 rounded text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 disabled:opacity-30 transition-all">
                 Next →

@@ -12,6 +12,22 @@ from repositories import accounting
 log = logging.getLogger('accounting')
 
 
+def _fetch_photo_wo_ids(wo_ids: list) -> set:
+    """Return set of WO IDs that have at least one Service_Photo__c record."""
+    if not wo_ids:
+        return set()
+    try:
+        rows = batch_soql_parallel("""
+            SELECT Work_Order__c
+            FROM Service_Photo__c
+            WHERE Work_Order__c IN ('{id_list}')
+            GROUP BY Work_Order__c
+        """, wo_ids, chunk_size=400)
+        return {r.get('Work_Order__c') for r in (rows or []) if r.get('Work_Order__c')}
+    except Exception:
+        return set()
+
+
 def _calc_age_from_wo(woa_created, wo_created):
     """Days between WO creation and WOA creation."""
     if not woa_created or not wo_created:
@@ -43,6 +59,7 @@ def _build_woa_list() -> dict:
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
+               Work_Order__r.ServiceTerritory.ParentTerritory.Name,
                Work_Order__r.Facility_Name__c, Work_Order__r.Facility_ID__c,
                Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
@@ -60,9 +77,10 @@ def _build_woa_list() -> dict:
                Work_Order__r.Long_Tow_Used__c,
                Work_Order__r.Long_Tow_Miles__c,
                Work_Order__r.Type__c,
+               Work_Order__r.ERS_Unable_To_Complete_Dupe__c,
+               Work_Order__r.Out_of_Territory__c,
                Work_Order__r.CreatedDate
         FROM ERS_Work_Order_Adjustment__c
-        WHERE Status__c = 'New'
         ORDER BY CreatedDate DESC
         LIMIT 5000
     """)
@@ -79,7 +97,7 @@ def _build_woa_list() -> dict:
     log.info(f"WOA list: {len(woa_rows)} rows, {len(wo_ids)} unique WOs to query WOLIs")
     woli_rows = batch_soql_parallel("""
         SELECT Id, WorkOrderId, WorkOrder.WorkOrderNumber, PricebookEntry.Name,
-               Quantity, TotalPrice, Description
+               Quantity, UnitPrice, TotalPrice, Description
         FROM WorkOrderLineItem
         WHERE WorkOrderId IN ('{id_list}')
     """, wo_ids, chunk_size=500) if wo_ids else []
@@ -95,6 +113,7 @@ def _build_woa_list() -> dict:
             pbe = (wl.get('PricebookEntry') or {}).get('Name') or ''
             qty = wl.get('Quantity')
             total_price = _safe_float(wl.get('TotalPrice'))
+            unit_price = _safe_float(wl.get('UnitPrice'))
             unit_rate = (total_price / qty) if (qty and qty > 0 and total_price and total_price > 0) else None
             wo_wolis[wo_id].append({
                 'id': wl.get('Id'),
@@ -102,6 +121,7 @@ def _build_woa_list() -> dict:
                 'code': pbe.split(' - ')[0].strip() if ' - ' in pbe else pbe.split(' ')[0] if pbe else '',
                 'quantity': qty,
                 'unit_rate': unit_rate,
+                'unit_price': unit_price,
                 'description': wl.get('Description'),
             })
 
@@ -188,7 +208,10 @@ def _build_woa_list() -> dict:
 
         _er_rate  = _rates.get('er_rate_per_mile',  1.75)
         _tow_rate = _rates.get('tow_rate_per_mile', 15.0)
+        _em_rate  = _rates.get('em_rate_per_mile',   2.0)
         _e1_rate  = _rates.get('e1_rate_per_min',   0.75)
+        _ba_rate  = _rates.get('ba_rate_per_call',  40.0)
+        _mh_rate  = _rates.get('mh_rate_per_call',  20.0)
         if req_qty is not None:
             _delta_qty = req_qty - (paid or 0)
             if code == 'TL':
@@ -207,6 +230,38 @@ def _build_woa_list() -> dict:
         if is_low_materiality and rec == 'review':
             rec = 'approve'
 
+        # requested_usd — total value of what the garage is claiming (req_qty × unit rate).
+        # Uses WOLI UnitPrice when SF has it, otherwise reference rate defaults.
+        # Shown as "Est. $?" in the list — always an estimate, never an invoice.
+        _woli_unit_price = _safe_float(woli.get('unit_price')) if isinstance(woli, dict) else None
+        if req_qty is not None:
+            if _woli_unit_price and _woli_unit_price > 0:
+                requested_usd = round(req_qty * _woli_unit_price, 2)
+            elif code == 'TL':
+                requested_usd = round(req_qty, 2)
+            elif code == 'ER':
+                requested_usd = round(req_qty * _er_rate, 2)
+            elif code == 'EM':
+                requested_usd = round(req_qty * _em_rate, 2)
+            elif code in _TOW_CODES:
+                requested_usd = round(req_qty * _tow_rate, 2)
+            elif code in _TIME_CODES:
+                requested_usd = round(req_qty * _e1_rate, 2)
+            elif code == 'BA':
+                requested_usd = round(req_qty * _ba_rate, 2)
+            elif code == 'MH':
+                requested_usd = round(req_qty * _mh_rate, 2)
+            else:
+                requested_usd = None
+        else:
+            requested_usd = None
+
+        _is_oot_private_service = (
+            bool(wo.get('ERS_Unable_To_Complete_Dupe__c'))
+            and bool(wo.get('Out_of_Territory__c'))
+            and (wo.get('Type__c') or '').strip() == 'Private Service'
+        )
+
         items.append({
             'id': woa_id,
             'woa_number': r.get('Name', ''),
@@ -224,6 +279,7 @@ def _build_woa_list() -> dict:
             'long_tow_miles': long_tow_miles,
             'rec_reason': rec_reason,
             'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
+            'parent_territory': ((wo.get('ServiceTerritory') or {}).get('ParentTerritory') or {}).get('Name', ''),
             'wo_number': wo.get('WorkOrderNumber', ''),
             'wo_id': wo_id,
             'woli_id': woli.get('id') or '' if isinstance(woli, dict) else '',
@@ -240,9 +296,11 @@ def _build_woa_list() -> dict:
             'vehicle': {'make': v_make, 'model': v_model, 'group': v_group},
             'woli_summary': woli_summary,
             'estimated_usd': estimated_usd,
+            'requested_usd': requested_usd,
             'is_low_materiality': is_low_materiality,
             'program': (wo.get('Type__c') or '').strip(),
             'service_type': '',
+            'is_oot_private_service': _is_oot_private_service,
         })
 
     from collections import defaultdict
@@ -274,6 +332,12 @@ def _build_woa_list() -> dict:
         else:
             item['is_possible_duplicate'] = False
             item['is_multi_same_product'] = False
+
+    # Mark which WOs have Towbook photos (Service_Photo__c records)
+    _all_wo_ids = [item['wo_id'] for item in items if item.get('wo_id')]
+    _photo_wo_ids = _fetch_photo_wo_ids(_all_wo_ids)
+    for item in items:
+        item['has_photos'] = item.get('wo_id', '') in _photo_wo_ids
 
     log.info(f"WOA list built: {len(items)} items in {_time.time() - _t0:.1f}s")
     return {'items': items, 'total': len(items)}

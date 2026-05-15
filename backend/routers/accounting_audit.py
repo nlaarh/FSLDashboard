@@ -13,9 +13,10 @@ _ET = ZoneInfo("America/New_York")
 from routers.accounting_calc import (
     _to_et, _fmt_et, _safe_float, _google_distance, _calc_recommendation, match_best_woli,
     _google_toll_check, _google_nearby_places, _scan_keywords, _parse_claimed_minutes,
-    _SF_BASE, _TIME_CODES, _TOW_CODES,
+    _SF_BASE, _TIME_CODES, _TOW_CODES, estimate_gvw,
 )
 from routers.accounting_audit_ai import call_audit_ai
+from routers.accounting_photos import fetch_photos
 from repositories import accounting
 
 def _build_woa_data(woa_id: str) -> dict:
@@ -25,6 +26,7 @@ def _build_woa_data(woa_id: str) -> dict:
 
     woa_rows = sf_query_all(f"""
         SELECT Id, Name, Quantity__c, Description__c, Internal_Notes__c,
+               Status__c,
                Product__c, Product__r.Name,
                Work_Order_Line_Item__c,
                CreatedDate, CreatedById, LastModifiedById,
@@ -32,6 +34,7 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order__c, Work_Order__r.WorkOrderNumber,
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
+               Work_Order__r.ServiceTerritory.ParentTerritory.Name,
                Work_Order__r.Facility_Name__c,
                Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
@@ -69,14 +72,12 @@ def _build_woa_data(woa_id: str) -> dict:
     wo = woa.get('Work_Order__r') or {}
     wo_id = woa.get('Work_Order__c', '')
     territory_id = wo.get('ServiceTerritoryId', '')
-    # Fleet = Facility_ID__c starts with '100' or '800'. Skip Towbook-only rflib query for Fleet.
+    # On-platform = Fleet (100*/800*) or Contractors (e.g. 076DO) — any non-numeric facility ID.
+    # Towbook facilities are purely numeric (496, 782, 4654…).
     _fac_id = (wo.get('Facility_ID__c') or '').strip()
-    _is_fleet = _fac_id.startswith(('100', '800'))
+    _is_on_platform = bool(_fac_id) and not _fac_id.isdigit()
 
-    # Round 2: all queries that need only Round 1 data run in parallel.
-    # rflib_gps and same_day moved here from Round 3 — they only need wo/woa data.
-    # sa_direct: removed Status='Completed' filter — catches in-progress SAs too,
-    # eliminating the expensive WOLI-based fallback in most cases.
+    # SA fields used in Round 2 sa_direct query.
     _SA_FIELDS = """Id, AppointmentNumber, Status, SchedStartTime,
                    ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
                    ERS_En_Route_Geolocation__Latitude__s,
@@ -92,7 +93,7 @@ def _build_woa_data(woa_id: str) -> dict:
     _wo_number = wo.get('WorkOrderNumber', '')
 
     def _get_rflib_gps_r2():
-        if _is_fleet or not _wo_number:
+        if _is_on_platform or not _wo_number:
             return []
         return sf_query_all(f"""
             SELECT ERS_Request__c, CreatedDate
@@ -101,10 +102,13 @@ def _build_woa_data(woa_id: str) -> dict:
               AND Context__c = 'Appointment Update from Towbook'
               AND ReferenceId__c = '{sanitize_soql(_wo_number)}'
             ORDER BY CreatedDate ASC
-            LIMIT 20
+            LIMIT 50
         """)
 
     def _get_same_day_r2():
+        # same_day only needed for New (open) WOAs — skip for Approved/Rejected
+        if (woa.get('Status__c') or '') != 'New':
+            return []
         if not (_account_id and _woa_date_str):
             return []
         try:
@@ -128,10 +132,42 @@ def _build_woa_data(woa_id: str) -> dict:
         except Exception:
             return []
 
+    def _get_all_sa_history_r2():
+        """SA history for SAs directly linked to WO (ParentRecordId = WO.Id)."""
+        if not wo_id:
+            return []
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, CreatedDate, OldValue, NewValue
+            FROM ServiceAppointmentHistory
+            WHERE ServiceAppointmentId IN (
+                SELECT Id FROM ServiceAppointment WHERE ParentRecordId = '{wo_id}'
+            )
+              AND Field = 'Status'
+            ORDER BY ServiceAppointmentId, CreatedDate ASC
+            LIMIT 200
+        """)
+
+
+    def _get_all_assigned_resource_r2():
+        """Semi-join on WO ID — fetches AR for ALL SAs without needing SA IDs first."""
+        if not wo_id:
+            return []
+        return sf_query_all(f"""
+            SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name
+            FROM AssignedResource
+            WHERE ServiceAppointmentId IN (
+                SELECT Id FROM ServiceAppointment WHERE ParentRecordId = '{wo_id}'
+            )
+            ORDER BY CreatedDate DESC
+            LIMIT 5
+        """)
+
+    # Round 2: all queries that need only Round 1 data (wo_id/woa) run in parallel.
+    # SA history and AR fetched via semi-join — eliminates the old Round 3 serial wait.
     _ph2 = sf_parallel(
         woli=lambda: sf_query_all(f"""
             SELECT Id, WorkOrderId, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
-                   Quantity, ListPrice, Subtotal, TotalPrice, Discount, Description, Status
+                   Quantity, TotalPrice, Description, Status
             FROM WorkOrderLineItem
             WHERE WorkOrderId = '{wo_id}'
         """) if wo_id else [],
@@ -148,6 +184,8 @@ def _build_woa_data(woa_id: str) -> dict:
         """) if wo_id else [],
         rflib_gps=_get_rflib_gps_r2,
         same_day=_get_same_day_r2,
+        all_sa_history=_get_all_sa_history_r2,
+        all_assigned_resource=_get_all_assigned_resource_r2,
     )
     woli_rows = _ph2['woli']
     wo_costs = _ph2['costs']
@@ -271,43 +309,41 @@ def _build_woa_data(woa_id: str) -> dict:
 
     # Identify secondary SAs (2nd, 3rd, etc.) for multi-SA timeline
     secondary_sa_rows = all_sa_rows[1:] if len(all_sa_rows) > 1 else []
-    all_sa_ids = [s.get('Id') for s in all_sa_rows if s.get('Id')]
 
-    # Round 3: fetch history for ALL SAs on the WO in parallel.
-    if all_sa_ids:
-        _history_queries = {}
-        _history_queries['sa_history'] = lambda: sf_query_all(f"""
-            SELECT CreatedDate, OldValue, NewValue
-            FROM ServiceAppointmentHistory
-            WHERE ServiceAppointmentId = '{sa_id}'
-              AND Field = 'Status'
-            ORDER BY CreatedDate ASC
-            LIMIT 20
-        """)
-        _history_queries['assigned_resource'] = lambda: sf_query_all(f"""
-            SELECT ServiceResourceId, ServiceResource.Name
-            FROM AssignedResource
-            WHERE ServiceAppointmentId = '{sa_id}'
-            ORDER BY CreatedDate DESC
-            LIMIT 1
-        """)
-        # Fetch history for secondary SAs
-        for i, sec_sa in enumerate(secondary_sa_rows[:3]):  # max 3 secondary SAs
-            _sec_id = sec_sa.get('Id', '')
-            _history_queries[f'sa_history_{i+2}'] = (lambda sid: lambda: sf_query_all(f"""
-                SELECT CreatedDate, OldValue, NewValue
-                FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId = '{sid}'
-                  AND Field = 'Status'
-                ORDER BY CreatedDate ASC
-                LIMIT 20
-            """))(_sec_id)
-        parallel_data = sf_parallel(**_history_queries)
-    else:
-        parallel_data = {'sa_history': [], 'assigned_resource': []}
+    # SA history — pre-fetched in Round 2 for WO-linked SAs.
+    # If WOLI fallback was used, SA IDs are now known: fetch history directly (fast, 1 query).
+    _all_sa_history = _ph2.get('all_sa_history') or []
+    if sa_id and not _ph2.get('sa_direct') and all_sa_rows:
+        _fallback_ids = [r.get('Id') for r in all_sa_rows if r.get('Id')]
+        if _fallback_ids:
+            _id_csv = "', '".join(_fallback_ids)
+            try:
+                _all_sa_history = sf_query_all(f"""
+                    SELECT ServiceAppointmentId, CreatedDate, OldValue, NewValue
+                    FROM ServiceAppointmentHistory
+                    WHERE ServiceAppointmentId IN ('{_id_csv}')
+                      AND Field = 'Status'
+                    ORDER BY ServiceAppointmentId, CreatedDate ASC
+                    LIMIT 200
+                """) or []
+            except Exception as _e:
+                log.warning(f"SA history WOLI fallback failed: {_e}")
+    _all_ar = _ph2.get('all_assigned_resource') or []
+    _history_by_sa: dict = {}
+    for h in _all_sa_history:
+        _history_by_sa.setdefault(h.get('ServiceAppointmentId', ''), []).append(h)
 
-    parallel_data['rflib_gps'] = _ph2.get('rflib_gps') or []
-    parallel_data['same_day']  = _ph2.get('same_day') or []
+    parallel_data = {
+        'sa_history': _history_by_sa.get(sa_id, []) if sa_id else [],
+        'assigned_resource': [r for r in _all_ar if r.get('ServiceAppointmentId') == sa_id] if sa_id else [],
+        'rflib_gps': _ph2.get('rflib_gps') or [],
+        'same_day': _ph2.get('same_day') or [],
+    }
+    for i, sec_sa in enumerate(secondary_sa_rows[:3]):
+        parallel_data[f'sa_history_{i+2}'] = _history_by_sa.get(sec_sa.get('Id', ''), [])
+
+    # Photos: sequential call — Towbook hits L2 cache (fast); Fleet needs woli_rows.
+    parallel_data['photos'] = fetch_photos(wo_id, woli_rows if _is_on_platform else [], _is_on_platform)
 
     status_transitions = ['None', 'Scheduled', 'Assigned', 'Dispatched',
                           'Accepted', 'Declined', 'En Route',
@@ -489,12 +525,22 @@ def _build_woa_data(woa_id: str) -> dict:
             )
             tl_context = {'toll': _tl_res['toll'], 'nearby': _tl_res['nearby']}
 
+    photos = parallel_data.get('photos') or {}
     rule_rec, rec_reason, _ = _calc_recommendation(
         woli_code, req_qty_audit, paid_qty_audit,
         _safe_float(wo.get('ERS_En_Route_Miles__c')), _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c')),
         _safe_float(wo.get('Tow_Miles__c')), _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
         on_loc_minutes=on_location_minutes, vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
-        vehicle_group=wo.get('Vehicle_Group__c'), all_wolis=all_wolis, long_tow_used=long_tow_used)
+        vehicle_group=wo.get('Vehicle_Group__c'), all_wolis=all_wolis, long_tow_used=long_tow_used,
+        vehicle_make=wo.get('Vehicle_Make__c') or None, vehicle_model=wo.get('Vehicle_Model__c') or None)
+
+    # Reject E1 claims > 14 min on tow calls with no drop-off photos (on-platform only)
+    _has_woli_02 = any(w.get('LineItemNumber') == '00000002' for w in woli_rows)
+    if (_is_on_platform and woli_code == 'E1' and req_qty_audit is not None and req_qty_audit > 14
+            and _has_woli_02 and not photos.get('dropoff_photos') and not photos.get('error')):
+        rule_rec = 'reject'
+        rec_reason = (rec_reason or '') + '\n→ REJECT: No drop-off photos found on WOLI 00000002. E1 time > 14 min — please resubmit with photos.'
+
     if req_qty_audit is not None and paid_qty_audit and paid_qty_audit > 0:
         qty_interpretation = f"Requesting total of {req_qty_audit}, already paid {paid_qty_audit} → additional {round(req_qty_audit - paid_qty_audit, 2)}"
     elif req_qty_audit is not None:
@@ -587,6 +633,9 @@ def _build_woa_data(woa_id: str) -> dict:
     return {
         'woa_id': woa_id,
         'woa_number': woa.get('Name', ''),
+        'woa_status': woa.get('Status__c') or '',
+        'territory_name': (wo.get('ServiceTerritory') or {}).get('Name') or '',
+        'parent_territory_name': ((wo.get('ServiceTerritory') or {}).get('ParentTerritory') or {}).get('Name') or '',
         'recommendation': rule_rec,
         'rec_reason': rec_reason,
         'confidence': 'LOW',
@@ -625,6 +674,14 @@ def _build_woa_data(woa_id: str) -> dict:
             'vehicle_model': wo.get('Vehicle_Model__c') or None,
             'vehicle_weight': _safe_float(wo.get('Weight_lbs__c')),
             'vehicle_group': wo.get('Vehicle_Group__c') or None,
+            'gvw': estimate_gvw(
+                wo.get('Vehicle_Make__c') or '',
+                wo.get('Vehicle_Model__c') or '',
+                _safe_float(wo.get('Number_of_Axles__c')),
+                wo.get('Vehicle_Group__c') or '',
+                (woa.get('Description__c') or '') + ' ' + (woa.get('Internal_Notes__c') or ''),
+                _safe_float(wo.get('Weight_lbs__c')),
+            ),
             'tow_destination_lat': _safe_float(wo.get('Tow_Destination__Latitude__s')),
             'tow_destination_lon': _safe_float(wo.get('Tow_Destination__Longitude__s')),
             'sf_estimated_tow_miles': _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
@@ -672,6 +729,5 @@ def _build_woa_data(woa_id: str) -> dict:
         },
         'ask_garage': [],
         'same_member_same_day': same_day_calls,
+        'photos': photos,
     }
-
-

@@ -22,10 +22,9 @@ router = APIRouter()
 @router.get("/api/command-center")
 def command_center(hours: int = Query(24, ge=1, le=168)):
     """Live operational dashboard across all territories."""
-    now_utc = datetime.now(timezone.utc)
-    cutoff_utc = (now_utc - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    def _fetch():
+    def _build():
+        now_utc = datetime.now(timezone.utc)
+        cutoff_utc = (now_utc - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
         from datetime import timezone as _tz
 
         # Parallel: SAs + active drivers with GPS per territory
@@ -292,4 +291,10 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
             'hours': hours,
         }
 
-    return cache.cached_query(f'command_center_{hours}', _fetch, ttl=120)
+    ttl = 120 if hours >= 24 else 60 if hours >= 8 else 30
+    return cache.stale_while_revalidate(
+        f'command_center_{hours}h',
+        _build,
+        ttl=ttl,
+        stale_ttl=3600,
+    )

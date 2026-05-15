@@ -20,7 +20,7 @@ from pathlib import Path
 log = logging.getLogger('cache')
 
 # ── Cache version — bump this when response shapes change to auto-invalidate ──
-CACHE_VERSION = 'v33'
+CACHE_VERSION = 'v49'
 
 _store = {}
 _lock = Lock()
@@ -106,10 +106,10 @@ def disk_get(key: str, ttl: int = 86400):
 
 
 def disk_get_stale(key: str):
-    """Read from L2 even if expired (fallback)."""
+    """Read from L2 even if expired (fallback for stale-while-revalidate)."""
     try:
         from repositories import cache as _cache_repo
-        return _cache_repo.cache_get(_vkey(key))
+        return _cache_repo.cache_get_any(_vkey(key))
     except Exception:
         return None
 
@@ -192,7 +192,9 @@ def stale_while_revalidate(key: str, compute_fn, ttl: int = 3600, stale_ttl: int
         if created_at:
             try:
                 from datetime import datetime as _dt
-                ct = _dt.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                # Postgres created_at may include microseconds — strip them
+                ct_str = str(created_at).split('.')[0]
+                ct = _dt.strptime(ct_str, '%Y-%m-%d %H:%M:%S')
                 age_sec = (_dt.now() - ct).total_seconds()
                 needs_refresh = age_sec > ttl
                 # If data is older than stale_ttl, don't serve it — force fresh fetch

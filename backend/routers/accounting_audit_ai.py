@@ -64,6 +64,9 @@ def call_audit_ai(data_context: dict, garage_history: dict | None = None) -> dic
             result['what_to_do'] = parsed.get('what_to_do') or []
             result['ask_garage'] = parsed.get('ask_garage') or []
             result['ai_summary'] = parsed.get('story') or raw
+            _ai_gvw_lbs = parsed.get('estimated_gvw_lbs')
+            if _ai_gvw_lbs and isinstance(_ai_gvw_lbs, (int, float)) and _ai_gvw_lbs > 0:
+                result['ai_gvw'] = {'gvw': int(_ai_gvw_lbs), 'source': 'ai', 'confidence': 'medium'}
         except (_json.JSONDecodeError, AttributeError):
             pass
 
@@ -126,4 +129,6 @@ def _build_woa_audit(woa_id: str) -> dict:
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],
         'ask_garage': ai.get('ask_garage') or [],
     })
+    if ai.get('ai_gvw'):
+        data['ai_gvw'] = ai['ai_gvw']
     return data

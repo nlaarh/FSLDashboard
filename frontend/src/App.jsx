@@ -15,6 +15,7 @@ import Help from './pages/Help'
 import Issues from './pages/Issues'
 import OnRoute from './pages/OnRoute'
 import Accounting from './pages/Accounting'
+import AccountingWoaDetail from './pages/AccountingWoaDetail'
 import OptimizerDecoder from './pages/OptimizerDecoder'
 import Reporting from './pages/Reporting'
 
@@ -61,6 +62,7 @@ function AuthApp() {
         <Route path="/onroute" element={isFinance ? <Navigate to="/accounting" replace /> : <OnRoute />} />
         <Route path="/matrix" element={isFinance ? <Navigate to="/accounting" replace /> : <MatrixAdvisor />} />
         <Route path="/accounting" element={(isFinance || isSupervisor) ? (isSupervisor ? <Navigate to="/" replace /> : <Accounting />) : <Accounting />} />
+        <Route path="/accounting/woa/:woaId" element={<AccountingWoaDetail />} />
         <Route path="/data" element={<Navigate to="/help" replace />} />
         <Route path="/issues" element={isFinance ? <Navigate to="/accounting" replace /> : <Issues />} />
         <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />

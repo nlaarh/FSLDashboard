@@ -3,19 +3,13 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
-from sf_batch import batch_soql_parallel
-from utils import parse_dt as _parse_dt
+from sf_client import sanitize_soql
 import cache
 from routers.accounting_export import build_export
 from routers.accounting_pdf import build_woa_pdf
-from routers.accounting_calc import (
-    _to_et, _fmt_et, _fmt_date_et, _safe_float,
-    _calc_recommendation, _SF_BASE, match_best_woli,
-    _TOW_CODES, _TIME_CODES,
-)
 from routers.accounting_audit import _build_woa_data
 from routers.accounting_audit_ai import call_audit_ai, _build_woa_audit
+from routers.accounting_list import _build_woa_list
 from repositories import accounting
 
 router = APIRouter()
@@ -29,9 +23,23 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
     full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
     items = full.get('items', [])
 
-    # Status filter applied in memory — same as all other filters
-    if status == 'open':
-        items = [r for r in items if r.get('status') == 'New']
+    # Search override: if user typed a query, find matching records across ALL statuses first.
+    # Status filter is skipped when a search is active so WOA# lookups always work.
+    if q:
+        ql = q.lower()
+        items = [r for r in items if ql in (r.get('woa_number') or '').lower()
+                 or ql in (r.get('wo_number') or '').lower()
+                 or ql in (r.get('facility') or '').lower()
+                 or ql in (r.get('program') or '').lower()]
+    else:
+        # Status filter applied in memory — New / Approved / Rejected / All
+        if status in ('New', 'Approved', 'Rejected'):
+            items = [r for r in items if r.get('status') == status]
+        # Approved records: limit to last 3 months to keep list manageable
+        if status == 'Approved':
+            from datetime import datetime, timezone as _tz, timedelta as _td
+            _cutoff = (datetime.now(_tz.utc) - _td(days=90)).strftime('%Y-%m-%d')
+            items = [r for r in items if (r.get('_sort_date') or '') >= _cutoff]
 
     # Server-side filtering
     if product_filter and product_filter != 'All':
@@ -42,12 +50,6 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
         items = [r for r in items if r.get('recommendation') == 'review']
     elif rec_filter == 'Credit':
         items = [r for r in items if (r.get('requested_qty') or 0) < 0]
-    if q:
-        ql = q.lower()
-        items = [r for r in items if ql in (r.get('woa_number') or '').lower()
-                 or ql in (r.get('wo_number') or '').lower()
-                 or ql in (r.get('facility') or '').lower()
-                 or ql in (r.get('program') or '').lower()]
     if start_date:
         items = [r for r in items if (r.get('_sort_date') or '') >= start_date]
     if end_date:
@@ -82,6 +84,7 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
     page_items = [{k: v for k, v in r.items() if k not in _STRIP} for r in items[start:start + page_size]]
     return {
         'items': page_items, 'total': total, 'page': page, 'page_size': page_size,
+        'cached_at': full.get('cached_at', ''),
         'totals': {
             'requested': round(total_requested, 2),
             'billed': round(total_billed, 2),
@@ -91,287 +94,6 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
         },
     }
 
-def _calc_age_from_wo(woa_created, wo_created):
-    """Days between WO creation and WOA creation."""
-    if not woa_created or not wo_created:
-        return None
-    woa_dt = _parse_dt(woa_created)
-    wo_dt = _parse_dt(wo_created)
-    if woa_dt and wo_dt:
-        return (woa_dt - wo_dt).days
-    return None
-
-def _calc_age_to_now(woa_created, now):
-    """Days from WOA creation to current date."""
-    if not woa_created:
-        return None
-    woa_dt = _parse_dt(woa_created)
-    if woa_dt:
-        return (now - woa_dt).days
-    return None
-
-def _build_woa_list() -> dict:
-    woa_rows = sf_query_all("""
-        SELECT Id, Name, Quantity__c, Status__c, Description__c, Internal_Notes__c,
-               Product__c, Product__r.Name,
-               Work_Order_Line_Item__c,
-               CreatedDate, CreatedById, LastModifiedById,
-               OwnerId, Owner.Name, CreatedBy.Name, LastModifiedBy.Name,
-               Work_Order__c, Work_Order__r.WorkOrderNumber,
-               Work_Order__r.ServiceTerritoryId,
-               Work_Order__r.ServiceTerritory.Name,
-               Work_Order__r.Facility_Name__c, Work_Order__r.Facility_ID__c,
-               Work_Order__r.Facility__r.Name,
-               Work_Order__r.Latitude, Work_Order__r.Longitude,
-               Work_Order__r.City, Work_Order__r.State,
-               Work_Order__r.Tow_Destination__Latitude__s,
-               Work_Order__r.Tow_Destination__Longitude__s,
-               Work_Order__r.Vehicle_Make__c, Work_Order__r.Vehicle_Model__c,
-               Work_Order__r.Weight_lbs__c, Work_Order__r.Vehicle_Group__c,
-               Work_Order__r.ERS_En_Route_Miles__c,
-               Work_Order__r.ERS_Estimated_En_Route_Miles__c,
-               Work_Order__r.Tow_Miles__c,
-               Work_Order__r.ERS_Estimated_Tow_Miles__c,
-               Work_Order__r.ERS_En_Route_Date_Time__c,
-               Work_Order__r.ERS_On_Location_Date_Time__c,
-               Work_Order__r.Long_Tow_Used__c,
-               Work_Order__r.Long_Tow_Miles__c,
-               Work_Order__r.Type__c,
-               Work_Order__r.CreatedDate
-        FROM ERS_Work_Order_Adjustment__c
-        WHERE Status__c = 'New'
-        ORDER BY CreatedDate DESC
-        LIMIT 5000
-    """)
-
-    if not woa_rows:
-        return {'items': [], 'total': 0}
-
-    import time as _time
-    from datetime import datetime, timezone as _tz
-    _now = datetime.now(_tz.utc)
-    _t0 = _time.time()
-
-    wo_ids = list({r.get('Work_Order__c') for r in woa_rows if r.get('Work_Order__c')})
-    log.info(f"WOA list: {len(woa_rows)} rows, {len(wo_ids)} unique WOs to query WOLIs")
-    woli_rows = batch_soql_parallel("""
-        SELECT Id, WorkOrderId, WorkOrder.WorkOrderNumber, PricebookEntry.Name,
-               Quantity, TotalPrice, Description
-        FROM WorkOrderLineItem
-        WHERE WorkOrderId IN ('{id_list}')
-    """, wo_ids, chunk_size=500) if wo_ids else []
-
-    # Build WO → ALL WOLIs map (keep all line items per WO)
-    from collections import defaultdict
-    _rates = accounting.get_accounting_rates_dict()
-    _materiality = _rates.get('materiality_threshold_usd', 10.0)
-
-    wo_wolis = defaultdict(list)
-    for wl in woli_rows:
-        wo_id = wl.get('WorkOrderId')
-        if wo_id:
-            pbe = (wl.get('PricebookEntry') or {}).get('Name') or ''
-            qty = wl.get('Quantity')
-            total_price = _safe_float(wl.get('TotalPrice'))
-            unit_rate = (total_price / qty) if (qty and qty > 0 and total_price and total_price > 0) else None
-            wo_wolis[wo_id].append({
-                'id': wl.get('Id'),
-                'product': pbe,
-                'code': pbe.split(' - ')[0].strip() if ' - ' in pbe else pbe.split(' ')[0] if pbe else '',
-                'quantity': qty,
-                'unit_rate': unit_rate,
-                'description': wl.get('Description'),
-            })
-
-    def _best_woli(wo_id, requested_qty, wo=None):
-        return match_best_woli(wo_wolis.get(wo_id, []), requested_qty, wo)
-
-    items = []
-    for r in woa_rows:
-        woa_id = r.get('Id', '')
-        wo = r.get('Work_Order__r') or {}
-        wo_id = r.get('Work_Order__c', '')
-        req_qty = _safe_float(r.get('Quantity__c'))
-        woa_description = r.get('Description__c') or ''
-        woa_internal_notes = r.get('Internal_Notes__c') or ''
-
-        # Use Product__r.Name from the WOA directly — this is the authoritative product.
-        # Fall back to WOLI quantity-matching only when Product__c is not set.
-        woa_product_name = (r.get('Product__r') or {}).get('Name') or ''
-        woa_woli_id = r.get('Work_Order_Line_Item__c') or ''
-
-        if woa_product_name:
-            # WOA has an explicit product — use it directly
-            pbe_name = woa_product_name
-            pbe_code = pbe_name.split(' - ')[0].strip() if ' - ' in pbe_name else pbe_name.split(' ')[0]
-            # Find the matching WOLI by direct ID link or by product code
-            if woa_woli_id and woa_woli_id in {w.get('id') for w in wo_wolis.get(wo_id, [])}:
-                woli = next(w for w in wo_wolis[wo_id] if w.get('id') == woa_woli_id)
-            else:
-                woli = next((w for w in wo_wolis.get(wo_id, []) if w.get('code') == pbe_code), {})
-            product = pbe_name
-            code = pbe_code
-            paid = _safe_float(woli.get('quantity')) if woli else None
-        else:
-            woli = _best_woli(wo_id, req_qty, wo=wo)
-            product = woli.get('product') or ''
-            code = woli.get('code') or ''
-            paid = _safe_float(woli.get('quantity'))
-
-        # Build comma-separated list of all non-BA WOLIs on the WO.
-        # Always shown when the WOA product is not on the WO, or when multiple WOLIs exist.
-        all_named_non_ba = [w for w in wo_wolis.get(wo_id, []) if w.get('product') and w.get('code') != 'BA']
-        _no_match = woli.get('_no_match', False) if isinstance(woli, dict) else False
-        _product_not_on_wo = bool(woa_product_name) and not any(w.get('code') == code for w in wo_wolis.get(wo_id, []))
-        all_products_str = ', '.join(
-            f"{w['code']}={w.get('quantity')}" for w in all_named_non_ba if w.get('code')
-        ) if (len(all_named_non_ba) > 1 or _no_match or _product_not_on_wo) else ''
-        sf_er = _safe_float(wo.get('ERS_En_Route_Miles__c'))
-        sf_est_er = _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c'))
-        sf_tow = _safe_float(wo.get('Tow_Miles__c'))
-        sf_est_tow = _safe_float(wo.get('ERS_Estimated_Tow_Miles__c'))
-
-        # List has no SA history access — cannot compute actual on-scene time.
-        # Time codes (E1/MI/Z8/E2) get on_loc_min=None → rule engine returns 'review' provisional.
-        # The audit panel fetches SA history and computes the real on-scene time.
-        on_loc_min = None
-
-        v_make = wo.get('Vehicle_Make__c') or ''
-        v_model = wo.get('Vehicle_Model__c') or ''
-        v_group = wo.get('Vehicle_Group__c') or ''
-        all_wolis = wo_wolis.get(wo_id, [])
-        long_tow_used = bool(wo.get('Long_Tow_Used__c'))
-        long_tow_miles = _safe_float(wo.get('Long_Tow_Miles__c'))
-
-        _CONFIDENCE_MAP = {
-            'ER': 'HIGH', 'TW': 'HIGH', 'TB': 'HIGH', 'TT': 'HIGH', 'TU': 'HIGH', 'TM': 'HIGH', 'EM': 'HIGH',
-            'E1': 'HIGH', 'E2': 'HIGH', 'Z8': 'HIGH',
-            'MH': 'HIGH', 'MI': 'MEDIUM', 'TL': 'MEDIUM',
-            'BA': 'LOW', 'BC': 'LOW', 'PC': 'LOW', 'HO': 'LOW', 'PG': 'LOW',
-        }
-        confidence = _CONFIDENCE_MAP.get(code, 'MEDIUM')
-        # MH degrades to LOW when no weight data
-        if code == 'MH' and not _safe_float(wo.get('Weight_lbs__c')) and v_group not in ('MD', 'HD', 'DW'):
-            confidence = 'LOW'
-
-        woli_description = woli.get('description') or ''
-
-        rec, rec_reason, verification = _calc_recommendation(
-            code, req_qty, paid, sf_er, sf_est_er, sf_tow, sf_est_tow,
-            on_loc_minutes=on_loc_min,
-            vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
-            vehicle_group=v_group,
-            all_wolis=all_wolis,
-            long_tow_used=long_tow_used)
-
-        # Append WO context to the reason tooltip
-        if all_wolis:
-            rec_reason += '\n\nWO LINE ITEMS:'
-            for wl in all_wolis:
-                if wl.get('product'):
-                    rec_reason += f'\n  {wl["code"]:5s} {wl["product"]}: qty={wl.get("quantity")}'
-        if v_make:
-            rec_reason += f'\n\nVEHICLE: {v_make} {v_model} (group={v_group})'
-
-        # WO line items summary for export
-        woli_summary = ' | '.join(f'{wl["code"]}={wl.get("quantity")}' for wl in all_wolis if wl.get('product'))
-
-        # Estimated dollar impact = NET additional cost (requested − already billed).
-        # WOA.Quantity__c is the total the garage claims, so delta = requested − paid.
-        _er_rate  = _rates.get('er_rate_per_mile',  1.75)
-        _tow_rate = _rates.get('tow_rate_per_mile', 15.0)
-        _e1_rate  = _rates.get('e1_rate_per_min',   0.75)
-        if req_qty is not None:
-            _delta_qty = req_qty - (paid or 0)  # net additional units being claimed
-            if code == 'TL':
-                estimated_usd = round(abs(_delta_qty), 2)
-            elif code == 'ER':
-                estimated_usd = round(abs(_delta_qty) * _er_rate, 2)
-            elif code in _TOW_CODES:
-                estimated_usd = round(abs(_delta_qty) * _tow_rate, 2)
-            elif code in _TIME_CODES:
-                estimated_usd = round(abs(_delta_qty) * _e1_rate, 2)
-            else:
-                estimated_usd = None  # BA/flat — no reliable rate estimate
-        else:
-            estimated_usd = None
-        is_low_materiality = (estimated_usd is not None and estimated_usd < _materiality)
-        # Auto-approve low-materiality reviews — materiality threshold exists to skip human review
-        # on small-dollar discrepancies. Only overrides 'review', never overrides 'deny'.
-        if is_low_materiality and rec == 'review':
-            rec = 'approve'
-
-        items.append({
-            'id': woa_id,
-            'woa_number': r.get('Name', ''),
-            'status': r.get('Status__c') or '',
-            'product': product,
-            'code': code,
-            'all_products': all_products_str,
-            'product_synthetic': woli.get('_synthetic', False),
-            'requested_qty': req_qty,
-            'currently_paid': paid,
-            'recommendation': rec,
-            'confidence': confidence,
-            'description': woli_description[:200] if woli_description else '',
-            'long_tow_used': long_tow_used,
-            'long_tow_miles': long_tow_miles,
-            'rec_reason': rec_reason,
-            'facility': (wo.get('Facility__r') or {}).get('Name', '') or wo.get('Facility_Name__c') or (wo.get('ServiceTerritory', {}).get('Name', '') if wo.get('ServiceTerritory') else ''),
-            'wo_number': wo.get('WorkOrderNumber', ''),
-            'wo_id': wo_id,
-            'woli_id': woli.get('id') or '' if isinstance(woli, dict) else '',
-            'woa_description': woa_description,
-            'internal_notes': woa_internal_notes,
-            'product_not_on_wo': _product_not_on_wo,
-            'created_date': _fmt_date_et(r.get('CreatedDate')),
-            '_sort_date': (r.get('CreatedDate') or '')[:10],
-            'created_by': (r.get('CreatedBy') or {}).get('Name', ''),
-            'owner': (r.get('Owner') or {}).get('Name', ''),
-            'woa_age_from_wo_days': _calc_age_from_wo(r.get('CreatedDate'), wo.get('CreatedDate')),
-            'woa_age_days': _calc_age_to_now(r.get('CreatedDate'), _now),
-            'sf_miles': {'enroute': sf_er, 'estimated_enroute': sf_est_er, 'tow': sf_tow, 'estimated_tow': sf_est_tow},
-            'vehicle': {'make': v_make, 'model': v_model, 'group': v_group},
-            'woli_summary': woli_summary,
-            'estimated_usd': estimated_usd,
-            'is_low_materiality': is_low_materiality,
-            'program': (wo.get('Type__c') or '').strip(),
-            'service_type': '',
-        })
-
-    # Post-process: per-WO WOA counts and same-product duplicate detection
-    wo_total_counts = defaultdict(int)
-    wo_code_counts = defaultdict(lambda: defaultdict(int))
-    wo_code_qtys = defaultdict(list)      # (wo_id, code) → [requested_qty, ...]
-    for item in items:
-        wid = item.get('wo_id', '')
-        c = item.get('code', '')
-        q = item.get('requested_qty') or 0
-        if wid:
-            wo_total_counts[wid] += 1
-            if c:
-                wo_code_counts[wid][c] += 1
-                wo_code_qtys[(wid, c)].append(q)
-    for item in items:
-        wid = item.get('wo_id', '')
-        c = item.get('code', '')
-        woa_count = wo_total_counts.get(wid, 1)
-        same_code = wo_code_counts.get(wid, {}).get(c, 1) if c else 1
-        item['wo_woa_count'] = woa_count
-        if woa_count > 1 and same_code > 1 and c:
-            qtys = wo_code_qtys.get((wid, c), [])
-            max_q = max(qtys) if qtys else 0
-            min_q = min(qtys) if qtys else 0
-            # Within 10% of max → quantities nearly identical → likely accidental re-submit
-            qty_spread = (max_q - min_q) / max_q if max_q > 0 else 0
-            item['is_possible_duplicate'] = qty_spread < 0.10
-            item['is_multi_same_product'] = not item['is_possible_duplicate']
-        else:
-            item['is_possible_duplicate'] = False
-            item['is_multi_same_product'] = False
-
-    log.info(f"WOA list built: {len(items)} items in {_time.time() - _t0:.1f}s")
-    return {'items': items, 'total': len(items)}
 
 @router.get("/api/accounting/wo-adjustments/export")
 def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
@@ -400,39 +122,67 @@ def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
     return build_export(items, status)
 
 @router.get("/api/accounting/wo-adjustments/{woa_id}/audit")
-def api_woa_audit(woa_id: str):
+def api_woa_audit(woa_id: str, force: bool = Query(False)):
+    import time as _t
+    from threading import Thread as _Thread
     woa_id = sanitize_soql(woa_id)
-    full_key = f'accounting_woa_audit_{woa_id}'
-    data_key = f'accounting_woa_data_{woa_id}'
+    full_key = f'{cache.CACHE_VERSION}_woa_audit_{woa_id}'
+    data_key = f'{cache.CACHE_VERSION}_woa_data_{woa_id}'
 
-    # Return full cached result (includes AI) if available.
-    # Normalize recommendation to lowercase — old caches may have uppercase from AI.
-    full = cache.get(full_key) or cache.disk_get(full_key, ttl=1800)
-    if full:
-        if isinstance(full.get('recommendation'), str):
-            full['recommendation'] = full['recommendation'].lower()
-        return full
+    def _build_and_cache_audit():
+        try:
+            result = _build_woa_data(woa_id)
+            result['cached_at'] = _t.strftime('%Y-%m-%d %H:%M:%S')
+            cache.put(data_key, result, ttl=1800)
+            cache.disk_put(data_key, result, ttl=86400)
+        except Exception as e:
+            log.warning(f"Background audit refresh failed for {woa_id}: {e}")
 
-    # Return data-only from cache (L1 memory, then L2 disk)
-    cached_data = cache.get(data_key) or cache.disk_get(data_key, ttl=3600)
-    if cached_data:
-        cache.put(data_key, cached_data, ttl=1800)  # promote to L1
-        return {k: v for k, v in cached_data.items() if not k.startswith('_')}
+    if not force:
+        # L1 or L2 fresh full result (with AI)
+        full = cache.get(full_key) or cache.disk_get(full_key, ttl=1800)
+        if full:
+            if isinstance(full.get('recommendation'), str):
+                full['recommendation'] = full['recommendation'].lower()
+            return {**full, 'cache_status': 'fresh', 'cached_at': full.get('cached_at', '')}
 
-    # Fresh build — cache in both L1 memory and L2 disk
+        # L1 or L2 fresh data-only result
+        cached_data = cache.get(data_key) or cache.disk_get(data_key, ttl=3600)
+        if cached_data:
+            cache.put(data_key, cached_data, ttl=1800)
+            to_return = {k: v for k, v in cached_data.items() if not k.startswith('_')}
+            return {**to_return, 'cache_status': 'fresh', 'cached_at': cached_data.get('cached_at', '')}
+
+        # STALE: try full result (with AI) first, fall back to data-only
+        stale_full = cache.disk_get_stale(full_key)
+        stale_data = stale_full or cache.disk_get_stale(data_key)
+        stale_key = full_key if stale_full else data_key
+        if stale_data:
+            if isinstance(stale_data.get('recommendation'), str):
+                stale_data['recommendation'] = stale_data['recommendation'].lower()
+            cache.put(stale_key, stale_data, ttl=120)
+            to_return = {k: v for k, v in stale_data.items() if not k.startswith('_')}
+            meta = cache.disk_get_meta(stale_key)
+            _raw_cat = meta.get('created_at', stale_data.get('cached_at', ''))
+            cached_at = str(_raw_cat).split('.')[0] if _raw_cat else ''
+            _Thread(target=_build_and_cache_audit, daemon=True).start()
+            return {**to_return, 'cache_status': 'stale', 'cached_at': cached_at}
+
+    # Cold start or force refresh — build synchronously
     result = _build_woa_data(woa_id)
+    result['cached_at'] = _t.strftime('%Y-%m-%d %H:%M:%S')
     to_return = {k: v for k, v in result.items() if not k.startswith('_')}
     cache.put(data_key, result, ttl=1800)
-    cache.disk_put(data_key, result, ttl=3600)
-    return to_return
+    cache.disk_put(data_key, result, ttl=86400)
+    return {**to_return, 'cache_status': 'fresh'}
 
 
 @router.get("/api/accounting/wo-adjustments/{woa_id}/pdf")
 def api_woa_pdf(woa_id: str):
     from fastapi.responses import Response as _Resp
     woa_id = sanitize_soql(woa_id)
-    full_key = f'accounting_woa_audit_{woa_id}'
-    data_key = f'accounting_woa_data_{woa_id}'
+    full_key = f'{cache.CACHE_VERSION}_woa_audit_{woa_id}'
+    data_key = f'{cache.CACHE_VERSION}_woa_data_{woa_id}'
     data = cache.get(full_key) or cache.get(data_key)
     if not data:
         data = _build_woa_data(woa_id)
@@ -448,15 +198,15 @@ def api_woa_pdf(woa_id: str):
 def api_woa_ai_analysis(woa_id: str):
     """AI analysis for a single WOA — called separately so audit data loads first."""
     woa_id = sanitize_soql(woa_id)
-    full_key = f'accounting_woa_audit_{woa_id}'
-    data_key = f'accounting_woa_data_{woa_id}'
+    full_key = f'{cache.CACHE_VERSION}_woa_audit_{woa_id}'
+    data_key = f'{cache.CACHE_VERSION}_woa_data_{woa_id}'
 
     # If we already ran the full audit (e.g. from recalculate), return cached AI fields
     full = cache.get(full_key) or cache.disk_get(full_key, ttl=1800)
     if full and full.get('ai_headline') is not None:
         return {k: full[k] for k in ('recommendation', 'confidence', 'ai_summary', 'ai_headline',
                                       'ai_story', 'ai_fraud_signals', 'ai_anomalies',
-                                      'ai_what_to_do', 'ask_garage') if k in full}
+                                      'ai_what_to_do', 'ask_garage', 'ai_gvw') if k in full}
 
     # Get data context from cache or rebuild
     data = cache.get(data_key)
@@ -475,6 +225,8 @@ def api_woa_ai_analysis(woa_id: str):
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],
         'ask_garage': ai.get('ask_garage') or [],
     }
+    if ai.get('ai_gvw'):
+        ai_fields['ai_gvw'] = ai['ai_gvw']
 
     # Merge into full result and cache — rule engine's recommendation is authoritative.
     # AI assessment goes in ai_recommendation so the UI can show it alongside (aiRecDiffers).
@@ -484,20 +236,20 @@ def api_woa_ai_analysis(woa_id: str):
     if 'recommendation' in full_result:
         full_result['recommendation'] = (full_result['recommendation'] or 'review').lower()
     cache.put(full_key, full_result, ttl=1800)
-    cache.disk_put(full_key, full_result, ttl=1800)
+    cache.disk_put(full_key, full_result, ttl=86400)
     return ai_fields
 
 
 @router.post("/api/accounting/wo-adjustments/{woa_id}/recalculate")
 def api_woa_recalculate(woa_id: str):
     woa_id = sanitize_soql(woa_id)
-    full_key = f'accounting_woa_audit_{woa_id}'
-    data_key = f'accounting_woa_data_{woa_id}'
+    full_key = f'{cache.CACHE_VERSION}_woa_audit_{woa_id}'
+    data_key = f'{cache.CACHE_VERSION}_woa_data_{woa_id}'
     cache.invalidate(full_key); cache.disk_invalidate(full_key)
     cache.invalidate(data_key)
     result = _build_woa_audit(woa_id)
     cache.put(full_key, result, ttl=1800)
-    cache.disk_put(full_key, result, ttl=1800)
+    cache.disk_put(full_key, result, ttl=86400)
     return result
 
 
@@ -661,3 +413,25 @@ def api_batch_audit(body: BatchAuditRequest):
         results = list(pool.map(_audit_one, woa_ids))
 
     return {'total': len(results), 'results': results}
+
+
+@router.get("/api/accounting/sf-photo/{version_id}")
+def sf_photo_proxy(version_id: str):
+    """Proxy a Salesforce ContentVersion binary so the frontend can render it as <img>."""
+    import requests
+    from fastapi.responses import StreamingResponse
+    from sf_client import get_auth
+    version_id = sanitize_soql(version_id)
+    try:
+        token, instance = get_auth()
+        url = f"{instance}/services/data/v60.0/sobjects/ContentVersion/{version_id}/VersionData"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, stream=True, timeout=15)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="SF photo not found")
+        content_type = resp.headers.get('Content-Type', 'image/jpeg')
+        return StreamingResponse(resp.iter_content(chunk_size=8192), media_type=content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning(f"SF photo proxy failed for {version_id}: {e}")
+        raise HTTPException(status_code=502, detail="Could not fetch photo from Salesforce")

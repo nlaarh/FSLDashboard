@@ -46,7 +46,14 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
   const isX002 = ev.is_cancel_en_route
   const woType = ev.wo_type
 
-  const hasAny = tc || rc || cc || coverage || contract || entitlement || facilityId || isTowCall || membership || axles > 0 || woType
+  const gvw = ev.gvw
+  const gvwLbs = gvw?.gvw
+  const gvwSource = gvw?.source
+  const gvwSfWeight = gvw?.sf_weight
+  const gvwSourceLabel = gvwSource === 'ai' ? 'AI est.' : gvwSource === 'make_model' ? 'lookup' : gvwSource === 'description' ? 'from notes' : gvwSource === 'description_class' ? 'DOT class' : gvwSource === 'description_keyword' ? 'from notes' : gvwSource === 'axle_count' ? 'axle est.' : gvwSource || 'est.'
+  const gvwColor = !gvwLbs ? '' : gvwLbs >= 26001 ? 'text-red-300' : gvwLbs >= 10001 ? 'text-amber-300' : 'text-slate-200'
+
+  const hasAny = tc || rc || cc || coverage || contract || entitlement || facilityId || isTowCall || membership || axles > 0 || woType || gvwLbs
 
   if (!hasAny) return null
 
@@ -141,6 +148,24 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
               <span className="text-[10px] font-semibold text-slate-200">{axles}</span>
             </div>
           )}
+          {gvwLbs > 0 && (
+            <div className="flex items-baseline gap-1 flex-wrap" title={`Estimated GVW. Source: ${gvwSource}`}>
+              <span className="text-[9px] text-slate-600 uppercase">Est. GVW:</span>
+              <span className={`text-[10px] font-semibold ${gvwColor}`}>
+                {gvwLbs >= 1000 ? `${(gvwLbs / 1000).toFixed(0)}K` : gvwLbs} lbs
+              </span>
+              <span className="text-[9px] text-slate-500">({gvwSourceLabel})</span>
+              {gvwLbs >= 26001 && <span className="text-[9px] text-red-400 font-bold">MH ↑</span>}
+              {gvwLbs >= 10001 && gvwLbs < 26001 && <span className="text-[9px] text-amber-400">HD</span>}
+              {gvwSfWeight > 0 && (
+                <span className="text-[9px] text-slate-500 ml-1">
+                  SF: {(gvwSfWeight / 1000).toFixed(0)}K
+                  {Math.abs(gvwLbs - gvwSfWeight) > gvwSfWeight * 0.25 &&
+                    <span className="text-amber-400 ml-0.5">⚠ mismatch</span>}
+                </span>
+              )}
+            </div>
+          )}
           {isTowCall && (
             <span
               className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-600/30 uppercase"
@@ -179,6 +204,7 @@ export default function WODiagnosticStrip({ ev, sfUrls }) {
             <Row label="Tow_Call__c (WO)" value={isTowCall == null ? null : isTowCall ? 'true' : 'false'} />
             <Row label="Facility_ID__c (WO)" value={facilityId} />
             <Row label="Number_of_Axles__c (WO formula)" value={axles > 0 ? axles : null} />
+            <Row label="Weight_lbs__c (WO — GVW source)" value={gvwLbs ? `${gvwLbs.toLocaleString()} lbs via ${gvwSource}` : null} />
             <Row label="Facility_Contract__r.Name (WO)" value={contract} />
             <Row label="Entitlement_Master__r.Name (WO)" value={entitlement} />
             <Row label="ERS_Membership_Level_Coverage__c (SA formula)" value={membership} />

@@ -138,9 +138,14 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
         # Call the endpoint — cached_query sees expired, re-fetches from SF
         # Other concurrent requests get stale data instantly (no blink)
         result = endpoint_fn()
-        # Persist to L2 disk for cross-worker sharing
+        if isinstance(result, dict):
+            result['cached_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        # Update L1 with fresh data and correct timestamp
+        if result is not None:
+            cache.put(key, result, interval)
+        # Persist to L2 with a long stale window (24h) so SWR can serve stale
         if persist and result is not None:
-            cache.disk_put(key, result, interval)
+            cache.disk_put(key, result, 86400)
         return True
     except Exception as e:
         log.warning(f"Refresh failed for '{key}': {e}")

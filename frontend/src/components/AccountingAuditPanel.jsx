@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { clsx } from 'clsx'
 import {
   Loader2, AlertTriangle, ExternalLink,
@@ -10,11 +10,13 @@ import { PRODUCT_NAMES, TOW_CODES, TIME_CODES, FLAT_CODES, UNITS, headerSummary,
 import WODiagnosticStrip from './WODiagnosticStrip'
 import AuditVerificationCard from './AuditVerificationCard'
 import WOAAuditMap from './WOAAuditMap'
+import AccountingPhotosCard from './AccountingPhotosCard'
 
 const REC_BADGE = {
   PAY:    'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
   REVIEW: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   DENY:   'bg-red-500/15 text-red-400 border border-red-500/30',
+  REJECT: 'bg-red-500/15 text-red-400 border border-red-500/30',
 }
 
 const Skeleton = ({ className = '' }) => (
@@ -37,6 +39,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const [error, setError] = useState(null)
   const [recalcing, setRecalcing] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [cacheStatus, setCacheStatus] = useState(null)
+  const [cachedAt, setCachedAt] = useState('')
   const [rates, setRates] = useState({})
   const [expandedSAs, setExpandedSAs] = useState(new Set())
   const [showMap, setShowMap] = useState(false)
@@ -45,6 +49,8 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
 
   const handleResult = (data) => {
     setAudit(data)
+    setCacheStatus(data.cache_status || 'fresh')
+    setCachedAt(data.cached_at || '')
     if (data?.recommendation) {
       // Normalize to lowercase — audit cache may return uppercase from AI ('APPROVE'/'REVIEW').
       // Apply the same low-materiality override the panel will show, so badge stays in sync.
@@ -56,20 +62,79 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
     if (!data?.ai_headline && !data?.ai_story) {
       setAiLoading(true)
       fetchWOAAiAnalysis(woaId)
-        .then(ai => setAudit(prev => prev ? { ...prev, ...ai, recommendation: prev.recommendation, rec_reason: prev.rec_reason } : prev))
+        .then(ai => setAudit(prev => {
+          if (!prev) return prev
+          const merged = { ...prev, ...ai, recommendation: prev.recommendation, rec_reason: prev.rec_reason }
+          // Merge AI GVW into evidence — prefer AI over lookup table for unknown vehicles
+          if (ai.ai_gvw) {
+            const prevGvw = prev.evidence?.gvw
+            const useAi = !prevGvw || prevGvw.source === 'axle_count' || prevGvw.source === 'vehicle_group'
+            if (useAi) merged.evidence = { ...prev.evidence, gvw: { ...ai.ai_gvw, sf_weight: prevGvw?.sf_weight } }
+          }
+          return merged
+        }))
         .catch(() => {})
         .finally(() => setAiLoading(false))
     }
   }
-  const load = (fetcher) => { setLoading(true); setError(null); fetcher(woaId).then(handleResult).catch(e => setError(e.message || 'Failed')).finally(() => setLoading(false)) }
-  useEffect(() => { load(fetchWOAAudit) }, [woaId])
+  const load = (fetcher) => {
+    setLoading(true)
+    setError(null)
+    return fetcher(woaId)
+      .then(data => {
+        handleResult(data)
+        return data
+      })
+      .catch(e => {
+        setError(e.message || 'Failed')
+        throw e
+      })
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => {
+    let t
+    load(fetchWOAAudit)
+      .then(data => {
+        // If stale, auto-refetch in background after 3s
+        if (data.cache_status === 'stale') {
+          t = setTimeout(() => {
+            fetchWOAAudit(woaId).then(fresh => {
+              handleResult(fresh)
+            }).catch(() => {})
+          }, 3000)
+        }
+      })
+      .catch(() => {})
+    return () => clearTimeout(t)
+  }, [woaId])
   const handleRecalculate = () => { setRecalcing(true); recalculateWOAAudit(woaId).then(handleResult).catch(e => setError(e.message || 'Failed')).finally(() => setRecalcing(false)) }
+  const handleForceRefresh = useCallback(() => {
+    fetchWOAAudit(woaId, true).then(data => {
+      handleResult(data)
+    }).catch(() => {})
+  }, [woaId])
 
   // Map list rec (approve/review/deny) → audit badge key (PAY/REVIEW/DENY)
   const initRec = rowRec === 'approve' ? 'PAY' : (rowRec || 'REVIEW').toUpperCase()
 
+  function _timeAgo(dateStr) {
+    if (!dateStr) return ''
+    try {
+      const d = new Date(dateStr.replace(' ', 'T') + 'Z')
+      const mins = Math.round((Date.now() - d.getTime()) / 60000)
+      if (mins < 1) return 'just now'
+      if (mins === 1) return '1m ago'
+      if (mins < 60) return `${mins}m ago`
+      const hrs = Math.floor(mins / 60)
+      return `${hrs}h ${mins % 60}m ago`
+    } catch { return '' }
+  }
+
   if (loading) return (
     <div className="px-6 py-4 space-y-3 bg-slate-900/40">
+      <div className="grid grid-cols-3 gap-3">
+        <SkeletonCard /><SkeletonCard /><SkeletonCard />
+      </div>
       <SkeletonCard />
     </div>
   )
@@ -85,6 +150,10 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   const secondaryTimelines = audit?.secondary_sa_timelines || []
   const ev = audit?.evidence || {}
   const code = productCode(ev.product)
+
+  const woa_status = audit?.woa_status || ''
+  const territory_name = audit?.territory_name || ''
+  const parent_territory_name = audit?.parent_territory_name || ''
 
   const isStale = !('call_location_city' in ev)
   const origin = ev.truck_prev_location
@@ -210,6 +279,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </a>
       </div>
       {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
+
       {isLowMateriality && recRaw === 'REVIEW' && (
         <div className="text-[9px] text-slate-500 px-1">Auto-approved: below materiality threshold</div>
       )}
@@ -240,6 +310,53 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       {loading && (
         <div className="flex items-center gap-2 text-[10px] text-slate-500">
           <Loader2 className="w-3 h-3 animate-spin text-brand-400" />Loading audit details…
+        </div>
+      )}
+
+      {audit && cacheStatus === 'stale' && (
+        <div className="flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg mb-2">
+          <span className="text-[10px] text-amber-400">
+            Cached {_timeAgo(cachedAt)} — refreshing…
+          </span>
+          <button onClick={handleForceRefresh}
+            className="text-[10px] text-amber-300 hover:text-white flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" /> Force refresh
+          </button>
+        </div>
+      )}
+      {audit && cacheStatus === 'fresh' && cachedAt && (
+        <div className="flex items-center justify-end mb-1">
+          <span className="text-[10px] text-slate-600">
+            Cached {_timeAgo(cachedAt)}
+          </span>
+        </div>
+      )}
+
+      {/* WOA Status + Service Territory — compact header above WO Classification strip */}
+      {audit && (woa_status || territory_name || parent_territory_name) && (
+        <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/30">
+          {woa_status && (
+            <span className={clsx(
+              'px-2 py-0.5 rounded text-[10px] font-semibold border shrink-0',
+              woa_status === 'Approved' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+              woa_status === 'Rejected' ? 'bg-red-500/15 text-red-400 border-red-500/30' :
+              'bg-slate-700/60 text-slate-300 border-slate-600/40'
+            )}>
+              Status: {woa_status}
+            </span>
+          )}
+          {parent_territory_name && (
+            <span className="text-[10px] text-slate-300 font-semibold flex items-center gap-0.5 shrink-0">
+              <MapPin className="w-3 h-3 text-brand-400 shrink-0" />
+              {parent_territory_name}
+            </span>
+          )}
+          {territory_name && (
+            <span className="text-[10px] text-slate-500 flex items-center gap-0.5">
+              {parent_territory_name && <span className="text-slate-700">›</span>}
+              {territory_name}
+            </span>
+          )}
         </div>
       )}
 
@@ -524,91 +641,96 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           )}
         </div>
 
-        {/* Col 3: SA Timeline — primary open, each secondary individually collapsible */}
-        {(timeline.length > 0 || secondaryTimelines.length > 0) && (
-          <div className="glass rounded-xl border border-slate-700/20 p-4">
-            {/* Primary SA — always open */}
-            {timeline.length > 0 && (
-              <>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-3">
-                  SA Timeline <span className="text-slate-600 normal-case font-normal ml-1">({timeline.length} events)</span>
-                  {secondaryTimelines.length > 0 && (
-                    <span className="text-slate-600 normal-case font-normal ml-2">
-                      · {secondaryTimelines.length} additional SA{secondaryTimelines.length > 1 ? 's' : ''} below
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
-                  <span>Transition</span><span className="text-right">Elapsed</span>
-                </div>
-                {timeline.map((step, i) => {
-                  const sec = step.elapsed_seconds
-                  let lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
-                  return (
-                    <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-slate-300 font-medium truncate">
-                          {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
-                        </span>
-                        <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
-                          {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
-                        </span>
-                      </div>
-                      <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
-                    </div>
-                  )
-                })}
-              </>
+        {/* Col 3: SA Timeline — always rendered */}
+        <div className="glass rounded-xl border border-slate-700/20 p-4">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-3">
+            SA Timeline
+            {timeline.length > 0 && <span className="text-slate-600 normal-case font-normal ml-1">({timeline.length} events)</span>}
+            {secondaryTimelines.length > 0 && (
+              <span className="text-slate-600 normal-case font-normal ml-2">
+                · {secondaryTimelines.length} additional SA{secondaryTimelines.length > 1 ? 's' : ''} below
+              </span>
             )}
-
-            {/* Secondary SAs — each individually collapsible, collapsed by default */}
-            {secondaryTimelines.map((sa, idx) => {
-              const isOpen = expandedSAs.has(idx)
-              const toggle = () => setExpandedSAs(prev => {
-                const next = new Set(prev)
-                isOpen ? next.delete(idx) : next.add(idx)
-                return next
-              })
-              return (
-                <div key={idx} className="mt-3 pt-3 border-t border-slate-800/40">
-                  <button onClick={toggle} className="w-full flex items-center justify-between text-left group">
-                    <span className="text-[10px] text-sky-400 font-medium">
-                      SA #{sa.sa_number} — {sa.work_type || 'N/A'}
-                      <span className="text-slate-500 font-normal ml-1">({sa.status})</span>
-                    </span>
-                    <ChevronDown className={clsx('w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-all shrink-0', isOpen && 'rotate-180')} />
-                  </button>
-                  {isOpen && (
-                    <div className="mt-2">
-                      <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
-                        <span>Transition</span><span className="text-right">Elapsed</span>
-                      </div>
-                      {(sa.timeline || []).map((step, i) => {
-                        const sec = step.elapsed_seconds
-                        let lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
-                        return (
-                          <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] text-slate-300 font-medium truncate">
-                                {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
-                              </span>
-                              <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
-                                {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
-                              </span>
-                            </div>
-                            <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
           </div>
-        )}
+          {timeline.length === 0 && secondaryTimelines.length === 0 ? (
+            <div className="text-[10px] text-slate-600 py-4 text-center">No SA status history found for this work order</div>
+          ) : (
+            <>
+              {timeline.length > 0 && (
+                <>
+                  <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
+                    <span>Transition</span><span className="text-right">Elapsed</span>
+                  </div>
+                  {timeline.map((step, i) => {
+                    const sec = step.elapsed_seconds
+                    const lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
+                    return (
+                      <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-slate-300 font-medium truncate">
+                            {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                          </span>
+                          <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
+                            {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
+                          </span>
+                        </div>
+                        <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+              {secondaryTimelines.map((sa, idx) => {
+                const isOpen = expandedSAs.has(idx)
+                const toggle = () => setExpandedSAs(prev => {
+                  const next = new Set(prev)
+                  isOpen ? next.delete(idx) : next.add(idx)
+                  return next
+                })
+                return (
+                  <div key={idx} className="mt-3 pt-3 border-t border-slate-800/40">
+                    <button onClick={toggle} className="w-full flex items-center justify-between text-left group">
+                      <span className="text-[10px] text-sky-400 font-medium">
+                        SA #{sa.sa_number} — {sa.work_type || 'N/A'}
+                        <span className="text-slate-500 font-normal ml-1">({sa.status})</span>
+                      </span>
+                      <ChevronDown className={clsx('w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-all shrink-0', isOpen && 'rotate-180')} />
+                    </button>
+                    {isOpen && (
+                      <div className="mt-2">
+                        <div className="grid grid-cols-[1fr_auto] text-[9px] text-slate-600 uppercase tracking-wider pb-1.5 border-b border-slate-800/50 gap-x-2 px-1">
+                          <span>Transition</span><span className="text-right">Elapsed</span>
+                        </div>
+                        {(sa.timeline || []).map((step, i) => {
+                          const sec = step.elapsed_seconds
+                          const lbl = sec == null ? '' : sec < 60 ? '<1m' : `${Math.floor(sec / 60)}m`
+                          return (
+                            <div key={i} className="px-1 py-1.5 border-b border-slate-800/20 last:border-0 hover:bg-slate-800/20 rounded transition-colors">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] text-slate-300 font-medium truncate">
+                                  {step.from && <span className="text-slate-500 font-normal">{step.from} → </span>}{step.to || '--'}
+                                </span>
+                                <span className={clsx('font-mono text-[9px] font-bold shrink-0', lbl ? 'text-sky-400' : 'text-slate-600')}>
+                                  {lbl ? `+${lbl}` : i === 0 ? '—' : ''}
+                                </span>
+                              </div>
+                              <div className="text-[9px] text-slate-600 font-mono mt-0.5">{step.time || ''}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </>
+          )}
+        </div>
 
       </div>}
+
+      {/* ── Photos ── */}
+      {audit && <AccountingPhotosCard photos={audit.photos} code={code} />}
 
       {/* ── Auditor Summary — full width below grid ── */}
       {audit && (localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
@@ -698,6 +820,12 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           <a href={urls.wo} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-semibold text-slate-300 transition-colors">
             <ExternalLink className="w-3.5 h-3.5" />Open Work Order
+          </a>
+        )}
+        {urls.facility && (
+          <a href={urls.facility} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-semibold text-slate-300 transition-colors">
+            <ExternalLink className="w-3.5 h-3.5" />Service Territory
           </a>
         )}
       </div>}

@@ -46,9 +46,12 @@ _DEFAULT_ACCOUNTING_RATES = [
     ('tl_flag_usd',              'Toll Flag Amount',              30.0,  '$',   'Toll claims above this amount require receipt verification note', 'Audit Thresholds'),
     ('materiality_threshold_usd','Materiality Threshold',         10.0,  '$',   'Adjustments with estimated dollar impact below this amount are flagged as low-materiality (auto-approve signal)', 'Audit Thresholds'),
     ('e1_time_cap_min',          'E1 Time Cap',                   60.0,  'min', 'Maximum payable minutes for E1 Extrication per call', 'Time Caps'),
-    ('er_rate_per_mile',         'ER Rate per Mile',               1.75, '$/mi','Estimated unit cost for ER (Enroute Miles) — used for materiality dollar estimate', 'Reference Rates'),
-    ('tow_rate_per_mile',        'Tow Rate per Mile',             15.0,  '$/mi','Estimated unit cost for TW tow miles — used for materiality dollar estimate', 'Reference Rates'),
+    ('er_rate_per_mile',         'ER Rate per Mile',               1.75, '$/mi', 'Estimated unit cost for ER (Enroute Miles) — used for materiality dollar estimate', 'Reference Rates'),
+    ('tow_rate_per_mile',        'Tow Rate per Mile',             15.0,  '$/mi', 'Estimated unit cost for TW tow miles — used for materiality dollar estimate', 'Reference Rates'),
+    ('em_rate_per_mile',         'EM Extra Tow Mileage per Mile',  2.0,  '$/mi', 'Confirmed from SF WOLI data (248 records, consistent $2.00/mi)', 'Reference Rates'),
     ('e1_rate_per_min',          'E1/MI Rate per Min',             0.75, '$/min','Estimated unit cost for E1/E2/MI time products — used for materiality dollar estimate', 'Reference Rates'),
+    ('ba_rate_per_call',         'BA Base Rate per Call',         40.0,  '$/call','Estimated flat fee for BA (Base Rate) — from ERS_Work_Order_Cost__c sample', 'Reference Rates'),
+    ('mh_rate_per_call',         'MH Medium/Heavy Rate per Call', 20.0,  '$/call','Estimated flat surcharge for MH — from ERS_Work_Order_Cost__c sample', 'Reference Rates'),
 ]
 
 

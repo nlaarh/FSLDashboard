@@ -366,6 +366,34 @@ _DISPATCHER_SF_SEED = [
 ]
 
 
+_NEW_ACCOUNTING_RATES = [
+    ('em_rate_per_mile',  'EM Extra Tow Mileage per Mile',  2.0,  '$/mi',  'Confirmed from SF WOLI data (248 records, consistent $2.00/mi)', 'Reference Rates'),
+    ('ba_rate_per_call',  'BA Base Rate per Call',         40.0,  '$/call','Estimated flat fee for BA (Base Rate) — from ERS_Work_Order_Cost__c sample', 'Reference Rates'),
+    ('mh_rate_per_call',  'MH Medium/Heavy Rate per Call', 20.0,  '$/call','Estimated flat surcharge for MH — from ERS_Work_Order_Cost__c sample', 'Reference Rates'),
+]
+
+
+def _ensure_accounting_rates_rows():
+    """Insert missing reference rate rows into an existing deployment."""
+    try:
+        import logging
+        import db_adapter
+        with db_adapter.writer() as db:
+            for code, label, value, unit, notes, category in _NEW_ACCOUNTING_RATES:
+                db.execute(
+                    """
+                    INSERT INTO accounting_rates (code, label, value, unit, notes, category)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (code) DO NOTHING
+                    """,
+                    (code, label, value, unit, notes, category),
+                )
+        logging.getLogger('startup').info("accounting_rates rows ensured")
+    except Exception as e:
+        import logging
+        logging.getLogger('startup').warning("Could not ensure accounting_rates rows: %s", e)
+
+
 def _ensure_dispatchers_table():
     """Create core.dispatchers table with sf_user_id/channel/observer and seed roster."""
     try:
@@ -427,6 +455,7 @@ def _ensure_dispatchers_table():
 async def startup():
     _ensure_cache_table()
     _ensure_dispatchers_table()
+    _ensure_accounting_rates_rows()
 
     import users
     users.seed_users()
