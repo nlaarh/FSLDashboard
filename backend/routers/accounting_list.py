@@ -13,9 +13,15 @@ log = logging.getLogger('accounting')
 
 
 def _fetch_photo_wo_ids(wo_ids: list) -> set:
-    """Return set of WO IDs that have at least one Service_Photo__c record."""
+    """Return set of WO IDs that have at least one photo.
+
+    Primary: Service_Photo__c (used by all contractor types).
+    Fallback: ContentDocumentLink on WOLI 00000001/00000002 (FSL mobile app uploaders, e.g. facility 421).
+    """
     if not wo_ids:
         return set()
+
+    found = set()
     try:
         rows = batch_soql_parallel("""
             SELECT Work_Order__c
@@ -23,9 +29,38 @@ def _fetch_photo_wo_ids(wo_ids: list) -> set:
             WHERE Work_Order__c IN ('{id_list}')
             GROUP BY Work_Order__c
         """, wo_ids, chunk_size=400)
-        return {r.get('Work_Order__c') for r in (rows or []) if r.get('Work_Order__c')}
+        found = {r.get('Work_Order__c') for r in (rows or []) if r.get('Work_Order__c')}
     except Exception:
-        return set()
+        pass
+
+    # CDL fallback for WOs not found in Service_Photo__c
+    remaining = [wid for wid in wo_ids if wid not in found]
+    if remaining:
+        try:
+            woli_rows = batch_soql_parallel("""
+                SELECT Id, WorkOrderId
+                FROM WorkOrderLineItem
+                WHERE WorkOrderId IN ('{id_list}')
+                  AND LineItemNumber IN ('00000001', '00000002')
+            """, remaining, chunk_size=400)
+            woli_ids = [r.get('Id') for r in (woli_rows or []) if r.get('Id')]
+            woli_to_wo = {r.get('Id'): r.get('WorkOrderId') for r in (woli_rows or []) if r.get('Id')}
+            if woli_ids:
+                cdl_rows = batch_soql_parallel("""
+                    SELECT LinkedEntityId
+                    FROM ContentDocumentLink
+                    WHERE LinkedEntityId IN ('{id_list}')
+                      AND ContentDocument.FileType IN ('JPG', 'JPEG', 'PNG')
+                    GROUP BY LinkedEntityId
+                """, woli_ids, chunk_size=400)
+                for r in (cdl_rows or []):
+                    woli_id = r.get('LinkedEntityId')
+                    if woli_id and woli_id in woli_to_wo:
+                        found.add(woli_to_wo[woli_id])
+        except Exception:
+            pass
+
+    return found
 
 
 def _calc_age_from_wo(woa_created, wo_created):
