@@ -64,6 +64,8 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if path.startswith("/track/") or (path.startswith("/api/track/") and request.method == "GET"):
         return await call_next(request)
+    if path == "/api/admin/impersonate/return":
+        return await call_next(request)
     # Azure Easy Auth: only trust this header when running in Azure App Service
     if request.headers.get("x-ms-client-principal") and os.environ.get("WEBSITE_SITE_NAME"):
         return await call_next(request)

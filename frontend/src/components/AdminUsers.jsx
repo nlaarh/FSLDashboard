@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw, RotateCcw, EyeOff } from 'lucide-react'
-import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminRestoreUser, adminListSessions } from '../api'
+import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw, RotateCcw, EyeOff, LogIn } from 'lucide-react'
+import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminRestoreUser, adminListSessions, adminImpersonate } from '../api'
 import { clsx } from 'clsx'
 import AdminUserEditor from './AdminUserEditor'
 import { DEPT_STYLE, ROLE_STYLE } from '../constants/users'
@@ -24,6 +24,7 @@ export default function AdminUsers({ pin }) {
   const [emailBody, setEmailBody] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [currentUser, setCurrentUser] = useState(null)
 
   const loadUsers = useCallback(async () => {
     try {
@@ -42,6 +43,7 @@ export default function AdminUsers({ pin }) {
   useEffect(() => {
     loadUsers()
     loadSessions()
+    fetch('/api/auth/me').then(r => r.ok ? r.json() : {}).then(d => setCurrentUser(d)).catch(() => {})
     const id = setInterval(loadSessions, 5000)
     return () => clearInterval(id)
   }, [loadUsers, loadSessions])
@@ -192,6 +194,20 @@ export default function AdminUsers({ pin }) {
     }
   }
 
+  const loginAs = async (u) => {
+    try {
+      // Server sets the httponly cookie directly — no JS cookie manipulation needed
+      const data = await adminImpersonate(pin, u.username)
+      sessionStorage.setItem('impersonating', JSON.stringify({
+        name: data.name, role: data.role,
+        originCookie: data.origin_cookie || '',
+      }))
+      window.location.href = '/'
+    } catch (e) {
+      setActionError(e?.response?.data?.detail || 'Failed to impersonate')
+    }
+  }
+
   const toggleActive = async (u) => {
     try {
       await adminUpdateUser(pin, u.username, { active: !u.active })
@@ -338,6 +354,12 @@ export default function AdminUsers({ pin }) {
                             className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition-colors">
                             <Trash className="w-3 h-3" />
                           </button>
+                          {currentUser?.role === 'superadmin' && u.active && u.username !== currentUser?.user && (
+                            <button onClick={() => loginAs(u)} title={`Log in as ${u.name}`}
+                              className="p-1.5 rounded-lg hover:bg-indigo-900/30 text-slate-500 hover:text-indigo-400 transition-colors">
+                              <LogIn className="w-3 h-3" />
+                            </button>
+                          )}
                         </>
                       ) : (
                         <button onClick={() => restoreUser(u.username)} title="Restore user"

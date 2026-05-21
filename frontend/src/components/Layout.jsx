@@ -77,12 +77,17 @@ export default function Layout() {
   const [features, setFeatures] = useState({})
   const [department, setDepartment] = useState('')
   const [role, setRole] = useState('')
+  const [name, setName] = useState('')
+  const [impersonating, setImpersonating] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('impersonating') || 'null') } catch { return null }
+  })
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {})
     fetch('/api/auth/me').then(r => r.json()).then(d => {
       setDepartment(d.department || '')
       setRole(d.role || '')
+      setName(d.name || '')
     }).catch(() => {})
     const handler = (e) => {
       if (e.detail) setFeatures(e.detail)
@@ -100,11 +105,40 @@ export default function Layout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } catch { /* ignore */ }
+    sessionStorage.removeItem('impersonating')
     window.location.href = '/'
+  }
+
+  const returnToSelf = async () => {
+    const origin = impersonating
+    sessionStorage.removeItem('impersonating')
+    setImpersonating(null)
+    // Ask server to restore the original httponly cookie
+    if (origin?.originCookie) {
+      await fetch('/api/admin/impersonate/return', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ origin_cookie: origin.originCookie }),
+      }).catch(() => {})
+    } else {
+      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    }
+    window.location.href = '/admin'
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
+      {impersonating && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-6 py-2 flex items-center gap-3 text-xs">
+          <span className="text-amber-300 font-semibold">Viewing as {impersonating.name}</span>
+          <span className="text-amber-500/70 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">{impersonating.role}</span>
+          <span className="text-slate-500 flex-1">— You are seeing exactly what this user sees</span>
+          <button onClick={returnToSelf}
+            className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold transition-colors border border-amber-500/30">
+            ← Return to your account
+          </button>
+        </div>
+      )}
       {/* Top nav */}
       <nav className="sticky top-0 z-50 glass border-b border-slate-700/50">
         <div className="max-w-[1600px] mx-auto px-6 h-14 flex items-center gap-6">
@@ -208,7 +242,7 @@ export default function Layout() {
               className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all">
               <LogOut className="w-4 h-4" />
             </button>
-            <span className="text-[10px] text-slate-600 ml-2 hidden lg:inline">AAA WCNY</span>
+            {name && <span className="text-[10px] text-slate-400 ml-2 hidden lg:inline">{name}</span>}
           </div>
         </div>
       </nav>

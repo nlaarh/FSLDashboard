@@ -51,6 +51,20 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [opsRefreshKey,  setOpsRefreshKey]  = useState(0)
   const [revRefreshKey,  setRevRefreshKey]  = useState(0)
   const [refreshing, setRefreshing]         = useState(false)
+  const [features, setFeatures]             = useState(null)
+
+  useEffect(() => {
+    fetch('/api/auth/me').then(r => r.ok ? r.json() : {}).then(d => setFeatures(d.features || []))
+  }, [])
+
+  const canSeeRevPerf = features === null || features.includes('garage.revenue_performance')
+
+  // Auto-switch to Operations if role doesn't allow Performance/Revenue tabs
+  useEffect(() => {
+    if (features !== null && !canSeeRevPerf && (activeTab === 'performance' || activeTab === 'revenue')) {
+      setActiveTab('operations')
+    }
+  }, [features])
 
   const handleRefresh = () => {
     setRefreshing(true)
@@ -114,7 +128,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       {/* TAB BAR + DATE PILLS + CUSTOM RANGE */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
-          {[['performance', 'Performance'], ['operations', 'Operations'], ['revenue', 'Revenue']].map(([key, label]) => (
+          {[...(canSeeRevPerf ? [['performance', 'Performance']] : []), ['operations', 'Operations'], ...(canSeeRevPerf ? [['revenue', 'Revenue']] : [])].map(([key, label]) => (
             <button key={key}
               onClick={() => setActiveTab(key)}
               className={clsx('px-4 py-1.5 rounded-md text-xs font-semibold transition',

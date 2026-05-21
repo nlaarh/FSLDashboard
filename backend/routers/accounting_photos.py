@@ -1,11 +1,14 @@
 """Accounting — photo fetching for WOA audit panel.
 
-Towbook: photos stored as Service_Photo__c records (1 per photo) linked to Work Order.
-  Photo_URL__c holds the direct Towbook-hosted photo URL. Falls back to SF record page
-  if Photo_URL__c is empty.
+All WOs in the accounting audit are contractor WOs. Photo routing:
 
-On-Platform (Fleet): photos stored as ContentDocumentLinks on WOLI 00000001 (pickup)
-  and WOLI 00000002 (drop-off). Download URLs serve the actual files.
+Primary: Service_Photo__c (Work_Order__c lookup) — used by ALL contractor types,
+  both on-platform and Towbook. Photo_URL__c holds the Towbook S3 URL.
+
+Fallback: ContentDocumentLink on WOLI 00000001 (pickup) and 00000002 (drop-off) —
+  for facilities that upload via the FSL mobile app (e.g. facility 421).
+
+The dispatch channel (on-platform vs Towbook) does NOT determine photo storage.
 """
 import logging
 import cache
@@ -43,10 +46,31 @@ def _normalize_photo_url(raw_url: str, fallback_id: str) -> tuple[str, bool]:
 
 
 def fetch_photos(wo_id: str, woli_rows: list, is_fleet: bool) -> dict:
-    """Return photos for the audit panel."""
-    if is_fleet:
-        return _fetch_on_platform_photos(wo_id, woli_rows)
-    return _fetch_towbook_photos(wo_id)
+    """Return photos for the audit panel.
+
+    All WOs in the accounting audit are contractor WOs. Contractors use
+    Service_Photo__c as their primary photo store regardless of dispatch
+    channel (both on-platform and Towbook contractors write here).
+
+    CDL on WOLIs is the fallback for facilities that upload via the FSL
+    mobile app instead (e.g. facility 421: numeric Facility_ID but FSL app).
+
+    The is_fleet param is kept for signature compatibility but no longer
+    drives routing — photo storage doesn't follow the dispatch channel.
+    """
+    result = _fetch_towbook_photos(wo_id)
+    if result.get('photos'):
+        return result
+
+    if woli_rows:
+        cdl = _fetch_on_platform_photos(wo_id, woli_rows)
+        total = len(cdl.get('pickup_photos', [])) + len(cdl.get('dropoff_photos', []))
+        if total > 0:
+            log.info(f"WO {wo_id}: no Service_Photo__c found; using CDL fallback ({total} photos)")
+            cdl['transitional_fallback'] = True
+            return cdl
+
+    return result
 
 
 def _fetch_towbook_photos(wo_id: str) -> dict:

@@ -33,6 +33,10 @@ _PHASE_ORDER = ['Dispatched', 'Accepted', 'En Route', 'On Location', 'In Progres
 # Terminal statuses — SA is done
 _TERMINAL_STATUSES = {'Completed', 'Canceled', 'Cancelled', 'Cannot Complete'}
 
+# Resolved statuses — driver is en route or on scene; dispatcher concern is resolved
+# unless the call has been in this state too long (aging flag)
+_RESOLVED_STATUSES = {'En Route', 'Travel', 'On Location', 'In Progress'}
+
 # Human dispatchers have this profile
 _HUMAN_PROFILE = 'Membership User'
 
@@ -201,6 +205,12 @@ def _build_watchlist() -> dict:
 
         if not reasons:
             continue
+
+        # Auto-drop: En Route/On-Scene — concern resolved unless driver is aging
+        if status in _RESOLVED_STATUSES:
+            tis = _time_in_status(hist_list, status, now_utc)
+            if _compute_flag(status, tis) != 'aging':
+                continue
 
         entry = _build_entry(sa, ar_list, hist_list, reasons, flags, now_utc, sa_map)
         entries.append(entry)

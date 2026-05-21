@@ -25,22 +25,9 @@ from utils import soql_date_range, parse_dt as _parse_dt, is_fleet_territory, to
 router = APIRouter()
 log = logging.getLogger('reporting')
 
-_USER_ADOPTION_ROLES = {"superadmin", "admin", "executive"}
-
-
 def _require_user_adoption_role(request: Request) -> None:
-    from routers.auth import _verify_cookie
-
-    cookie = request.cookies.get("fslapp_auth")
-    payload = _verify_cookie(cookie) if cookie else None
-    if not payload:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    parts = payload.split(":")
-    username = parts[0] if parts else ""
-    cookie_role = parts[1] if len(parts) > 1 else ""
-    role = (users.get_user(username) or {}).get("role") or cookie_role
-    if role not in _USER_ADOPTION_ROLES:
-        raise HTTPException(status_code=403, detail="User adoption report restricted")
+    from permissions import require_feature
+    require_feature("reporting.user_adoption", request)
 
 # ── Single-garage fallback (used when < 5 garages requested) ──────────────────
 

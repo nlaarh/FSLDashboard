@@ -50,42 +50,21 @@ def _check_password(password: str, stored_hash: str, salt: str) -> bool:
 
 
 # ── Seed / ensure users ──────────────────────────────────────────────────────
+# Contingency-only seeds — used when the database is unavailable or wiped.
+# All other users are managed via the admin panel and live in the database.
 # Passwords come from env vars — never stored in source code.
 # (username, env_var, display_name, role, email, department)
 
 _SEED_USER_DEFS = [
-    # Core / admin
-    ('admin',               'SEED_PASS_ADMIN',          'Admin',              'admin',          '',                        ''),
-    ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI',      'Nour Laaroubi',     'superadmin',     'nlaaroubi@nyaaa.com',     'executive'),
-    # ERS managers — full access
-    ('tingraham@nyaaa.com', 'SEED_PASS_TINGRAHAM',      'Todd Ingraham',     'ers-manager',    'tingraham@nyaaa.com',     'ers'),
-    ('dfisher@nyaaa.com',   'SEED_PASS_DFISHER',        'D Fisher',          'ers-manager',    'dfisher@nyaaa.com',       'ers'),
-    ('shorn@nyaaa.com',     'SEED_PASS_SHORN',          'S Horn',            'ers-manager',    'shorn@nyaaa.com',         'ers'),
-    ('rprendergast@nyaaa.com','SEED_PASS_RPRENDERGAST', 'Robert Prendergast','ers-manager',    'rprendergast@nyaaa.com',  'ers'),
-    ('cmacneil@nyaaa.com',  'SEED_PASS_CMACNEIL',       'Chris Macneil',    'ers-manager',    'cmacneil@nyaaa.com',      'ers'),
-    ('tcoulter@nyaaa.com',  'SEED_PASS_TCOULTER',        'Todd Coulter',    'ers-manager',    'tcoulter@nyaaa.com',      'ers'),
-    ('mmika@nyaaa.com',     'SEED_PASS_MMIKA',           'Mark Mika',       'ers-manager',    'mmika@nyaaa.com',         'ers'),
-    ('rlyle@nyaaa.com',     'SEED_PASS_RLYLE',           'Robert Lyle',     'ers-manager',    'rlyle@nyaaa.com',         'ers'),
-    ('jcarroll@nyaaa.com',  'SEED_PASS_JCARROLL',        'Jon Carroll',     'ers-manager',    'jcarroll@nyaaa.com',      'ers'),
-    ('jharrington@nyaaa.com','SEED_PASS_JHARRINGTON',    'Jeremy Harrington','ers-manager',    'jharrington@nyaaa.com',   'ers'),
-    # ERS supervisors — no accounting, no admin
-    ('sgancasz@nyaaa.com',  'SEED_PASS_SGANCASZ',        'Shawn Gancasz',   'ers-supervisor', 'sgancasz@nyaaa.com',      'ers'),
-    ('mtrichilo@nyaaa.com', 'SEED_PASS_MTRICHILO',       'Mary Trichilo',   'ers-supervisor', 'mtrichilo@nyaaa.com',     'ers'),
-    ('khartman@nyaaa.com',  'SEED_PASS_KHARTMAN',        'Kristin Hartman', 'ers-supervisor', 'khartman@nyaaa.com',      'ers'),
-    ('calger@nyaaa.com',    'SEED_PASS_CALGER',           'Cat Alger',      'ers-supervisor', 'calger@nyaaa.com',        'ers'),
-    ('dkalenda@nyaaa.com',  'SEED_PASS_DKALENDA',         'Deborah Kalenda','ers-supervisor', 'dkalenda@nyaaa.com',      'ers'),
-    # Executive
-    ('jnixon@nyaaa.com',    'SEED_PASS_JNIXON',          'J Nixon',        'executive',      'jnixon@nyaaa.com',        'executive'),
-    # Finance — accounting only
-    ('dbrown@nyaaa.com',    'SEED_PASS_DBROWN',           'Denise Brown',   'finance',        'dbrown@nyaaa.com',        'finance'),
-    ('ksmeal@nyaaa.com',    'SEED_PASS_KSMEAL',           'Kerry Smeal',    'finance',        'ksmeal@nyaaa.com',        'finance'),
+    ('admin',               'SEED_PASS_ADMIN',     'Admin',         'admin',      '',                    ''),
+    ('nlaaroubi@nyaaa.com', 'SEED_PASS_NLAAROUBI', 'Nour Laaroubi', 'superadmin', 'nlaaroubi@nyaaa.com', 'executive'),
 ]
 
 
 def seed_users():
-    """Ensure all defined users exist with correct roles. Creates missing users,
-    updates role/dept for existing ones.  Passwords read from SEED_PASS_* env vars
-    — only set on initial creation (never overwrite existing passwords)."""
+    """Ensure contingency admin accounts exist. All other users are DB-managed.
+    Creates missing seed users; updates role/dept for existing ones.
+    Passwords read from SEED_PASS_* env vars — never overwrites existing passwords."""
     import logging
     _log = logging.getLogger('users')
 

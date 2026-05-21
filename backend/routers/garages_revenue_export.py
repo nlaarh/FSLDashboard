@@ -2,10 +2,11 @@
 
 import os
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from sf_client import sanitize_soql
 import cache
 from routers.garages_revenue import _compute_revenue
+from permissions import require_feature
 
 router = APIRouter()
 log = logging.getLogger('garages_revenue_export')
@@ -24,7 +25,9 @@ def get_driver_revenue_export(
     start_date: str = Query(...),
     end_date:   str = Query(...),
     garage_name: str = Query(''),
+    request: Request = None,
 ):
+    require_feature("garage.revenue_performance", request)
     from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
@@ -231,7 +234,8 @@ def _build_email_html(garage_name: str, start_date: str, end_date: str,
 
 
 @router.post("/api/garages/{territory_id}/driver-revenue/email")
-def post_driver_revenue_email(territory_id: str, body: dict):
+def post_driver_revenue_email(territory_id: str, body: dict, request: Request = None):
+    require_feature("garage.revenue_performance", request)
     import requests as _req
 
     tid         = sanitize_soql(territory_id)

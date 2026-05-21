@@ -1,7 +1,7 @@
 """Admin router — PIN-protected admin panel, cache flush, user management, settings."""
 
 import os, json as _json
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 import users
 import cache
 from password_policy import password_policy_error
@@ -129,7 +129,7 @@ def admin_create_user(request: Request, body: dict):
         raise HTTPException(status_code=400, detail=password_error)
     email = body.get("email", "").strip()
     phone = body.get("phone", "").strip()
-    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor")
+    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor", "ers-director")
     if role not in valid_roles:
         raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(valid_roles)}")
     department = body.get("department", "").strip().lower()
@@ -211,6 +211,51 @@ def admin_restore_user(request: Request, username: str):
         return {"ok": True, "user": user}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/api/admin/users/{username}/impersonate")
+def admin_impersonate(request: Request, username: str, response: Response):
+    """Superadmin-only: set httponly cookie as target user for support/verification."""
+    _check_pin(request)
+    from routers.auth import _verify_cookie, _sign_cookie
+    cookie = request.cookies.get("fslapp_auth")
+    payload = _verify_cookie(cookie) if cookie else None
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    caller = payload.split(":")[0]
+    caller_user = users.get_user(caller)
+    if not caller_user or caller_user.get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Only superadmin can impersonate users")
+    target = users.get_user(username)
+    if not target or not target.get("active"):
+        raise HTTPException(status_code=404, detail="User not found or inactive")
+    if target.get("role") == "superadmin":
+        raise HTTPException(status_code=400, detail="Cannot impersonate another superadmin")
+    # Store caller's current cookie so they can return without re-logging in
+    origin_cookie = cookie  # the signed superadmin cookie value
+    token = users.create_session(username, target["role"], target.get("name", username), target.get("department", ""))
+    cookie_payload = f"{username}:{target['role']}:{token}"
+    cookie_value = _sign_cookie(cookie_payload)
+    # Set the new httponly cookie — this replaces the superadmin session in the browser
+    response.set_cookie("fslapp_auth", cookie_value, httponly=True, samesite="lax", max_age=86400)
+    activity.log_activity(user=caller, action="impersonate", detail=f"Logged in as {target.get('name', username)} ({target['role']})")
+    return {
+        "username": username,
+        "name": target.get("name", username),
+        "role": target["role"],
+        "origin_cookie": origin_cookie,
+    }
+
+
+@router.post("/api/admin/impersonate/return")
+def admin_impersonate_return(body: dict, response: Response):
+    """Restore the original superadmin session after impersonation."""
+    from routers.auth import _verify_cookie
+    origin_cookie = body.get("origin_cookie", "")
+    if not origin_cookie or not _verify_cookie(origin_cookie):
+        raise HTTPException(status_code=400, detail="Invalid origin cookie")
+    response.set_cookie("fslapp_auth", origin_cookie, httponly=True, samesite="lax", max_age=86400)
+    return {"ok": True}
 
 
 @router.post("/api/admin/users/seed-restore")

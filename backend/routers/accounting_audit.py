@@ -79,7 +79,7 @@ def _build_woa_data(woa_id: str) -> dict:
 
     # SA fields used in Round 2 sa_direct query.
     _SA_FIELDS = """Id, AppointmentNumber, Status, SchedStartTime,
-                   ServiceTerritoryId, ServiceTerritory.Name, ParentRecordId,
+                   ServiceTerritoryId, ServiceTerritory.Name, ServiceTerritory.ParentTerritory.Name, ParentRecordId,
                    ERS_En_Route_Geolocation__Latitude__s,
                    ERS_En_Route_Geolocation__Longitude__s,
                    On_Location_Geolocation__Latitude__s,
@@ -342,8 +342,8 @@ def _build_woa_data(woa_id: str) -> dict:
     for i, sec_sa in enumerate(secondary_sa_rows[:3]):
         parallel_data[f'sa_history_{i+2}'] = _history_by_sa.get(sec_sa.get('Id', ''), [])
 
-    # Photos: sequential call — Towbook hits L2 cache (fast); Fleet needs woli_rows.
-    parallel_data['photos'] = fetch_photos(wo_id, woli_rows if _is_on_platform else [], _is_on_platform)
+    # Photos: pass woli_rows for both channels — Towbook also needs them for CDL fallback.
+    parallel_data['photos'] = fetch_photos(wo_id, woli_rows, _is_on_platform)
 
     status_transitions = ['None', 'Scheduled', 'Assigned', 'Dispatched',
                           'Accepted', 'Declined', 'En Route',
@@ -634,8 +634,8 @@ def _build_woa_data(woa_id: str) -> dict:
         'woa_id': woa_id,
         'woa_number': woa.get('Name', ''),
         'woa_status': woa.get('Status__c') or '',
-        'territory_name': (wo.get('ServiceTerritory') or {}).get('Name') or '',
-        'parent_territory_name': ((wo.get('ServiceTerritory') or {}).get('ParentTerritory') or {}).get('Name') or '',
+        'territory_name': (sa.get('ServiceTerritory') or {}).get('Name') or (wo.get('ServiceTerritory') or {}).get('Name') or '',
+        'parent_territory_name': ((sa.get('ServiceTerritory') or {}).get('ParentTerritory') or {}).get('Name') or ((wo.get('ServiceTerritory') or {}).get('ParentTerritory') or {}).get('Name') or '',
         'recommendation': rule_rec,
         'rec_reason': rec_reason,
         'confidence': 'LOW',

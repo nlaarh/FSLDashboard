@@ -4,6 +4,7 @@ import os, hashlib, hmac, secrets
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 import users
+from permissions import get_user_features
 
 router = APIRouter()
 
@@ -622,7 +623,7 @@ def auth_me(request: Request):
     # Azure Easy Auth
     principal = request.headers.get("x-ms-client-principal-name")
     if principal:
-        return {"user": principal, "method": "sso", "role": "admin", "name": principal}
+        return {"user": principal, "method": "sso", "role": "admin", "name": principal, "features": get_user_features("admin")}
     # Admin cookie
     cookie = request.cookies.get("fslapp_auth")
     payload = _verify_cookie(cookie) if cookie else None
@@ -646,9 +647,9 @@ def auth_me(request: Request):
             email = user_record.get("email", "")
             if not department:
                 department = user_record.get("department", "")
-        return {"user": username, "name": name, "role": role, "email": email, "department": department, "method": "admin"}
+        return {"user": username, "name": name, "role": role, "email": email, "department": department, "method": "admin", "features": get_user_features(role)}
     if _DEV_AUTO_LOGIN:
-        return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "department": "", "method": "local"}
+        return {"user": "dev", "name": "Developer", "role": "admin", "email": "", "department": "", "method": "local", "features": get_user_features("admin")}
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 

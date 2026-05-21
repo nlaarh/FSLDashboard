@@ -17,10 +17,11 @@ from collections import defaultdict
 from itertools import groupby
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from utils import parse_dt, _ET
 import cache
+from permissions import require_feature
 
 router = APIRouter()
 
@@ -593,7 +594,9 @@ def get_driver_revenue(
     start_date: str = Query(...),
     end_date:   str = Query(...),
     bust: bool = Query(False),
+    request: Request = None,
 ):
+    require_feature("garage.revenue_performance", request)
     tid  = sanitize_soql(territory_id)
     sd   = sanitize_soql(start_date)
     ed   = sanitize_soql(end_date)
@@ -610,7 +613,9 @@ def get_driver_daily(
     driver_name:  str,
     start_date: str = Query(...),
     end_date:   str = Query(...),
+    request: Request = None,
 ):
+    require_feature("garage.revenue_performance", request)
     tid    = sanitize_soql(territory_id)
     driver = sanitize_soql(driver_name)
     sd     = sanitize_soql(start_date)
