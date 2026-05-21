@@ -123,6 +123,11 @@ function Th({ label, col, sort, onSort, right = false }) {
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
+const _SS_KEY = 'acct_filters_v1'
+function _loadFilters() {
+  try { return JSON.parse(sessionStorage.getItem(_SS_KEY) || 'null') || {} } catch { return {} }
+}
+
 export default function Accounting() {
   const navigate = useNavigate()
   const [items, setItems] = useState([])
@@ -131,20 +136,30 @@ export default function Accounting() {
   const [totals, setTotals] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [search, setSearch] = useState('')
-  const [searchDebounce, setSearchDebounce] = useState('')
-  const [product, setProduct] = useState('All')
-  const [recFilter, setRecFilter] = useState('All')
-  const [statusFilter, setStatusFilter] = useState('New')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
-  const [sort, setSort] = useState({ col: 'created_date', dir: 'desc' })
-  const [page, setPage] = useState(0)
-  const [activeTab, setActiveTab] = useState('woa')
+  const _f = _loadFilters()
+  const [search, setSearch] = useState(_f.search || '')
+  const [searchDebounce, setSearchDebounce] = useState(_f.search || '')
+  const [product, setProduct] = useState(_f.product || 'All')
+  const [recFilter, setRecFilter] = useState(_f.recFilter || 'All')
+  const [statusFilter, setStatusFilter] = useState(_f.statusFilter || 'New')
+  const [startDate, setStartDate] = useState(_f.startDate || '')
+  const [endDate, setEndDate] = useState(_f.endDate || '')
+  const [sort, setSort] = useState(_f.sort || { col: 'created_date', dir: 'desc' })
+  const [page, setPage] = useState(_f.page || 0)
+  const [activeTab, setActiveTab] = useState(_f.activeTab || 'woa')
   const [auditOverrides, setAuditOverrides] = useState({})
   const _prefetchTimer = useRef(null)
   const _prefetching = useRef(new Set())
   const PAGE_SIZE = 50
+
+  // Persist filters so they survive navigation to/from detail page
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(_SS_KEY, JSON.stringify({
+        search, product, recFilter, statusFilter, startDate, endDate, sort, page, activeTab,
+      }))
+    } catch { /* ignore quota errors */ }
+  }, [search, product, recFilter, statusFilter, startDate, endDate, sort, page, activeTab])
 
   const prefetchAudit = useCallback((woaId) => {
     if (!woaId || _prefetching.current.has(woaId)) return
