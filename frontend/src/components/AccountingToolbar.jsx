@@ -85,49 +85,51 @@ export default function AccountingToolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <div className="relative">
-          <select value={product} onChange={e => onProductChange(e.target.value)}
-            className="bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2 pr-8
-                       focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
-            {products.map(p => (
-              <option key={p.val} value={p.val}>{p.label}</option>
+        {activeTab !== 'analytics' && (<>
+          <div className="relative">
+            <select value={product} onChange={e => onProductChange(e.target.value)}
+              className="bg-slate-900 border border-slate-700 rounded-lg text-xs px-3 py-2 pr-8
+                         focus:outline-none focus:ring-2 focus:ring-brand-500/40 appearance-none cursor-pointer text-white">
+              {products.map(p => (
+                <option key={p.val} value={p.val}>{p.label}</option>
+              ))}
+            </select>
+            <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+          </div>
+
+          <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
+            {['New', 'Approved', 'Rejected', 'All'].map(s => (
+              <button key={s} onClick={() => onStatusFilterChange(s)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  statusFilter === s
+                    ? s === 'Approved' ? 'bg-emerald-600/20 text-emerald-300'
+                      : s === 'Rejected' ? 'bg-red-600/20 text-red-300'
+                      : 'bg-brand-600/20 text-brand-300'
+                    : 'text-slate-500 hover:text-white',
+                )}>
+                {s}
+              </button>
             ))}
-          </select>
-          <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-        </div>
+          </div>
 
-        <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
-          {['New', 'Approved', 'Rejected', 'All'].map(s => (
-            <button key={s} onClick={() => onStatusFilterChange(s)}
-              className={clsx(
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                statusFilter === s
-                  ? s === 'Approved' ? 'bg-emerald-600/20 text-emerald-300'
-                    : s === 'Rejected' ? 'bg-red-600/20 text-red-300'
-                    : 'bg-brand-600/20 text-brand-300'
-                  : 'text-slate-500 hover:text-white',
-              )}>
-              {s}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
-          {['All', 'Approve', 'Review', 'Credit'].map(f => (
-            <button key={f} onClick={() => onRecFilterChange(f)}
-              className={clsx(
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                recFilter === f
-                  ? f === 'Approve' ? 'bg-emerald-600/20 text-emerald-300'
-                    : f === 'Review' ? 'bg-amber-600/20 text-amber-300'
-                    : f === 'Credit' ? 'bg-red-600/20 text-red-300'
-                    : 'bg-brand-600/20 text-brand-300'
-                  : 'text-slate-500 hover:text-white',
-              )}>
-              {f}
-            </button>
-          ))}
-        </div>
+          <div className="flex items-center bg-slate-800/60 rounded-lg p-0.5 border border-slate-700/50">
+            {['All', 'Approve', 'Review', 'Credit'].map(f => (
+              <button key={f} onClick={() => onRecFilterChange(f)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  recFilter === f
+                    ? f === 'Approve' ? 'bg-emerald-600/20 text-emerald-300'
+                      : f === 'Review' ? 'bg-amber-600/20 text-amber-300'
+                      : f === 'Credit' ? 'bg-red-600/20 text-red-300'
+                      : 'bg-brand-600/20 text-brand-300'
+                    : 'text-slate-500 hover:text-white',
+                )}>
+                {f}
+              </button>
+            ))}
+          </div>
+        </>)}
 
         <div className="flex items-center gap-1.5">
           <input type="date" value={startDate} onChange={e => onStartDateChange(e.target.value)}
@@ -141,13 +143,15 @@ export default function AccountingToolbar({
           )}
         </div>
 
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-          <input value={search} onChange={e => onSearchChange(e.target.value)}
-            placeholder="Search WOA#, WO#, facility…"
-            className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-sm
-                       placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 transition-all" />
-        </div>
+        {activeTab !== 'analytics' && (
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+            <input value={search} onChange={e => onSearchChange(e.target.value)}
+              placeholder="Search WOA#, WO#, facility…"
+              className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-sm
+                         placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 transition-all" />
+          </div>
+        )}
       </div>
     </>
   )

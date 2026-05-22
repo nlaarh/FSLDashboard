@@ -1,7 +1,9 @@
 """Accounting — shared calculation helpers (recommendation engine, formatters, utils)."""
 
 import logging
+import re
 import re as _re
+import threading
 import requests as _requests
 from datetime import timezone as _tz
 from zoneinfo import ZoneInfo
@@ -51,6 +53,87 @@ _DEFAULT_AUDIT_PROMPT = (
     "Use published specs (e.g. Ford F-350 = 14000, Ram 2500 = 10000, semi = 80000, F-150 = 7050). "
     "Return null for passenger cars or if make/model is unknown."
 )
+
+
+# ── Heavy Duty Vehicle approved list cache ───────────────────────────────────
+# Loaded once from Postgres. Never expires on its own — call invalidate_hdv_cache()
+# whenever the ref_heavy_duty_vehicles table is modified (add/edit/delete/import).
+
+_hdv_cache: list[dict] | None = None   # None = not yet loaded
+_hdv_cache_lock = threading.Lock()
+
+
+def _load_hdv_cache() -> list[dict]:
+    """Load approved vehicles from Postgres into the module-level cache."""
+    try:
+        import db_adapter
+        with db_adapter.reader() as db:
+            db.execute("SELECT make, model FROM ref_heavy_duty_vehicles WHERE approved = true ORDER BY make, model")
+            rows = db.fetchall()
+        log.info("[hdv_cache] loaded %d approved vehicles", len(rows))
+        return rows
+    except Exception as e:
+        log.warning("[hdv_cache] load failed: %s", e)
+        return []
+
+
+def _get_hdv_vehicles() -> list[dict]:
+    """Return the cached approved vehicle list, loading it on first call."""
+    global _hdv_cache
+    if _hdv_cache is None:
+        with _hdv_cache_lock:
+            if _hdv_cache is None:
+                _hdv_cache = _load_hdv_cache()
+    return _hdv_cache
+
+
+def invalidate_hdv_cache() -> None:
+    """Clear the cache so the next audit reloads from Postgres."""
+    global _hdv_cache
+    with _hdv_cache_lock:
+        _hdv_cache = None
+    log.info("[hdv_cache] invalidated")
+
+
+def _norm_vehicle(s: str) -> str:
+    """Normalize vehicle make/model string: lowercase, strip non-alphanumeric."""
+    return re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+
+def _match_hdv_approved(make: str, model: str) -> tuple[str, str]:
+    """
+    Check whether make+model appears on the approved heavy duty vehicle list.
+    Returns (confidence, description) where confidence is:
+      'exact'    — normalized make+model matched an entry exactly
+      'fuzzy'    — partial/prefix match (e.g. "F-350 XLT" ~ "F-350")
+      'no_match' — not found on the list
+      'unavailable' — list could not be loaded
+    """
+    vehicles = _get_hdv_vehicles()
+    if not vehicles:
+        return 'unavailable', 'Approved vehicle list could not be loaded'
+
+    nm = _norm_vehicle(make)
+    nmod = _norm_vehicle(model)
+
+    # Pass 1 — exact match on normalized make AND model
+    for v in vehicles:
+        if _norm_vehicle(v['make']) == nm and _norm_vehicle(v['model']) == nmod:
+            return 'exact', f"{v['make']} {v['model']}"
+
+    # Pass 2 — fuzzy: make matches AND model prefix matches in either direction
+    for v in vehicles:
+        vm = _norm_vehicle(v['make'])
+        vmod = _norm_vehicle(v['model'])
+        make_ok = (not nm or not vm or nm == vm
+                   or nm.startswith(vm) or vm.startswith(nm))
+        model_ok = (nmod == vmod
+                    or nmod.startswith(vmod)
+                    or vmod.startswith(nmod))
+        if make_ok and model_ok and (nm or nmod):
+            return 'fuzzy', f"{v['make']} {v['model']}"
+
+    return 'no_match', f"{make or '?'} {model or '?'} not on approved list"
 
 
 def _to_et(dt_str):
@@ -113,7 +196,8 @@ def _google_distance(api_key, origin_lat, origin_lon, dest_lat, dest_lon, origin
 def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est_tow,
                          on_loc_minutes=None, vehicle_weight=None, vehicle_group=None,
                          all_wolis=None, long_tow_used=False,
-                         vehicle_make=None, vehicle_model=None):
+                         vehicle_make=None, vehicle_model=None,
+                         already_paid_mh=False):
     """Pure math recommendation. Returns (rec, step_by_step_reason, verification)."""
     NAMES = {'ER': 'Enroute Miles', 'TW': 'Tow Miles', 'TB': 'Tow Miles Basic',
              'TT': 'Tow Miles Plus (5-30mi)', 'TU': 'Tow Miles Plus (30-100mi)',
@@ -206,31 +290,43 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         L.append(f'→ No on-location time → REVIEW'); return 'review', '\n'.join(L), v
     elif code == 'MH':
         L.append(f'\nDATA FROM SF:')
-        L.append(f'  Vehicle Weight: {vehicle_weight or "Not populated"} lbs')
-        L.append(f'  Vehicle Group: {vehicle_group or "N/A"}')
-        L.append(f'  Threshold: ≥10,000 lbs or Group DW/HD/MD')
-        v = {'vehicle_weight': vehicle_weight, 'vehicle_group': vehicle_group}
-        if paid and paid > 0 and abs(requested - paid) < 0.5:
-            L.append(f'\n→ Requesting same as billed ({paid}). No change needed.')
+        L.append(f'  Vehicle: {vehicle_make or "?"} {vehicle_model or "?"}')
+        L.append(f'  Weight (SF): {vehicle_weight or "not populated"} lbs')
+        L.append(f'  Group (SF): {vehicle_group or "N/A"}')
+        v = {
+            'vehicle_make': vehicle_make,
+            'vehicle_model': vehicle_model,
+            'vehicle_weight': vehicle_weight,
+            'vehicle_group': vehicle_group,
+        }
+
+        # Rule 1 — quantity must be 1
+        if requested is not None and requested != 1:
+            L.append(f'  WOA Quantity: {requested} (expected 1)')
+            L.append(f'\n→ Quantity is {requested}, not 1 → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 2 — WO must not already have a paid MH WOLI
+        if already_paid_mh:
+            L.append(f'\n→ WO already contains a paid MH line item → REJECT')
+            return 'reject', '\n'.join(L), v
+
+        # Rule 3 — check approved vehicle list
+        confidence, matched_desc = _match_hdv_approved(vehicle_make or '', vehicle_model or '')
+        L.append(f'  Approved list: {confidence} — {matched_desc}')
+
+        if confidence == 'exact':
+            L.append(f'\n→ Vehicle on approved list (exact match) → APPROVE')
             return 'approve', '\n'.join(L), v
-        if vehicle_weight and vehicle_weight >= 10000:
-            L.append(f'→ {vehicle_weight} lbs ≥ 10,000 → APPROVE'); return 'approve', '\n'.join(L), v
-        if vehicle_group in ('MD', 'HD', 'DW'):
-            L.append(f'→ Group {vehicle_group} = heavy → APPROVE'); return 'approve', '\n'.join(L), v
-        if vehicle_weight and vehicle_weight < 10000:
-            L.append(f'→ {vehicle_weight} lbs < 10,000 → REVIEW'); return 'review', '\n'.join(L), v
-        # No SF weight — try make/model lookup as fallback
-        if vehicle_make or vehicle_model:
-            est_gvw = _lookup_gvw_by_vehicle(vehicle_make or '', vehicle_model or '')
-            if est_gvw:
-                v['estimated_gvw_from_lookup'] = est_gvw
-                L.append(f'  Lookup estimate: {vehicle_make or ""} {vehicle_model or ""} ≈ {est_gvw} lbs')
-                if est_gvw >= 10000:
-                    L.append(f'→ Estimated {est_gvw} lbs ≥ 10,000 (from make/model lookup) → APPROVE')
-                    return 'approve', '\n'.join(L), v
-                L.append(f'→ Estimated {est_gvw} lbs < 10,000 (from make/model lookup) → REVIEW')
-                return 'review', '\n'.join(L), v
-        L.append(f'→ No weight data and make/model unknown → REVIEW'); return 'review', '\n'.join(L), v
+        elif confidence == 'fuzzy':
+            L.append(f'\n→ Fuzzy match only — system cannot confidently confirm → REVIEW')
+            return 'review', '\n'.join(L), v
+        elif confidence == 'unavailable':
+            L.append(f'\n→ Approved list unavailable — cannot verify → REVIEW')
+            return 'review', '\n'.join(L), v
+        else:  # no_match
+            L.append(f'\n→ Vehicle not on approved heavy duty list → REJECT')
+            return 'reject', '\n'.join(L), v
     elif code == 'TL':
         wolis = all_wolis or []
         has_tow = any(w.get('code') in TOW_CODES for w in wolis)

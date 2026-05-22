@@ -66,6 +66,92 @@
 .ai-summary li { margin-bottom: 4px; }
 .ai-summary strong { color: #f1f5f9; }
 
+/* ─────────────────── Light Mode ─────────────────── */
+.light { color-scheme: light; }
+
+/* Page shell */
+.light .min-h-screen { background-color: #eef2f7; }
+.light .bg-slate-950 { background-color: #eef2f7; }
+.light .bg-slate-900 { background-color: #f4f7fb; }
+.light .bg-slate-800 { background-color: #ffffff; }
+.light .bg-slate-700 { background-color: #e8edf4; }
+.light .bg-slate-600 { background-color: #d1dae6; }
+
+/* Opacity variants */
+.light .bg-slate-900\/50 { background-color: rgb(244 247 251 / 0.8); }
+.light .bg-slate-800\/60 { background-color: rgb(255 255 255 / 0.92); }
+.light .bg-slate-800\/50 { background-color: rgb(255 255 255 / 0.75); }
+.light .bg-slate-800\/40 { background-color: rgb(255 255 255 / 0.6); }
+.light .bg-slate-700\/50 { background-color: rgb(232 237 244 / 0.7); }
+.light .bg-slate-700\/40 { background-color: rgb(232 237 244 / 0.5); }
+.light .bg-slate-700\/30 { background-color: rgb(232 237 244 / 0.4); }
+
+/* Text — keep relative contrast hierarchy */
+.light .text-white { color: #0f172a; }
+.light .text-slate-100 { color: #1e293b; }
+.light .text-slate-200 { color: #1e293b; }
+.light .text-slate-300 { color: #334155; }
+.light .text-slate-400 { color: #475569; }
+.light .text-slate-500 { color: #64748b; }
+.light .text-slate-600 { color: #94a3b8; }
+
+/* Borders */
+.light .border-slate-700 { border-color: #dde4ee; }
+.light .border-slate-800 { border-color: #eaeff5; }
+.light .border-slate-600 { border-color: #c8d3e0; }
+.light .border-slate-700\/50 { border-color: rgb(221 228 238 / 0.7); }
+.light .border-slate-700\/30 { border-color: rgb(221 228 238 / 0.5); }
+.light .border-slate-800\/60 { border-color: rgb(234 239 245 / 0.8); }
+
+/* Glass card */
+.light .glass {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(200, 211, 224, 0.7);
+}
+
+/* Skeleton */
+.light .skeleton {
+  background: linear-gradient(90deg, rgba(222,229,238,0.6) 25%, rgba(200,211,224,0.6) 50%, rgba(222,229,238,0.6) 75%);
+  background-size: 200% 100%;
+}
+
+/* Native form controls */
+.light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.light select,
+.light textarea {
+  background-color: #ffffff;
+  border-color: #dde4ee;
+  color: #0f172a;
+}
+.light input::placeholder,
+.light textarea::placeholder { color: #94a3b8; }
+
+/* Date inputs — override color-scheme */
+.light input[type="date"] { color-scheme: light; }
+
+/* AI summary */
+.light .ai-summary h3 { color: #0f172a; }
+.light .ai-summary strong { color: #1e293b; }
+
+/* Scrollbar in light mode */
+.light ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.25); }
+
+/* Leaflet */
+.light .leaflet-popup-content-wrapper {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important;
+}
+.light .leaflet-popup-tip { background: #ffffff !important; }
+.light .cc-tooltip.leaflet-tooltip {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(200, 211, 224, 0.9) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
+}
+.light .cc-tooltip.leaflet-tooltip::before { border-top-color: #ffffff !important; }
+
 /* Optimizer chat animations */
 @keyframes optFadeUp {
   from { opacity: 0; transform: translateY(8px); }

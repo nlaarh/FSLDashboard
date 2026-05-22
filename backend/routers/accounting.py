@@ -43,7 +43,7 @@ def api_wo_adjustments(status: str = Query('open'), page: int = Query(0), page_s
 
     # Server-side filtering
     if product_filter and product_filter != 'All':
-        items = [r for r in items if product_filter.lower() in (r.get('product') or '').lower()]
+        items = [r for r in items if r.get('code', '').upper() == product_filter.upper()]
     if rec_filter == 'Approve':
         items = [r for r in items if r.get('recommendation') == 'approve']
     elif rec_filter == 'Review':
@@ -101,10 +101,10 @@ def api_woa_export(status: str = Query('open'), product_filter: str = Query(''),
                    start_date: str = Query(''), end_date: str = Query('')):
     full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
     items = full.get('items', [])
-    if status == 'open':
-        items = [r for r in items if r.get('status') == 'New']
+    if status in ('New', 'Approved', 'Rejected'):
+        items = [r for r in items if r.get('status') == status]
     if product_filter:
-        items = [r for r in items if product_filter.lower() in (r.get('product') or '').lower()]
+        items = [r for r in items if r.get('code', '').upper() == product_filter.upper()]
     if rec_filter == 'Approve':
         items = [r for r in items if r.get('recommendation') == 'approve']
     elif rec_filter == 'Review':
@@ -392,7 +392,7 @@ def api_batch_audit(body: BatchAuditRequest):
         full = cache.stale_while_revalidate('accounting_woa_list', _build_woa_list, ttl=900, stale_ttl=86400)
         woa_ids = [r['id'] for r in full.get('items', [])
                    if r.get('status') == 'New'
-                   and body.product_filter.lower() in (r.get('product') or '').lower()][:50]
+                   and r.get('code', '').upper() == body.product_filter.upper()][:50]
 
     def _audit_one(woa_id):
         ck = f'accounting_woa_audit_{woa_id}'

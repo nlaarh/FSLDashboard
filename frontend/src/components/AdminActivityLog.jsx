@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Activity, Clock, User, Globe, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react'
+import { Activity, Clock, User, Globe, RefreshCw, AlertTriangle, Trash2, ChevronDown } from 'lucide-react'
 import { adminGetActivityLog, adminGetActivityStats, adminClearActivityLog } from '../api'
 import { clsx } from 'clsx'
 
-export default function AdminActivityLog({ pin }) {
+export default function AdminActivityLog({ pin, defaultCollapsed = false }) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [logs, setLogs] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -71,50 +72,57 @@ export default function AdminActivityLog({ pin }) {
             className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+          <button onClick={() => setCollapsed(c => !c)}
+            title={collapsed ? 'Expand' : 'Collapse'}
+            className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-white transition">
+            <ChevronDown className={clsx('w-3.5 h-3.5 transition-transform', collapsed && '-rotate-90')} />
+          </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-        <table className="w-full text-[11px]">
-          <thead className="sticky top-0 bg-slate-900">
-            <tr className="text-slate-500 border-b border-slate-800">
-              <th className="text-left py-2 px-3 font-medium">Time</th>
-              <th className="text-left py-2 px-3 font-medium">User</th>
-              <th className="text-left py-2 px-3 font-medium">Endpoint</th>
-              <th className="text-center py-2 px-3 font-medium">Status</th>
-              <th className="text-right py-2 px-3 font-medium">Duration</th>
-              <th className="text-left py-2 px-3 font-medium">IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map(l => (
-              <tr key={l.id} className={clsx('border-b border-slate-800/30 hover:bg-slate-800/20',
-                l.duration_ms > 5000 && 'bg-red-950/10')}>
-                <td className="py-1.5 px-3 text-slate-500 font-mono whitespace-nowrap">
-                  {l.timestamp?.replace('T', ' ').substring(5, 19)}
-                </td>
-                <td className="py-1.5 px-3 text-slate-300">
-                  {l.user || <span className="text-slate-600">anon</span>}
-                </td>
-                <td className="py-1.5 px-3 text-slate-400 font-mono truncate max-w-[300px]" title={l.endpoint}>
-                  <span className="text-slate-600 mr-1">{l.method}</span>
-                  {l.endpoint}
-                </td>
-                <td className={clsx('py-1.5 px-3 text-center font-bold', statusColor(l.status_code))}>
-                  {l.status_code || '—'}
-                </td>
-                <td className={clsx('py-1.5 px-3 text-right font-mono', durationColor(l.duration_ms))}>
-                  {l.duration_ms != null ? (l.duration_ms > 1000 ? `${(l.duration_ms / 1000).toFixed(1)}s` : `${Math.round(l.duration_ms)}ms`) : '—'}
-                </td>
-                <td className="py-1.5 px-3 text-slate-600 font-mono">{l.ip || '—'}</td>
+      {!collapsed && (
+        <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-slate-900">
+              <tr className="text-slate-500 border-b border-slate-800">
+                <th className="text-left py-2 px-3 font-medium">Time</th>
+                <th className="text-left py-2 px-3 font-medium">User</th>
+                <th className="text-left py-2 px-3 font-medium">Endpoint</th>
+                <th className="text-center py-2 px-3 font-medium">Status</th>
+                <th className="text-right py-2 px-3 font-medium">Duration</th>
+                <th className="text-left py-2 px-3 font-medium">IP</th>
               </tr>
-            ))}
-            {logs.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-slate-600">No activity logged yet</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {logs.map(l => (
+                <tr key={l.id} className={clsx('border-b border-slate-800/30 hover:bg-slate-800/20',
+                  l.duration_ms > 5000 && 'bg-red-950/10')}>
+                  <td className="py-1.5 px-3 text-slate-500 font-mono whitespace-nowrap">
+                    {l.timestamp?.replace('T', ' ').substring(5, 19)}
+                  </td>
+                  <td className="py-1.5 px-3 text-slate-300">
+                    {l.user || <span className="text-slate-600">anon</span>}
+                  </td>
+                  <td className="py-1.5 px-3 text-slate-400 font-mono truncate max-w-[300px]" title={l.endpoint}>
+                    <span className="text-slate-600 mr-1">{l.method}</span>
+                    {l.endpoint}
+                  </td>
+                  <td className={clsx('py-1.5 px-3 text-center font-bold', statusColor(l.status_code))}>
+                    {l.status_code || '—'}
+                  </td>
+                  <td className={clsx('py-1.5 px-3 text-right font-mono', durationColor(l.duration_ms))}>
+                    {l.duration_ms != null ? (l.duration_ms > 1000 ? `${(l.duration_ms / 1000).toFixed(1)}s` : `${Math.round(l.duration_ms)}ms`) : '—'}
+                  </td>
+                  <td className="py-1.5 px-3 text-slate-600 font-mono">{l.ip || '—'}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr><td colSpan={6} className="py-8 text-center text-slate-600">No activity logged yet</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

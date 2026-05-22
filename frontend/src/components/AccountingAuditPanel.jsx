@@ -537,6 +537,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           rates={rates}
           allWoSiblings={allWoSiblings}
           onOpenWoa={onOpenWoa}
+          recReason={audit?.rec_reason}
         />
 
         {/* Right: WO Context — everything the auditor needs to know about this WO */}

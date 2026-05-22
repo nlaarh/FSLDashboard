@@ -526,13 +526,29 @@ def _build_woa_data(woa_id: str) -> dict:
             tl_context = {'toll': _tl_res['toll'], 'nearby': _tl_res['nearby']}
 
     photos = parallel_data.get('photos') or {}
+
+    # Check for already-paid MH WOLI on this WO (for MH product only)
+    # A "paid" WOLI = status is not 'New', has a non-zero quantity, and is not the WOLI this WOA references
+    _already_paid_mh = False
+    if woli_code == 'MH':
+        for _w in woli_rows:
+            _pbe = _w.get('PricebookEntry') or {}
+            _w_code = _pbe.get('ProductCode') or ''
+            if (_w_code == 'MH'
+                    and (_w.get('Status') or 'New') != 'New'
+                    and (_w.get('Quantity') or 0) > 0
+                    and _w.get('Id') != woa_woli_id):
+                _already_paid_mh = True
+                break
+
     rule_rec, rec_reason, _ = _calc_recommendation(
         woli_code, req_qty_audit, paid_qty_audit,
         _safe_float(wo.get('ERS_En_Route_Miles__c')), _safe_float(wo.get('ERS_Estimated_En_Route_Miles__c')),
         _safe_float(wo.get('Tow_Miles__c')), _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
         on_loc_minutes=on_location_minutes, vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
         vehicle_group=wo.get('Vehicle_Group__c'), all_wolis=all_wolis, long_tow_used=long_tow_used,
-        vehicle_make=wo.get('Vehicle_Make__c') or None, vehicle_model=wo.get('Vehicle_Model__c') or None)
+        vehicle_make=wo.get('Vehicle_Make__c') or None, vehicle_model=wo.get('Vehicle_Model__c') or None,
+        already_paid_mh=_already_paid_mh)
 
     # Reject E1 claims > 14 min on tow calls with no drop-off photos (on-platform only)
     _has_woli_02 = any(w.get('LineItemNumber') == '00000002' for w in woli_rows)

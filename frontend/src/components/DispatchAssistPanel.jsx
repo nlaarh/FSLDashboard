@@ -207,6 +207,16 @@ function CustomerTooltip({ sa }) {
   )
 }
 
+// ── Force Leaflet to recalculate size after portal/modal mount ────────────
+function InvalidateSize() {
+  const map = useMap()
+  useEffect(() => {
+    const t = setTimeout(() => map.invalidateSize(), 50)
+    return () => clearTimeout(t)
+  }, [map])
+  return null
+}
+
 // ── Fit map to all visible points (runs once on mount) ─────────────────────
 
 function FitBounds({ points }) {
@@ -214,12 +224,16 @@ function FitBounds({ points }) {
   const [fitted, setFitted] = useState(false)
   useEffect(() => {
     if (fitted || points.length === 0) return
-    if (points.length === 1) {
-      map.setView(points[0], 13)
-    } else {
-      map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 13 })
-    }
-    setFitted(true)
+    // Delay slightly so invalidateSize runs first
+    const t = setTimeout(() => {
+      if (points.length === 1) {
+        map.setView(points[0], 13)
+      } else {
+        map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 13 })
+      }
+      setFitted(true)
+    }, 80)
+    return () => clearTimeout(t)
   }, [points, map, fitted])
   return null
 }
@@ -406,6 +420,7 @@ function OnPlatformView({ data }) {
           <style>{TOOLTIP_CSS}</style>
           <MapContainer center={saPos} zoom={11} className="h-full w-full" scrollWheelZoom style={{ background: '#1e293b' }}>
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; OpenStreetMap' />
+            <InvalidateSize />
             <FitBounds points={mapPoints} />
             <Marker position={saPos} icon={customerMarkerIcon(sa.number, sa.member_name, sa.vehicle, sa.vehicle_plate)}>
               <Tooltip direction="top" offset={[0, -32]} opacity={1} className="fsl-tooltip">
@@ -465,6 +480,7 @@ function ZeroModeView({ data }) {
           <style>{TOOLTIP_CSS}</style>
           <MapContainer center={saPos} zoom={10} className="h-full w-full" scrollWheelZoom style={{ background: '#1e293b' }}>
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; OpenStreetMap' />
+            <InvalidateSize />
             <FitBounds points={mapPoints} />
 
             {/* Customer */}

@@ -32,6 +32,8 @@ const PRODUCTS = [
   { val: 'Z5', label: 'Z5 — RAP Fuel Delivery' },
   { val: 'Z7', label: 'Z7 — RAP Lockout' },
   { val: 'TJ', label: 'TJ — TireJect' },
+  { val: 'R1', label: 'R1 — RV/Motorhome Service' },
+  { val: 'RA', label: 'RA — RV Rate' },
 ]
 
 const PRODUCT_COLORS = {

@@ -10,7 +10,7 @@ export default function AuditVerificationCard({
   googleMi, googleTowMi, towDestLat, origin,
   trueTotal, baseline, baselineLabel,
   mileRatio, mileColor, mileBg, timeRatio, timeColor,
-  woliItems, rates, allWoSiblings, onOpenWoa,
+  woliItems, rates, allWoSiblings, onOpenWoa, recReason,
 }) {
   // Thresholds from admin reference data (with sensible fallbacks)
   const payPct    = rv(rates, 'mileage_pay_pct',    130)
@@ -216,6 +216,52 @@ export default function AuditVerificationCard({
                 </span>
               </div>
             )}
+            {/* Approved list match result from new MH decision logic */}
+            {recReason && (() => {
+              const lines = recReason.split('\n')
+              const approvedLine = lines.find(l => l.trim().startsWith('Approved list:'))
+              const alreadyPaid = lines.some(l => l.includes('already contains a paid MH'))
+              const qtyLine = lines.find(l => l.includes('WOA Quantity:'))
+              if (!approvedLine && !alreadyPaid && !qtyLine) return null
+              let confidence = '', matchDesc = ''
+              if (approvedLine) {
+                const after = approvedLine.split('Approved list:')[1]?.trim() || ''
+                const dashIdx = after.indexOf(' — ')
+                confidence = dashIdx >= 0 ? after.slice(0, dashIdx).trim() : after
+                matchDesc  = dashIdx >= 0 ? after.slice(dashIdx + 3).trim() : ''
+              }
+              return (
+                <div className="mt-2 space-y-1.5">
+                  {qtyLine && (
+                    <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-700/30 text-[10px] text-amber-300">
+                      {qtyLine.trim()}
+                    </div>
+                  )}
+                  {alreadyPaid && (
+                    <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-700/30 text-[10px] text-red-300 font-semibold">
+                      WO already has a paid MH line item
+                    </div>
+                  )}
+                  {approvedLine && (
+                    <div className={clsx(
+                      'px-3 py-2 rounded-lg border text-[10px] space-y-0.5',
+                      confidence === 'exact'       ? 'bg-emerald-500/10 border-emerald-700/30 text-emerald-300' :
+                      confidence === 'fuzzy'       ? 'bg-amber-500/10   border-amber-700/30   text-amber-300' :
+                      confidence === 'no_match'    ? 'bg-red-500/10     border-red-700/30     text-red-300' :
+                                                     'bg-slate-700/30   border-slate-600/30   text-slate-400'
+                    )}>
+                      <div className="font-semibold">
+                        {confidence === 'exact'    ? 'Approved list: exact match ✓' :
+                         confidence === 'fuzzy'    ? 'Approved list: fuzzy match — needs review' :
+                         confidence === 'no_match' ? 'Approved list: no match → reject' :
+                                                     'Approved list: unavailable'}
+                      </div>
+                      {matchDesc && <div className="opacity-75">{matchDesc}</div>}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </>
         )}
 

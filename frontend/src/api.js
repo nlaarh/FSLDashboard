@@ -210,6 +210,12 @@ export const adminClearActivityLog = (pin) => api.delete('/admin/activity-log', 
 export const adminGetOptimizerSyncAudit = (limit = 50) => api.get(`/optimizer/admin/sync-audit?limit=${limit}`).then(r => r.data)
 export const adminGetAccountingRates = (pin) => api.get('/admin/accounting-rates', pinHeader(pin)).then(r => r.data)
 export const adminSetAccountingRate = (pin, code, value) => api.put(`/admin/accounting-rates/${code}`, { value }, pinHeader(pin)).then(r => r.data)
+export const adminRefTables = (pin) => api.get('/admin/reference/tables', pinHeader(pin)).then(r => r.data)
+export const adminRefRows = (pin, table) => api.get(`/admin/reference/${table}`, pinHeader(pin)).then(r => r.data)
+export const adminRefAddRow = (pin, table, row) => api.post(`/admin/reference/${table}`, row, pinHeader(pin)).then(r => r.data)
+export const adminRefUpdateRow = (pin, table, pk, row) => api.put(`/admin/reference/${table}/${pk}`, row, pinHeader(pin)).then(r => r.data)
+export const adminRefDeleteRow = (pin, table, pk) => api.delete(`/admin/reference/${table}/${pk}`, pinHeader(pin)).then(r => r.data)
+export const adminRefExportUrl = (table, pin) => `/api/admin/reference/${table}/export?pin=${encodeURIComponent(pin)}`
 export const fetchAccountingRates = () => api.get('/accounting/rates').then(r => r.data)
 export const fetchAccountingAnalytics = (status = 'open') => api.get(`/accounting/analytics?status=${status}`).then(r => r.data)
 export const fetchAccountingAiInsights = (status = 'open') => api.get(`/accounting/analytics/ai-insights?status=${status}`).then(r => r.data)

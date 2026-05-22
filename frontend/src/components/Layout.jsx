@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign, BrainCircuit, FileText } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign, BrainCircuit, FileText, Sun, Moon } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
@@ -81,6 +81,12 @@ export default function Layout() {
   const [impersonating, setImpersonating] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('impersonating') || 'null') } catch { return null }
   })
+  const [theme, setTheme] = useState(() => localStorage.getItem('fp_theme') || 'dark')
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light')
+    localStorage.setItem('fp_theme', theme)
+  }, [theme])
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {})
@@ -237,6 +243,11 @@ export default function Layout() {
               <Settings className="w-4 h-4" />
             </Link>
             )}
+            <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 transition-all">
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
             <div className="w-px h-5 bg-slate-700/50 mx-1" />
             <button onClick={handleLogout} title="Log out"
               className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all">

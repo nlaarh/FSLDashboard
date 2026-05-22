@@ -229,7 +229,9 @@ def _build_woa_list() -> dict:
             vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
             vehicle_group=v_group,
             all_wolis=all_wolis,
-            long_tow_used=long_tow_used)
+            long_tow_used=long_tow_used,
+            vehicle_make=v_make or None,
+            vehicle_model=v_model or None)
 
         if all_wolis:
             rec_reason += '\n\nWO LINE ITEMS:'
