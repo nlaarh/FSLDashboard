@@ -131,11 +131,16 @@ def list_active_sessions() -> list[dict]:
         with db_adapter.reader() as db:
             db.execute(
                 """
-                SELECT DISTINCT ON (username)
-                    username, name, role, department, login_time, last_seen
-                FROM user_sessions
-                WHERE logout_time IS NULL AND expires_at > %s
-                ORDER BY username, last_seen DESC
+                SELECT username, name, role, department, login_time, last_seen
+                FROM (
+                    SELECT
+                        username, name, role, department, login_time, last_seen,
+                        ROW_NUMBER() OVER (PARTITION BY username ORDER BY last_seen DESC) AS rn
+                    FROM user_sessions
+                    WHERE logout_time IS NULL AND expires_at > %s
+                ) active_sessions
+                WHERE rn = 1
+                ORDER BY last_seen DESC
                 """,
                 (now,),
             )

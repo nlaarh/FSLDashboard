@@ -7,7 +7,8 @@ Leader election: Only ONE process across all Gunicorn workers and Azure instance
 runs the refresher. Uses a filesystem lock on the shared /home directory.
 If the leader dies, another worker takes over within 2 cycles.
 
-SF call budget: ~10-15 calls/min constant, regardless of user count.
+SF call budget: constant and controlled, regardless of user count. Startup does
+not force-refresh every key unless FSLAPP_REFRESH_ON_STARTUP=true.
 """
 
 import os, time, threading, logging
@@ -26,6 +27,17 @@ _ON_AZURE = bool(os.environ.get('WEBSITE_SITE_NAME'))
 _LOCK_DIR = Path('/home/fslapp/locks') if _ON_AZURE else Path(os.path.expanduser('~/.fslapp/locks'))
 _LOCK_FILE = _LOCK_DIR / '.refresher_leader.lock'
 _LEADER_STALE_AGE = 60    # seconds before a leader lock is considered stale
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+_REFRESH_ON_STARTUP = _env_flag('FSLAPP_REFRESH_ON_STARTUP', False)
+_ENABLE_PER_GARAGE_REFRESH = _env_flag('FSLAPP_ENABLE_PER_GARAGE_REFRESH', False)
 
 
 # ── Refresh schedule ─────────────────────────────────────────────────────────
@@ -259,8 +271,15 @@ def _refresh_loop():
 
     log.info(f"Refresher ready: {len(schedule)} keys to keep warm. PID={os.getpid()}")
 
-    # Track last refresh time for each key
-    last_refreshed = {entry[1]: 0.0 for entry in schedule}
+    # Do not stampede Salesforce on process start. By default each key waits
+    # for its interval before the first forced refresh; stale cache remains
+    # available to users. Set FSLAPP_REFRESH_ON_STARTUP=true for emergency warmup.
+    initial_refresh_time = 0.0 if _REFRESH_ON_STARTUP else time.time()
+    last_refreshed = {entry[1]: initial_refresh_time for entry in schedule}
+    if _REFRESH_ON_STARTUP:
+        log.warning("Startup force-refresh is enabled; Salesforce calls may spike")
+    else:
+        log.info("Startup force-refresh disabled; scheduled refreshes will be staggered by interval")
     cycle = 0
 
     while True:
@@ -288,8 +307,9 @@ def _refresh_loop():
             # ── Nightly 3 AM ET: pre-generate current month satisfaction ──
             _run_nightly_jobs()
 
-            # ── Per-garage scorecard + satisfaction (every 3600s) ──
-            _refresh_per_garage_data()
+            # ── Per-garage scorecard + satisfaction (heavy, opt-in) ──
+            if _ENABLE_PER_GARAGE_REFRESH:
+                _refresh_per_garage_data()
 
             if cycle % 30 == 0:
                 log.info(f"Refresher cycle {cycle}: {len(refreshed)} keys refreshed")

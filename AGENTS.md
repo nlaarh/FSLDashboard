@@ -1,39 +1,49 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-This repository contains a FastAPI backend and a Vite/React frontend for the FSLAPP dashboard. Backend code lives in `backend/`, with API routers in `backend/routers/`, shared helpers such as `utils.py`, `cache.py`, and database modules at the backend root, and backend tests in `backend/tests/`. Frontend source is in `frontend/src/`, organized by `pages/`, `components/`, `hooks/`, `utils/`, and `contexts/`; public assets live in `frontend/public/`. Deployment and PostgreSQL infrastructure live under `infra/postgres/`. Technical references and design notes are in `doc/` and `docs/superpowers/`.
+## Project Structure
+- FastAPI backend at `backend/` with entrypoint `backend/main.py` (not `app.py`)
+- Vite/React frontend at `frontend/`, served via backend static files in production
+- Routers in `backend/routers/`, shared helpers at backend root (`cache.py`, `utils.py`, etc.)
+- Tests in `backend/tests/` (pytest + FastAPI TestClient, named `test_*.py`)
+- Infra/PostgreSQL under `infra/postgres/`
 
-## Build, Test, and Development Commands
-- `./start.sh`: starts backend on `localhost:8000` and frontend on `localhost:5173`.
-- `./start.sh backend` or `./start.sh frontend`: run one side only.
-- `cd backend && uvicorn main:app --port 8000 --reload`: run the API directly.
-- `cd frontend && npm run dev`: run Vite with `/api` proxied to the backend.
-- `cd frontend && npm run build`: create the production frontend bundle.
-- `cd backend && pytest`: run backend unit and router smoke tests.
+## Dev Commands
+- `./start.sh` — starts backend on `:8000` and frontend on `:5173` (both sides)
+- `./start.sh backend` or `./start.sh frontend` — one side only
+- `cd backend && uvicorn main:app --port 8000 --reload` — backend direct
+- `cd frontend && npm run dev` — frontend dev (proxies `/api` to backend)
+- `cd frontend && npm run build` — production frontend bundle (outputs to `frontend/dist/`)
+- `cd backend && pytest` — backend tests
 
-## Coding Style & Naming Conventions
-Use Python `snake_case` for backend functions, variables, and modules. Keep FastAPI endpoints grouped by domain in `backend/routers/`. Use React component files in `PascalCase.jsx`, hooks as `useThing.js`, and utilities in `camelCase.js`. Match existing Tailwind styling, `lucide-react` icons, and local shared components before creating new UI. Keep every source file under 600 lines; split by feature before adding more code.
+## Deployment
+- Build: `npm run build` in `frontend/` → `cp -r frontend/dist backend/static`
+- Deploy: `git push origin main` triggers GitHub Actions → Azure App Service
+- Health check: `curl https://fslapp-nyaaa.azurewebsites.net/api/health`
+- Never delete `output.tar.zst`; never use VFS for Python
 
-## Testing Guidelines
-Backend tests use `pytest` and FastAPI `TestClient`; name files `test_*.py` and place them in `backend/tests/`. Add focused tests for shared helpers, router registration, and endpoint behavior. For UI changes, run `npm run build` and verify the rendered page in the browser against the local API.
+## Critical Domain Rules (from `doc/fslapp/coding_rules.md` — READ BEFORE TOUCHING METRICS OR DISPATCH LOGIC)
 
-## Commit & Pull Request Guidelines
-Recent history uses concise imperative commits, often Conventional Commit prefixes such as `fix:`, `feat:`, `perf(scope):`, and `refactor(scope):`. Keep PRs focused, describe user-visible impact, list verification steps, and include screenshots for frontend changes. Do not push or deploy without explicit approval.
+1. **Tow Drop-Off Exclusion**: Every SOQL query or Python filter counting SAs MUST exclude Tow Drop-Off (`WorkType.Name != 'Tow Drop-Off'` or `if 'drop' in wt_name.lower(): continue`). Every tow generates paired Pick-Up + Drop-Off SAs; counting both inflates volume ~25%. Does NOT apply to map visualizations.
 
-## Gold Rules — Data Safety
-**These override all other instructions.**
+2. **Towbook vs Fleet**: Towbook garages have NO Fleet drivers (`has_fleet_drivers = False`). Towbook drivers ARE visible via `Off_Platform_Driver__r.Name` on SA and `ERS_PTA__c`. `ActualStartTime` is UNRELIABLE for Towbook (midnight bulk update) — never use for ATA. For Towbook PTA, use live `ERS_PTA__c`, NOT simulation.
 
-1. **Never delete without backup + preview + permission.** Before any `DELETE`, `DROP`, `TRUNCATE`, `rm -rf`, or destructive `UPDATE`:
-   - Create a backup of what will be affected
-   - Run a non-destructive preview (`SELECT` the same `WHERE`, `find` before `rm`, etc.)
-   - Show the user exactly what will be deleted and how many rows/files
-   - Wait for explicit approval
+3. **Work Type Cycle Times differ**: Tow=115m, Battery=38m, Light=33m, Winch=40m. PTA promises differ by type. When filtering live SAs for projected PTA, FILTER BY CALL TYPE FIRST. If projected values come out identical for all 4 types → bug.
 
-2. **No test data in production stores.** Never create test users, records, or dummy data in production databases or files.
+4. **DST-Safe Eastern Time**: Never hardcode UTC-5 or UTC-4. Always use `ZoneInfo('America/New_York')`. SOQL `HOUR_IN_DAY()` returns UTC — convert to Eastern before comparing.
 
-3. **Verify before declaring success.** After any migration or data operation, count rows before/after, compare samples, confirm the backup is readable.
+5. **Case-Insensitive Salesforce Comparisons**: Always use `.lower()` when comparing satisfaction, status, reason fields. 'Totally Satisfied' vs 'Totally satisfied' → `.lower() == 'totally satisfied'`.
 
-See `.claude/skills/gold-rules/SKILL.md` for the full rules.
+## Coding Style
+- Python `snake_case`; React components `PascalCase.jsx`, hooks `useThing.js`, utils `camelCase.js`
+- Match existing Tailwind styling and `lucide-react` icons; prefer local shared components before creating new UI
+- Keep every source file under 600 lines
 
-## Security & Configuration Tips
-Do not commit secrets from `.env`, Azure credentials, Salesforce tokens, or generated deployment credentials. Review `doc/fslapp/coding_rules.md` before changing metrics or dispatch logic, especially Tow Drop-Off exclusions, Towbook/Fleet handling, work-type-specific calculations, DST-safe Eastern time, and case-insensitive Salesforce comparisons.
+## Gold Rules (override all other instructions)
+1. **Never delete without backup + preview + permission.** Before any `DELETE`, `DROP`, `TRUNCATE`, `rm -rf`, or destructive `UPDATE`: create a backup, run a preview (`SELECT` same `WHERE`, `find` before `rm`), show user exactly what will be deleted and row count, wait for explicit approval.
+2. **No test data in production stores.**
+3. **Verify before declaring success.** Count rows before/after, compare samples, confirm backup is readable.
+
+See `.claude/skills/gold-rules/SKILL.md` for full rules.
+
+## Security
+Never commit secrets from `.env`, Azure credentials, Salesforce tokens, or deployment credentials.

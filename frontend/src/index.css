@@ -66,6 +66,39 @@
 .ai-summary li { margin-bottom: 4px; }
 .ai-summary strong { color: #f1f5f9; }
 
+/* SalesPulse-style tactical system health cards, scoped to avoid changing global FSL cards */
+.si-card-premium {
+  position: relative;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(12, 18, 34, 0.94), rgba(8, 12, 24, 0.97));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.si-card-premium:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+@keyframes siEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.si-animate-enter {
+  animation: siEnter 0.28s ease-out both;
+}
+
+.light .si-card-premium {
+  border-color: rgba(148, 163, 184, 0.34);
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.10), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.98));
+}
+
 /* ─────────────────── Light Mode ─────────────────── */
 .light { color-scheme: light; }
 

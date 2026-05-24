@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Database, Activity, Trash2, RefreshCw, Loader2, CheckCircle2, AlertTriangle, XCircle, Zap, Clock, Server, Map, ToggleRight, Save, Users, BrainCircuit, Table2 } from 'lucide-react'
+import { Shield, Database, Trash2, RefreshCw, Loader2, CheckCircle2, Clock, Server, Map, ToggleRight, Save, Users, BrainCircuit, Table2 } from 'lucide-react'
 import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminUpdateSettings, fetchFeatures } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 import AdminAI from '../components/AdminAI'
@@ -7,11 +7,14 @@ import AdminUsers from '../components/AdminUsers'
 import AdminActivityLog from '../components/AdminActivityLog'
 import AdminOptimizerSync from '../components/AdminOptimizerSync'
 import AdminReferenceData from '../components/AdminReferenceData'
+import AdminSystemHealth from '../components/AdminSystemHealth'
 
 // NOTE: AdminAccountingRates and bonus tiers section REMOVED — handled by AdminReferenceData
 
+const SESSION_KEY = 'admin_pin'
+
 export default function Admin() {
-  const [pin, setPin] = useState('')
+  const [pin, setPin] = useState(() => sessionStorage.getItem(SESSION_KEY) || '')
   const [authed, setAuthed] = useState(false)
   const [authError, setAuthError] = useState('')
   const [status, setStatus] = useState(null)
@@ -29,10 +32,19 @@ export default function Admin() {
   const [videoSaving, setVideoSaving] = useState(false)
   const [videoSaved, setVideoSaved] = useState(false)
 
+  // Auto-verify on mount if PIN already in session
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY)
+    if (saved && !authed) {
+      adminVerify(saved).then(() => setAuthed(true)).catch(() => sessionStorage.removeItem(SESSION_KEY))
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const verify = async () => {
     setAuthError('')
     try {
       await adminVerify(pin)
+      sessionStorage.setItem(SESSION_KEY, pin)
       setAuthed(true)
     } catch {
       setAuthError('Invalid PIN')
@@ -110,8 +122,6 @@ export default function Admin() {
     )
   }
 
-  const c = status?.cache || {}
-  const sf = status?.salesforce || {}
   const uptime = status?.uptime_seconds || 0
   const uptimeStr = uptime >= 3600
     ? `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`
@@ -119,7 +129,7 @@ export default function Admin() {
 
   const NAV = [
     { group: 'SYSTEM', items: [
-      { key: 'status',   label: 'Status & Health', icon: Server },
+      { key: 'status',   label: 'System Health',   icon: Server },
       { key: 'cache',    label: 'Cache',            icon: Database },
     ]},
     { group: 'PEOPLE', items: [
@@ -187,70 +197,7 @@ export default function Admin() {
 
         {/* Status & Health */}
         {activeSection === 'status' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Salesforce Health */}
-            <div className="glass rounded-xl overflow-hidden">
-              <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-brand-400" />
-                <h2 className="text-sm font-semibold text-white">Salesforce Connection</h2>
-                {sf.breaker_open
-                  ? <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">CIRCUIT OPEN</span>
-                  : <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">HEALTHY</span>
-                }
-              </div>
-              <div className="p-4 space-y-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs text-slate-400">API Calls (last 60s)</span>
-                    <span className="text-sm font-bold text-white">{sf.calls_last_60s || 0} / {sf.rate_limit || 60}</span>
-                  </div>
-                  <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        (sf.calls_last_60s || 0) > (sf.rate_limit || 60) * 0.8 ? 'bg-red-500' :
-                        (sf.calls_last_60s || 0) > (sf.rate_limit || 60) * 0.5 ? 'bg-amber-500' : 'bg-emerald-500'
-                      }`}
-                      style={{ width: `${Math.min(100, ((sf.calls_last_60s || 0) / (sf.rate_limit || 60)) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <StatBox icon={<Zap className="w-3.5 h-3.5" />} label="Total Calls" value={sf.total_calls || 0} />
-                  <StatBox icon={<XCircle className="w-3.5 h-3.5" />} label="Errors"
-                    value={sf.errors || 0} color={sf.errors > 0 ? 'text-red-400' : 'text-emerald-400'} />
-                  <StatBox icon={<AlertTriangle className="w-3.5 h-3.5" />} label="Breaker Failures"
-                    value={sf.breaker_failures || 0} color={sf.breaker_failures > 0 ? 'text-amber-400' : 'text-slate-400'} />
-                  <StatBox icon={<Clock className="w-3.5 h-3.5" />} label="Rate Waits" value={sf.rate_waits || 0} />
-                </div>
-                {sf.breaker_open && (
-                  <div className="rounded-lg bg-red-950/30 border border-red-800/30 p-3 text-sm text-red-300">
-                    Circuit breaker is OPEN — Salesforce calls are paused. App is serving cached data.
-                    The breaker will auto-retry after cooldown.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Cache Stats */}
-            <div className="glass rounded-xl overflow-hidden">
-              <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
-                <Database className="w-4 h-4 text-brand-400" />
-                <h2 className="text-sm font-semibold text-white">Cache</h2>
-              </div>
-              <div className="p-4 space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <StatBox label="Active Keys" value={c.alive || 0} color="text-emerald-400" />
-                  <StatBox label="Stale Keys" value={c.stale || 0} color="text-amber-400" />
-                  <StatBox label="Pending Fetches" value={c.pending_fetches || 0} color="text-brand-400" />
-                </div>
-                <div className="text-xs text-slate-500 bg-slate-900/50 rounded-lg p-3 leading-relaxed">
-                  <span className="text-slate-400 font-semibold">How it works: </span>
-                  Each endpoint caches results with a TTL. When cache expires, one thread fetches from
-                  Salesforce while others wait (no duplicate queries). If SF is down, stale cached data is served.
-                </div>
-              </div>
-            </div>
-          </div>
+          <AdminSystemHealth pin={pin} />
         )}
 
         {/* Cache */}
@@ -487,19 +434,6 @@ const CACHE_ENTRIES = [
   { endpoint: 'Ops Territories', key: 'ops_territories',            ttl: 120,  category: 'Live',       notes: 'Territory list with live counts' },
   { endpoint: 'PTA Advisor',     key: 'pta_advisor',                ttl: 900,  category: 'Live',       notes: 'Projected PTA, configurable interval' },
 ]
-
-
-function StatBox({ icon, label, value, color = 'text-white' }) {
-  return (
-    <div className="bg-slate-900/50 rounded-lg p-3">
-      <div className="flex items-center gap-1.5 text-slate-500 mb-1">
-        {icon}
-        <span className="text-[10px] uppercase tracking-wider">{label}</span>
-      </div>
-      <div className={`text-lg font-bold ${color}`}>{typeof value === 'number' ? value.toLocaleString() : value}</div>
-    </div>
-  )
-}
 
 
 function FlushCard({ title, description, ttl, color, loading, onClick }) {

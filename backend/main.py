@@ -105,7 +105,13 @@ async def activity_log_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
     # Skip noisy endpoints and binary downloads (middleware corrupts binary responses)
-    if path in ("/api/admin/status", "/api/admin/sessions", "/api/ops/brief") or '/export' in path:
+    noisy_paths = {
+        "/api/admin/status",
+        "/api/admin/system/health",
+        "/api/admin/sessions",
+        "/api/ops/brief",
+    }
+    if path in noisy_paths or '/export' in path:
         return await call_next(request)
 
     start = _time.time()
@@ -152,7 +158,7 @@ from routers import (
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
     garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
-    garages_revenue_export, password_reset, dispatch_score, admin_reference,
+    garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
 )
 
 app.include_router(auth.router)
@@ -197,6 +203,7 @@ app.include_router(reporting.router)
 app.include_router(password_reset.router)
 app.include_router(dispatch_score.router)
 app.include_router(admin_reference.router)
+app.include_router(system_health.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
