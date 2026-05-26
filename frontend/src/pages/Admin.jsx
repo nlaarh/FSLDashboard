@@ -12,10 +12,12 @@ import AdminSystemHealth from '../components/AdminSystemHealth'
 // NOTE: AdminAccountingRates and bonus tiers section REMOVED — handled by AdminReferenceData
 
 const SESSION_KEY = 'admin_pin'
+const _REFERENCE_ONLY_ROLES = new Set(['executive', 'ers-director'])
 
-export default function Admin() {
-  const [pin, setPin] = useState(() => sessionStorage.getItem(SESSION_KEY) || '')
-  const [authed, setAuthed] = useState(false)
+export default function Admin({ role = '' }) {
+  const isReferenceOnly = _REFERENCE_ONLY_ROLES.has(role)
+  const [pin, setPin] = useState(() => isReferenceOnly ? '' : (sessionStorage.getItem(SESSION_KEY) || ''))
+  const [authed, setAuthed] = useState(isReferenceOnly)
   const [authError, setAuthError] = useState('')
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -52,23 +54,23 @@ export default function Admin() {
   }
 
   const refresh = useCallback(async () => {
-    if (!authed) return
+    if (!authed || isReferenceOnly) return
     setLoading(true)
     try {
       const s = await adminStatus(pin)
       setStatus(s)
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }, [authed, pin])
+  }, [authed, isReferenceOnly, pin])
 
   useEffect(() => {
-    if (authed) {
+    if (authed && !isReferenceOnly) {
       refresh()
       fetchFeatures().then(f => { setFeatures(f); setHelpVideoUrl(f.help_video_url || '') }).catch(() => {})
       const id = setInterval(() => { refresh() }, 5000)
       return () => clearInterval(id)
     }
-  }, [authed, refresh])
+  }, [authed, isReferenceOnly, refresh])
 
   const handleFlush = async (type, fn) => {
     setFlushing(type)
@@ -118,6 +120,19 @@ export default function Admin() {
             </button>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  // Reference-only view for executive / ers-director — no PIN, no sidebar
+  if (isReferenceOnly) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-4">
+        <div className="flex items-center gap-3 mb-2">
+          <Table2 className="w-5 h-5 text-indigo-400" />
+          <h1 className="text-base font-bold text-white">Reference Data</h1>
+        </div>
+        <AdminReferenceData pin="" />
       </div>
     )
   }

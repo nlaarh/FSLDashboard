@@ -127,7 +127,7 @@ export const fetchDataQuality = () => api.get('/data-quality').then(r => r.data)
 export const refreshDataQuality = () => api.post('/data-quality/refresh').then(r => r.data)
 
 // Admin (PIN-protected)
-const pinHeader = (pin) => ({ headers: { 'X-Admin-Pin': pin } })
+const pinHeader = (pin) => pin ? { headers: { 'X-Admin-Pin': pin } } : {}
 export const adminVerify = (pin) => api.post('/admin/verify', null, pinHeader(pin)).then(r => r.data)
 export const adminStatus = (pin) => api.get('/admin/status', pinHeader(pin)).then(r => r.data)
 export const adminSystemHealth = (pin) => api.get('/admin/system/health', pinHeader(pin)).then(r => r.data)
@@ -218,7 +218,7 @@ export const adminRefRows = (pin, table) => api.get(`/admin/reference/${table}`,
 export const adminRefAddRow = (pin, table, row) => api.post(`/admin/reference/${table}`, row, pinHeader(pin)).then(r => r.data)
 export const adminRefUpdateRow = (pin, table, pk, row) => api.put(`/admin/reference/${table}/${pk}`, row, pinHeader(pin)).then(r => r.data)
 export const adminRefDeleteRow = (pin, table, pk) => api.delete(`/admin/reference/${table}/${pk}`, pinHeader(pin)).then(r => r.data)
-export const adminRefExportUrl = (table, pin) => `/api/admin/reference/${table}/export?pin=${encodeURIComponent(pin)}`
+export const adminRefExportUrl = (table, pin) => pin ? `/api/admin/reference/${table}/export?pin=${encodeURIComponent(pin)}` : `/api/admin/reference/${table}/export`
 export const fetchAccountingRates = () => api.get('/accounting/rates').then(r => r.data)
 export const fetchAccountingAnalytics = (status = 'open') => api.get(`/accounting/analytics?status=${status}`).then(r => r.data)
 export const fetchAccountingAiInsights = (status = 'open') => api.get(`/accounting/analytics/ai-insights?status=${status}`).then(r => r.data)

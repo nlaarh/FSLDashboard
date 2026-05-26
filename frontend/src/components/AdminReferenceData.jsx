@@ -89,9 +89,10 @@ export default function AdminReferenceData({ pin }) {
     const form = new FormData()
     form.append('file', file)
     try {
+      const headers = pin ? { 'X-Admin-Pin': pin } : {}
       const res = await fetch(`/api/admin/reference/${activeTable}/import`, {
         method: 'POST',
-        headers: { 'X-Admin-Pin': pin },
+        headers,
         body: form,
       })
       const data = await res.json()

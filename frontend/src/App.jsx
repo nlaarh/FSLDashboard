@@ -66,7 +66,11 @@ function AuthApp() {
         <Route path="/data" element={<Navigate to="/help" replace />} />
         <Route path="/issues" element={isFinance ? <Navigate to="/accounting" replace /> : <Issues />} />
         <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />
-        <Route path="/admin" element={(role === 'superadmin' || role === 'admin') ? <Admin /> : <Navigate to="/" replace />} />
+        <Route path="/admin" element={
+          (role === 'superadmin' || role === 'admin' || role === 'executive' || role === 'ers-director')
+            ? <Admin role={role} />
+            : <Navigate to="/" replace />
+        } />
         <Route path="/optimizer" element={<Navigate to="/" replace />} />
         <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
         <Route path="*" element={<Navigate to="/" replace />} />

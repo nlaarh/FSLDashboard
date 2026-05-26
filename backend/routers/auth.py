@@ -38,8 +38,11 @@ def _get_role(username: str) -> str:
 # Paths that ers-supervisor role is blocked from
 _SUPERVISOR_BLOCKED = ('/api/accounting/', '/api/admin/')
 
-# Roles allowed to access the admin panel
+# Roles allowed to access the full admin panel
 _ADMIN_ROLES = ('superadmin', 'admin')
+
+# Roles allowed read/write access to reference data only (no PIN required)
+_REFERENCE_ROLES = ('executive', 'ers-director')
 
 
 def _supervisor_blocked(path: str) -> bool:
@@ -48,6 +51,10 @@ def _supervisor_blocked(path: str) -> bool:
 
 def _admin_allowed(role: str) -> bool:
     return role in _ADMIN_ROLES
+
+
+def _reference_allowed(role: str, path: str) -> bool:
+    return role in _REFERENCE_ROLES and path.startswith('/api/admin/reference/')
 
 
 def _sign_cookie(payload: str) -> str:

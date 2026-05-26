@@ -22,9 +22,9 @@ start_backend() {
 }
 
 start_frontend() {
-  echo "Starting frontend on http://localhost:5173 ..."
+  echo "Starting frontend on http://localhost:5174 ..."
   cd "$DIR/frontend"
-  npx vite --port 5173 &
+  npx vite --port 5174 &
   FE_PID=$!
 }
 

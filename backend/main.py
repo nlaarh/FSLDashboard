@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
-from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed
+from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed, _reference_allowed
 import cache
 import refresher
 import users as _users
@@ -31,7 +31,7 @@ app = FastAPI(title="FSL App", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "https://fslapp-nyaaa.azurewebsites.net"],
+    allow_origins=["http://localhost:5174", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5174", "http://127.0.0.1:5173", "https://fslapp-nyaaa.azurewebsites.net"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +84,7 @@ async def auth_middleware(request: Request, call_next):
         role = _get_role(username)
         if role == 'ers-supervisor' and path.startswith('/api/') and _supervisor_blocked(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted"})
-        if path.startswith('/api/admin/') and not _admin_allowed(role):
+        if path.startswith('/api/admin/') and not _admin_allowed(role) and not _reference_allowed(role, path):
             return JSONResponse(status_code=403, content={"detail": "Admin access restricted"})
         return await call_next(request)
     # Local dev: no auth needed

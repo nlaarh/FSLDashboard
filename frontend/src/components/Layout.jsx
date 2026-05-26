@@ -235,7 +235,7 @@ export default function Layout() {
               }`}>
               <HelpCircle className="w-4 h-4" />
             </Link>
-            {!isFinance && (role === 'superadmin' || role === 'admin') && (
+            {!isFinance && (role === 'superadmin' || role === 'admin' || role === 'executive' || role === 'ers-director') && (
             <Link to="/admin" title="Settings"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/admin' ? 'text-brand-400' : 'text-slate-500 hover:text-slate-300'

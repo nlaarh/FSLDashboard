@@ -13,6 +13,7 @@ router = APIRouter()
 
 _ADMIN_PIN = os.getenv("ADMIN_PIN")
 _HDV_TABLE_KEY = 'heavy_duty_vehicles'
+_REFERENCE_ROLES = {'executive', 'ers-director'}
 
 
 def _maybe_invalidate_hdv(table_key: str) -> None:
@@ -21,8 +22,17 @@ def _maybe_invalidate_hdv(table_key: str) -> None:
         _invalidate_hdv_cache()
 
 
-def _pin_check(request: Request, pin: str = ""):
-    """Accept pin from X-Admin-Pin header OR ?pin= query param (browser downloads)."""
+def _access_check(request: Request, pin: str = "") -> None:
+    """Allow reference-data roles via session cookie; fall back to PIN for admin/superadmin."""
+    from routers.auth import _verify_cookie
+    import users as _users
+    cookie = request.cookies.get("fslapp_auth")
+    payload = _verify_cookie(cookie) if cookie else None
+    if payload:
+        username = payload.split(":")[0]
+        role = (_users.get_user(username) or {}).get("role", "")
+        if role in _REFERENCE_ROLES:
+            return
     if not _ADMIN_PIN:
         raise HTTPException(status_code=503, detail="ADMIN_PIN not configured")
     pin_val = request.headers.get("X-Admin-Pin", "") or pin
@@ -87,13 +97,13 @@ def _get_reg(table_key: str) -> dict:
 
 @router.get("/api/admin/reference/tables")
 def list_tables(request: Request, pin: str = ""):
-    _pin_check(request, pin)
+    _access_check(request, pin)
     return [{"key": k, "label": v["label"]} for k, v in REGISTRY.items()]
 
 
 @router.get("/api/admin/reference/{table_key}")
 def get_rows(table_key: str, request: Request, pin: str = ""):
-    _pin_check(request, pin)
+    _access_check(request, pin)
     reg = _get_reg(table_key)
     with db_adapter.reader() as db:
         db.execute(f"SELECT * FROM {reg['table']} ORDER BY {reg['order_by']}")
@@ -103,7 +113,7 @@ def get_rows(table_key: str, request: Request, pin: str = ""):
 
 @router.post("/api/admin/reference/{table_key}")
 async def add_row(table_key: str, request: Request):
-    _pin_check(request)
+    _access_check(request)
     reg = _get_reg(table_key)
     body = await request.json()
     cols = [c["key"] for c in reg["columns"] if not c.get("readonly")]
@@ -125,7 +135,7 @@ async def add_row(table_key: str, request: Request):
 @router.get("/api/admin/reference/{table_key}/export")
 def export_table(table_key: str, request: Request, pin: str = ""):
     """Export table to Excel. Accepts pin from header OR ?pin= query param for browser downloads."""
-    _pin_check(request, pin)
+    _access_check(request, pin)
     reg = _get_reg(table_key)
     with db_adapter.reader() as db:
         db.execute(f"SELECT * FROM {reg['table']} ORDER BY {reg['order_by']}")
@@ -149,7 +159,7 @@ def export_table(table_key: str, request: Request, pin: str = ""):
 
 @router.post("/api/admin/reference/{table_key}/import")
 async def import_table(table_key: str, request: Request, file: UploadFile = File(...)):
-    _pin_check(request)
+    _access_check(request)
     reg = _get_reg(table_key)
     content = await file.read()
     wb = openpyxl.load_workbook(io.BytesIO(content))
@@ -185,7 +195,7 @@ async def import_table(table_key: str, request: Request, file: UploadFile = File
 
 @router.put("/api/admin/reference/{table_key}/{pk_val}")
 async def update_row(table_key: str, pk_val: str, request: Request):
-    _pin_check(request)
+    _access_check(request)
     reg = _get_reg(table_key)
     body = await request.json()
     editable = [c["key"] for c in reg["columns"] if not c.get("readonly")]
@@ -203,7 +213,7 @@ async def update_row(table_key: str, pk_val: str, request: Request):
 
 @router.delete("/api/admin/reference/{table_key}/{pk_val}")
 def delete_row(table_key: str, pk_val: str, request: Request):
-    _pin_check(request)
+    _access_check(request)
     reg = _get_reg(table_key)
     pk_typed = int(pk_val) if reg["pk_type"] == "int" else pk_val
     with db_adapter.writer() as db:
