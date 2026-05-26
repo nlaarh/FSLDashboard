@@ -17,8 +17,8 @@ import { clsx } from 'clsx'
 
 export const SERVICE_LABELS = {
   salesforce: 'SALESFORCE',
-  postgres: 'DATABASE',
-  dr_postgres: 'DR PostgreSQL',
+  postgres: 'PRIMARY DB',
+  dr_postgres: 'DR REPLICA',
   app: 'API NODE',
   cache: 'CACHE',
   azure: 'AZURE VM',

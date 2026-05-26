@@ -57,18 +57,21 @@ SERVICE_KEY_GROUPS = {
     "dr_postgres": ["FSLAPP_PG_DR_HOST"],
 }
 
+_AZ_BASE = "https://portal.azure.com/#@nyaaa.com/resource/subscriptions/e287db16-b6ae-415e-bd52-41c8ec5a8f08/resourceGroups/rg-nlaaroubi-sbx-eus2-001/providers"
+_AZ_PG   = f"{_AZ_BASE}/Microsoft.DBforPostgreSQL/flexibleServers"
+
 SERVICE_LINKS = {
-    "app": "https://fslapp-nyaaa.azurewebsites.net",
-    "azure": "https://portal.azure.com/#view/HubsExtension/BrowseResource/resourceType/Microsoft.Web%2Fsites",
-    "postgres": "https://portal.azure.com/#view/HubsExtension/BrowseResource/resourceType/Microsoft.DBforPostgreSQL%2FflexibleServers",
-    "dr_postgres": "https://portal.azure.com/#view/HubsExtension/BrowseResource/resourceType/Microsoft.DBforPostgreSQL%2FflexibleServers",
+    "app":        "https://fslapp-nyaaa.azurewebsites.net",
+    "azure":      "https://portal.azure.com/#@nyaaa.com/resource/subscriptions/e287db16-b6ae-415e-bd52-41c8ec5a8f08/resourceGroups/rg-nlaaroubi-sbx-eus2-001/providers/Microsoft.Web/sites/fslapp-nyaaa/overview",
+    "postgres":   f"{_AZ_PG}/fslapp-pg/overview",
+    "dr_postgres": f"{_AZ_PG}/fslapp-pg-dr/overview",
     "salesforce": "https://aaawcny.lightning.force.com",
     "google_maps": "https://console.cloud.google.com/apis/library",
-    "openai": "https://platform.openai.com/usage",
-    "github": "https://github.com/nlaarh/FSLDashboard",
-    "agentmail": "https://agentmail.to/",
-    "cache": "",
-    "duckdb": "",
+    "openai":     "https://platform.openai.com/usage",
+    "github":     "https://github.com/nlaarh/FSLDashboard",
+    "agentmail":  "https://agentmail.to/",
+    "cache":      "",
+    "duckdb":     "",
 }
 
 
@@ -220,18 +223,24 @@ def _postgres_service() -> dict:
     ok = bool(health.get("postgres"))
     status = "healthy" if ok else "unhealthy"
     summary = "PostgreSQL connection succeeded" if ok else "PostgreSQL connection failed"
+    pg_host = _config_value("FSLAPP_PG_HOST")
+    short_host = pg_host.replace(".postgres.database.azure.com", "") if pg_host else "fslapp-pg"
     return _service("PostgreSQL", status, summary, {
         **health,
+        "host": short_host,
+        "region": "East US",
         "server_url": SERVICE_LINKS["postgres"],
     }, key="postgres")
 
 
 def _dr_postgres_service() -> dict:
-    dr_host = _config_value("FSLAPP_PG_DR_HOST")
-    if not dr_host:
+    dr_host = _config_value("FSLAPP_PG_DR_HOST") or "fslapp-pg-dr.postgres.database.azure.com"
+    short_host = dr_host.replace(".postgres.database.azure.com", "")
+    base_details = {"host": short_host, "region": "East US 2", "server_url": SERVICE_LINKS["dr_postgres"]}
+    if not _config_value("FSLAPP_PG_DR_HOST"):
         return _service("DR PostgreSQL", "degraded",
                         "FSLAPP_PG_DR_HOST not configured",
-                        {"server_url": SERVICE_LINKS["dr_postgres"]}, key="dr_postgres")
+                        base_details, key="dr_postgres")
     import time as _time
     started = _time.perf_counter()
     try:
@@ -250,13 +259,11 @@ def _dr_postgres_service() -> dict:
         latency = round((_time.perf_counter() - started) * 1000, 1)
         return _service("DR PostgreSQL", "healthy",
                         f"DR DB reachable — {latency}ms",
-                        {"host": dr_host, "latency_ms": latency,
-                         "server_url": SERVICE_LINKS["dr_postgres"]}, key="dr_postgres")
+                        {**base_details, "latency_ms": latency}, key="dr_postgres")
     except Exception as exc:
         return _service("DR PostgreSQL", "unhealthy",
                         f"DR DB unreachable: {exc}",
-                        {"host": dr_host, "error": str(exc),
-                         "server_url": SERVICE_LINKS["dr_postgres"]}, key="dr_postgres")
+                        {**base_details, "error": str(exc)}, key="dr_postgres")
 
 
 def _duckdb_service() -> dict:
