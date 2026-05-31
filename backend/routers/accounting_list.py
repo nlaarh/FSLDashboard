@@ -114,7 +114,11 @@ def _build_woa_list() -> dict:
                Work_Order__r.Type__c,
                Work_Order__r.ERS_Unable_To_Complete_Dupe__c,
                Work_Order__r.Out_of_Territory__c,
-               Work_Order__r.CreatedDate
+               Work_Order__r.CreatedDate,
+               Work_Order__r.Dispatch_Code__c,
+               Work_Order__r.Resolution_Code__c,
+               Work_Order__r.Coverage__c,
+               Work_Order__r.Credit_Card_On_File_Bill_Member__c
         FROM ERS_Work_Order_Adjustment__c
         ORDER BY CreatedDate DESC
         LIMIT 5000
@@ -210,12 +214,16 @@ def _build_woa_list() -> dict:
         all_wolis = wo_wolis.get(wo_id, [])
         long_tow_used = bool(wo.get('Long_Tow_Used__c'))
         long_tow_miles = _safe_float(wo.get('Long_Tow_Miles__c'))
+        wo_dispatch_code = wo.get('Dispatch_Code__c') or None
+        wo_resolution_code = wo.get('Resolution_Code__c') or None
+        wo_coverage = wo.get('Coverage__c') or None
+        wo_credit_card = bool(wo.get('Credit_Card_On_File_Bill_Member__c'))
 
         _CONFIDENCE_MAP = {
             'ER': 'HIGH', 'TW': 'HIGH', 'TB': 'HIGH', 'TT': 'HIGH', 'TU': 'HIGH', 'TM': 'HIGH', 'EM': 'HIGH',
             'E1': 'HIGH', 'E2': 'HIGH', 'Z8': 'HIGH',
-            'MH': 'HIGH', 'MI': 'MEDIUM', 'TL': 'MEDIUM',
-            'BA': 'LOW', 'BC': 'LOW', 'PC': 'LOW', 'HO': 'LOW', 'PG': 'LOW',
+            'MH': 'HIGH', 'MI': 'MEDIUM', 'TL': 'MEDIUM', 'PG': 'HIGH',
+            'BA': 'LOW', 'BC': 'LOW', 'PC': 'LOW', 'HO': 'LOW',
         }
         confidence = _CONFIDENCE_MAP.get(code, 'MEDIUM')
         if code == 'MH' and not _safe_float(wo.get('Weight_lbs__c')) and v_group not in ('MD', 'HD', 'DW'):
@@ -231,7 +239,9 @@ def _build_woa_list() -> dict:
             all_wolis=all_wolis,
             long_tow_used=long_tow_used,
             vehicle_make=v_make or None,
-            vehicle_model=v_model or None)
+            vehicle_model=v_model or None,
+            dispatch_code=wo_dispatch_code,
+            coverage_level=wo_coverage)
 
         if all_wolis:
             rec_reason += '\n\nWO LINE ITEMS:'
@@ -331,6 +341,8 @@ def _build_woa_list() -> dict:
             'woa_age_days': _calc_age_to_now(r.get('CreatedDate'), _now),
             'sf_miles': {'enroute': sf_er, 'estimated_enroute': sf_est_er, 'tow': sf_tow, 'estimated_tow': sf_est_tow},
             'vehicle': {'make': v_make, 'model': v_model, 'group': v_group},
+            'vehicle_display': ' '.join(filter(None, [v_make, v_model])) if code == 'MH' else None,
+            'review_note': verification.get('note') if isinstance(verification, dict) else None,
             'woli_summary': woli_summary,
             'estimated_usd': estimated_usd,
             'requested_usd': requested_usd,
@@ -338,6 +350,10 @@ def _build_woa_list() -> dict:
             'program': (wo.get('Type__c') or '').strip(),
             'service_type': '',
             'is_oot_private_service': _is_oot_private_service,
+            'dispatch_code': wo_dispatch_code,
+            'resolution_code': wo_resolution_code,
+            'coverage_level': wo_coverage,
+            'credit_card_on_file': wo_credit_card,
         })
 
     from collections import defaultdict

@@ -6,20 +6,23 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 import openpyxl
 import db_adapter
-from routers.accounting_calc import invalidate_hdv_cache as _invalidate_hdv_cache
+from routers.accounting_calc import invalidate_hdv_cache as _invalidate_hdv_cache, invalidate_fuel_cache as _invalidate_fuel_cache
 
 log = logging.getLogger("admin_reference")
 router = APIRouter()
 
 _ADMIN_PIN = os.getenv("ADMIN_PIN")
 _HDV_TABLE_KEY = 'heavy_duty_vehicles'
+_FUEL_TABLE_KEY = 'fuel_reimbursement'
 _REFERENCE_ROLES = {'executive', 'ers-director'}
 
 
-def _maybe_invalidate_hdv(table_key: str) -> None:
-    """Invalidate the HDV cache whenever the heavy_duty_vehicles table is modified."""
+def _maybe_invalidate_caches(table_key: str) -> None:
+    """Invalidate relevant caches whenever a reference table is modified."""
     if table_key == _HDV_TABLE_KEY:
         _invalidate_hdv_cache()
+    elif table_key == _FUEL_TABLE_KEY:
+        _invalidate_fuel_cache()
 
 
 def _access_check(request: Request, pin: str = "") -> None:
@@ -85,6 +88,18 @@ REGISTRY = {
         ],
         "order_by": "make, model",
     },
+    "fuel_reimbursement": {
+        "label": "Max Fuel Reimbursement Allowance",
+        "table": "ref_fuel_reimbursement",
+        "pk": "dispatch_code",
+        "pk_type": "text",
+        "columns": [
+            {"key": "dispatch_code", "label": "Dispatch Code", "type": "text",   "required": True, "readonly": True},
+            {"key": "fuel_type",     "label": "Fuel Type",     "type": "text",   "required": True},
+            {"key": "amount_usd",    "label": "Max Amount ($)", "type": "number", "required": True},
+        ],
+        "order_by": "dispatch_code",
+    },
 }
 
 
@@ -125,7 +140,7 @@ async def add_row(table_key: str, request: Request):
             f"INSERT INTO {reg['table']} ({col_names}) VALUES ({placeholders})",
             values,
         )
-    _maybe_invalidate_hdv(table_key)
+    _maybe_invalidate_caches(table_key)
     return {"ok": True}
 
 
@@ -189,7 +204,7 @@ async def import_table(table_key: str, request: Request, file: UploadFile = File
                 vals,
             )
             inserted += 1
-    _maybe_invalidate_hdv(table_key)
+    _maybe_invalidate_caches(table_key)
     return {"ok": True, "imported": inserted}
 
 
@@ -207,7 +222,7 @@ async def update_row(table_key: str, pk_val: str, request: Request):
             f"UPDATE {reg['table']} SET {sets} WHERE {reg['pk']} = %s",
             values + [pk_typed],
         )
-    _maybe_invalidate_hdv(table_key)
+    _maybe_invalidate_caches(table_key)
     return {"ok": True}
 
 
@@ -218,5 +233,5 @@ def delete_row(table_key: str, pk_val: str, request: Request):
     pk_typed = int(pk_val) if reg["pk_type"] == "int" else pk_val
     with db_adapter.writer() as db:
         db.execute(f"DELETE FROM {reg['table']} WHERE {reg['pk']} = %s", (pk_typed,))
-    _maybe_invalidate_hdv(table_key)
+    _maybe_invalidate_caches(table_key)
     return {"ok": True}

@@ -60,18 +60,23 @@ SERVICE_KEY_GROUPS = {
 _AZ_BASE = "https://portal.azure.com/#@nyaaa.com/resource/subscriptions/e287db16-b6ae-415e-bd52-41c8ec5a8f08/resourceGroups/rg-nlaaroubi-sbx-eus2-001/providers"
 _AZ_PG   = f"{_AZ_BASE}/Microsoft.DBforPostgreSQL/flexibleServers"
 
+_AZ_SITES = f"{_AZ_BASE}/Microsoft.Web/sites"
+
 SERVICE_LINKS = {
-    "app":        "https://fslapp-nyaaa.azurewebsites.net",
-    "azure":      "https://portal.azure.com/#@nyaaa.com/resource/subscriptions/e287db16-b6ae-415e-bd52-41c8ec5a8f08/resourceGroups/rg-nlaaroubi-sbx-eus2-001/providers/Microsoft.Web/sites/fslapp-nyaaa/overview",
-    "postgres":   f"{_AZ_PG}/fslapp-pg/overview",
-    "dr_postgres": f"{_AZ_PG}/fslapp-pg-dr/overview",
-    "salesforce": "https://aaawcny.lightning.force.com",
-    "google_maps": "https://console.cloud.google.com/apis/library",
-    "openai":     "https://platform.openai.com/usage",
-    "github":     "https://github.com/nlaarh/FSLDashboard",
-    "agentmail":  "https://agentmail.to/",
-    "cache":      "",
-    "duckdb":     "",
+    "app":           "https://fslapp-nyaaa.azurewebsites.net",
+    "app_dr":        "https://fslapp-nyaaa-dr.azurewebsites.net",
+    "salespulse":    "https://salespulse-nyaaa.azurewebsites.net",
+    "salespulse_dr": "https://salespulse-nyaaa-dr.azurewebsites.net",
+    "azure":         f"{_AZ_SITES}/fslapp-nyaaa/overview",
+    "postgres":      f"{_AZ_PG}/fslapp-pg/overview",
+    "dr_postgres":   f"{_AZ_PG}/fslapp-pg-dr/overview",
+    "salesforce":    "https://aaawcny.lightning.force.com",
+    "google_maps":   "https://console.cloud.google.com/apis/library",
+    "openai":        "https://platform.openai.com/usage",
+    "github":        "https://github.com/nlaarh/FSLDashboard",
+    "agentmail":     "https://agentmail.to/",
+    "cache":         "",
+    "duckdb":        "",
 }
 
 
@@ -211,6 +216,37 @@ def _azure_service() -> dict:
     }, key="azure")
 
 
+def _app_dr_service() -> dict:
+    site = os.environ.get("WEBSITE_SITE_NAME")
+    if site == "fslapp-nyaaa-dr":
+        return _service("FleetPulse DR App", "healthy", f"Running as DR instance: {site}", {
+            "site_name": site,
+            "region": "West US 2",
+            "server_url": SERVICE_LINKS["app_dr"],
+        }, key="app_dr")
+    return _service("FleetPulse DR App", "degraded", "DR App Service — standby (not active instance)", {
+        "region": "West US 2",
+        "environment": "standby",
+        "server_url": SERVICE_LINKS["app_dr"],
+    }, key="app_dr")
+
+
+def _salespulse_service() -> dict:
+    return _service("SalesPulse App", "degraded", "Co-tenant app — shares fslapp-pg (schema: sales)", {
+        "region": "West US 2",
+        "schema": "sales",
+        "server_url": SERVICE_LINKS["salespulse"],
+    }, key="salespulse")
+
+
+def _salespulse_dr_service() -> dict:
+    return _service("SalesPulse DR App", "degraded", "SalesPulse DR — standby (not active)", {
+        "region": "West US 2",
+        "environment": "standby",
+        "server_url": SERVICE_LINKS["salespulse_dr"],
+    }, key="salespulse_dr")
+
+
 def _cache_service() -> dict:
     stats = _safe_call(cache.stats, {"l1_total": 0, "l2_total": 0, "l1_pending": 0})
     pending = int(stats.get("l1_pending") or 0)
@@ -302,8 +338,11 @@ def _configured_service(key: str, label: str, require_all: bool = True) -> dict:
     }, key=key)
 
 
+_AGGREGATE_EXCLUDED = {"salespulse", "salespulse_dr"}
+
+
 def _aggregate_status(services: dict[str, dict]) -> str:
-    statuses = [svc.get("status") for svc in services.values()]
+    statuses = [svc.get("status") for key, svc in services.items() if key not in _AGGREGATE_EXCLUDED]
     if "unhealthy" in statuses:
         return "unhealthy"
     if "degraded" in statuses:
@@ -347,6 +386,9 @@ def _backup_recovery_report() -> dict:
 def _build_services() -> dict[str, dict]:
     return {
         "app": _app_service(),
+        "app_dr": _app_dr_service(),
+        "salespulse": _salespulse_service(),
+        "salespulse_dr": _salespulse_dr_service(),
         "azure": _azure_service(),
         "postgres": _postgres_service(),
         "dr_postgres": _dr_postgres_service(),

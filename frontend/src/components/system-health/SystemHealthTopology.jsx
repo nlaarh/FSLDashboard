@@ -10,33 +10,46 @@ import {
   statusTone,
 } from './systemHealthUi'
 
-// Left column: postgres (PRIMARY) → dr_postgres (DR REPLICA) → github (bottom)
-// Right column: app → openai → cache → azure (bottom)
-// Both DB nodes share the left column and are connected by a replication cable.
+// 4-column architecture layout — shared PostgreSQL between FleetPulse and SalesPulse:
+//
+//                       SALESFORCE (top center)
+//                      /                       \
+//  CACHE ─── FLEETPULSE APP            SALESPULSE APP ─── OPENAI
+//              /        \DR              /DR        \
+//         [ACTIVE]   [STANDBY]       [STANDBY]   [ACTIVE shared DB]
+//            /            \              \            /
+//      PRIMARY DB     FLEETPULSE DR   SALESPULSE DR
+//   (EAST US)    \         \               /        (DR ZONE · WEST US 2)
+//                 └──────── FSLAPP-PG DR ─┘ (PITR clone · EAST US 2)
+//
+//   GITHUB REPO (bottom-left)                  AZURE APP SVC (bottom-right)
 const NODE_POSITIONS = {
-  salesforce:  'top-[10px] left-[50%] -translate-x-1/2',
-  postgres:    'top-[100px] left-[10px]',
-  dr_postgres: 'top-[265px] left-[10px]',
-  app:         'top-[100px] right-[10px]',
-  openai:      'top-[255px] right-[10px]',
-  cache:       'top-[405px] right-[10px]',
-  github:      'bottom-[10px] left-[10px]',
-  azure:       'bottom-[10px] right-[10px]',
+  salesforce:    'top-[10px] left-[50%] -translate-x-1/2',
+  cache:         'top-[200px] left-[10px]',
+  app:           'top-[200px] left-[185px]',
+  salespulse:    'top-[200px] right-[185px]',
+  openai:        'top-[200px] right-[10px]',
+  postgres:      'top-[410px] left-[10px]',
+  app_dr:        'top-[410px] left-[185px]',
+  salespulse_dr: 'top-[410px] right-[185px]',
+  dr_postgres:   'top-[620px] left-[50%] -translate-x-1/2',
+  github:        'bottom-[10px] left-[10px]',
+  azure:         'bottom-[10px] right-[10px]',
 }
 
 export default function SystemHealthTopology({ health, logs, loading, pinging, onRefresh, onPing }) {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      <div className="si-card-premium relative flex min-h-[730px] flex-col overflow-hidden border border-slate-700/40 bg-black/25 p-6 dark:bg-black/45 lg:col-span-2">
+      <div className="si-card-premium relative flex min-h-[1150px] flex-col overflow-hidden border border-slate-700/40 bg-black/25 p-6 dark:bg-black/45 lg:col-span-2">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(94,106,210,0.08),transparent_65%)]" />
         <div className="relative z-10 flex items-center justify-between border-b border-slate-700/40 pb-3">
           <div>
             <h3 className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-wider text-indigo-300">
               <Activity className="h-4 w-4 animate-pulse text-indigo-300" />
-              Cybernetic Power Switchboard Topology
+              System Architecture Topology
             </h3>
             <p className="text-[11px] text-slate-500">
-              Tactical panel: service nodes plugged into central PDU power distributor
+              Live service graph — data paths and DR failover links
             </p>
           </div>
           <button
@@ -48,7 +61,7 @@ export default function SystemHealthTopology({ health, logs, loading, pinging, o
             <RefreshCw className={clsx('h-4 w-4', loading && 'animate-spin')} />
           </button>
         </div>
-        <PowerTopology health={health} pinging={pinging} onPing={onPing} />
+        <ArchTopology health={health} pinging={pinging} onPing={onPing} />
       </div>
 
       <ConsoleLogs logs={logs} />
@@ -56,11 +69,10 @@ export default function SystemHealthTopology({ health, logs, loading, pinging, o
   )
 }
 
-function PowerTopology({ health, pinging, onPing }) {
+function ArchTopology({ health, pinging, onPing }) {
   return (
-    <div className="relative my-2 flex h-[635px] w-full select-none items-center justify-center">
-      <CableLines health={health} />
-      <CorePdu health={health} />
+    <div className="relative my-2 flex h-[1080px] w-full select-none items-center justify-center">
+      <ConnectionLines health={health} />
       {TOPOLOGY_ORDER.map((key) =>
         health.services[key] ? (
           <TopologyNode
@@ -76,120 +88,185 @@ function PowerTopology({ health, pinging, onPing }) {
   )
 }
 
-function CableLines({ health }) {
-  // PDU ports (left side x=262, right side x=378):
-  //   Left:  SF@130(top), PRIMARY@178, DR@228, GIT@338
-  //   Right: API@178, AI@228, L2@288, VM@338
-  const pduCables = [
-    { key: 'salesforce',  d: 'M 320 110 L 320 127' },
-    { key: 'postgres',    d: 'M 160 168 L 212 168 L 212 178 L 262 178' },
-    { key: 'dr_postgres', d: 'M 160 335 L 212 335 L 212 228 L 262 228' },
-    { key: 'app',         d: 'M 480 168 L 428 168 L 428 178 L 378 178' },
-    { key: 'openai',      d: 'M 480 322 L 428 322 L 428 228 L 378 228' },
-    { key: 'cache',       d: 'M 480 472 L 428 472 L 428 288 L 378 288' },
-    { key: 'github',      d: 'M 160 590 L 216 590 L 216 338 L 262 338' },
-    { key: 'azure',       d: 'M 480 590 L 424 590 L 424 338 L 378 338' },
-  ]
+function ConnectionLines({ health }) {
+  const svc = (key) => health.services[key]
+  const hex = (key) => statusTone(svc(key)?.status).hex
+  const isOnline = (key) => normalizeStatus(svc(key)?.status) !== 'offline'
+  const hasBoth = svc('postgres') && svc('dr_postgres')
 
-  const hasBoth = health.services.postgres && health.services.dr_postgres
+  // SVG coordinate system (viewBox 800×1080). Node centers (x):
+  //   cache=85  app=260  salesforce=400  salespulse=540  openai=715
+  //   postgres=85  app_dr=260  salespulse_dr=540  dr_postgres=400
+  // Node row tops (y): row1=10  row2=200  row3=410  row4=620
 
   return (
-    <svg viewBox="0 0 640 635" className="pointer-events-none absolute inset-0 z-0 h-full w-full">
+    <svg viewBox="0 0 800 1080" className="pointer-events-none absolute inset-0 z-0 h-full w-full">
       <defs>
-        <style>{'@keyframes pulseLine{to{stroke-dashoffset:-20}}.line-pulse{stroke-dasharray:4 12;animation:pulseLine 1.2s linear infinite}.repl-pulse{stroke-dasharray:3 6;animation:pulseLine 0.9s linear infinite}'}</style>
+        <style>{'@keyframes pulseLine{to{stroke-dashoffset:-20}}.lp{stroke-dasharray:4 12;animation:pulseLine 1.2s linear infinite}.rp{stroke-dasharray:3 6;animation:pulseLine 0.9s linear infinite}'}</style>
       </defs>
 
-      {/* DB Cluster bracket — groups PRIMARY and DR REPLICA */}
-      <rect x="4" y="92" width="168" height="330" rx="8"
-        fill="none" stroke="#F59E0B" strokeWidth="0.8"
-        strokeDasharray="5 4" opacity="0.22" />
-      <text x="9" y="103" fill="#F59E0B" fontSize="6" fontFamily="monospace"
-        fontWeight="bold" opacity="0.45" letterSpacing="1">DATABASE CLUSTER</text>
+      {/* DR Zone — covers app_dr, salespulse_dr, dr_postgres */}
+      <rect x="178" y="395" width="450" height="420" rx="8"
+        fill="none" stroke="#F59E0B" strokeWidth="0.9"
+        strokeDasharray="5 4" opacity="0.25" />
+      <text x="184" y="408" fill="#F59E0B" fontSize="6" fontFamily="monospace"
+        fontWeight="bold" opacity="0.55" letterSpacing="1">DR ZONE · APPS: WEST US 2 · DB: EAST US 2</text>
 
-      {/* PDU → service cables */}
-      {pduCables.map(({ key, d }) => {
-        const service = health.services[key]
-        const color = statusTone(service?.status).hex
-        return service ? (
-          <g key={key}>
-            <path d={d} stroke={color} strokeWidth="1.5" opacity=".25" fill="none" />
-            {normalizeStatus(service.status) !== 'offline' && (
-              <path d={d} stroke={color} strokeWidth="1.5" className="line-pulse" fill="none" />
-            )}
-          </g>
-        ) : null
-      })}
+      {/* Prod DB label */}
+      <text x="8" y="405" fill="#10B981" fontSize="6" fontFamily="monospace"
+        fontWeight="bold" opacity="0.35" letterSpacing="0.5">PROD DB · EAST US 2</text>
 
-      {/* Replication cable — PRIMARY ↔ DR REPLICA */}
-      {hasBoth && (
+      {/* Salesforce → FleetPulse App */}
+      {svc('salesforce') && svc('app') && (
         <g>
-          {/* Static base */}
-          <path d="M 85 242 L 85 263" stroke="#F59E0B" strokeWidth="2"
-            opacity="0.35" fill="none" strokeDasharray="3 2" />
-          {/* Animated pulse */}
-          <path d="M 85 242 L 85 263" stroke="#F59E0B" strokeWidth="1.5"
-            className="repl-pulse" fill="none" />
-          {/* Label */}
-          <text x="92" y="255" fill="#F59E0B" fontSize="5.5"
-            fontFamily="monospace" opacity="0.65">PITR CLONE</text>
+          <path d="M 400 148 C 360 175 290 196 260 200"
+            stroke={hex('salesforce')} strokeWidth="1.5" opacity=".25" fill="none" />
+          {isOnline('salesforce') && (
+            <path d="M 400 148 C 360 175 290 196 260 200"
+              stroke={hex('salesforce')} strokeWidth="1.5" className="lp" fill="none" />
+          )}
         </g>
       )}
-    </svg>
-  )
-}
 
-function CorePdu({ health }) {
-  const ports = [
-    { key: 'salesforce',  label: 'SF',  x: 320, y: 127, anchor: 'middle' },
-    { key: 'postgres',    label: 'PRI', x: 262, y: 178, anchor: 'start'  },
-    { key: 'dr_postgres', label: 'DR',  x: 262, y: 228, anchor: 'start'  },
-    { key: 'github',      label: 'GIT', x: 262, y: 338, anchor: 'start'  },
-    { key: 'app',         label: 'API', x: 378, y: 178, anchor: 'end'    },
-    { key: 'openai',      label: 'AI',  x: 378, y: 228, anchor: 'end'    },
-    { key: 'cache',       label: 'L2',  x: 378, y: 288, anchor: 'end'    },
-    { key: 'azure',       label: 'VM',  x: 378, y: 338, anchor: 'end'    },
-  ]
-  return (
-    <svg viewBox="0 0 640 635" className="pointer-events-none absolute inset-0 z-10 h-full w-full">
-      {/* PDU glow + body */}
-      <rect x="258" y="124" width="124" height="240" rx="10"
-        fill="none" stroke="#5E6AD2" strokeWidth="1" opacity="0.1" className="animate-pulse" />
-      <rect x="262" y="127" width="116" height="234" rx="8"
-        fill="#0F172A" fillOpacity="0.9" stroke="#334155" strokeWidth="1.5" />
-      <rect x="264" y="129" width="112" height="230" rx="6"
-        fill="none" stroke="#475569" strokeWidth="0.5" opacity="0.4" />
-      <text x="320" y="143" textAnchor="middle" fill="#94A3B8"
-        fontSize="7" fontWeight="bold" letterSpacing="1" fontFamily="monospace">CORE PDU v2.5</text>
+      {/* Salesforce → SalesPulse App */}
+      {svc('salesforce') && svc('salespulse') && (
+        <g>
+          <path d="M 400 148 C 440 175 510 196 540 200"
+            stroke={hex('salesforce')} strokeWidth="1.5" opacity=".25" fill="none" />
+          {isOnline('salesforce') && (
+            <path d="M 400 148 C 440 175 510 196 540 200"
+              stroke={hex('salesforce')} strokeWidth="1.5" className="lp" fill="none" />
+          )}
+        </g>
+      )}
 
-      {/* DR label inside PDU between the two DB ports */}
-      <text x="320" y="210" textAnchor="middle" fill="#F59E0B"
-        fontSize="5" fontFamily="monospace" opacity="0.4">↕ REPL</text>
+      {/* FleetPulse App → Cache */}
+      {svc('cache') && svc('app') && (
+        <g>
+          <path d="M 185 268 L 160 268"
+            stroke={hex('cache')} strokeWidth="1.5" opacity=".25" fill="none" />
+          {isOnline('cache') && (
+            <path d="M 185 268 L 160 268"
+              stroke={hex('cache')} strokeWidth="1.5" className="lp" fill="none" />
+          )}
+        </g>
+      )}
 
-      {ports.map(({ key, label, x, y, anchor }) => {
-        const color = statusTone(health.services[key]?.status).hex
-        return (
-          <g key={key}>
-            <circle cx={x} cy={y} r="8.5" fill="#1E293B" stroke="#475569" strokeWidth="1" />
-            <circle cx={x} cy={y} r="5.5" fill="#020617" />
-            <circle cx={x} cy={y} r="6" fill="none" stroke={color} strokeWidth="1" opacity="0.75" />
-            <circle cx={x} cy={y} r="2" fill={color} />
-            {normalizeStatus(health.services[key]?.status) === 'online' && (
-              <circle
-                cx={x} cy={y} r="9.5"
-                fill="none" stroke={color} strokeWidth="0.5"
-                className="animate-ping"
-                style={{ transformOrigin: `${x}px ${y}px` }}
-              />
-            )}
-            <text
-              x={anchor === 'start' ? x + 14 : anchor === 'end' ? x - 14 : x}
-              y={anchor === 'middle' ? y + 16 : y + 3}
-              textAnchor={anchor}
-              fill="#64748B" fontSize="6.5" fontWeight="bold" fontFamily="monospace"
-            >{label}</text>
-          </g>
-        )
-      })}
+      {/* SalesPulse App → OpenAI */}
+      {svc('openai') && svc('salespulse') && (
+        <g>
+          <path d="M 615 268 L 640 268"
+            stroke={hex('openai')} strokeWidth="1.5" opacity=".25" fill="none" />
+          {isOnline('openai') && (
+            <path d="M 615 268 L 640 268"
+              stroke={hex('openai')} strokeWidth="1.5" className="lp" fill="none" />
+          )}
+        </g>
+      )}
+
+      {/* FleetPulse → Primary DB (ACTIVE) */}
+      {svc('postgres') && svc('app') && (
+        <g>
+          <path d="M 215 348 C 178 378 128 402 85 410"
+            stroke={hex('postgres')} strokeWidth="2" opacity=".55" fill="none" />
+          {isOnline('postgres') && (
+            <path d="M 215 348 C 178 378 128 402 85 410"
+              stroke={hex('postgres')} strokeWidth="2" className="lp" fill="none" />
+          )}
+          <rect x="108" y="374" width="56" height="12" rx="3"
+            fill="#0F172A" opacity="0.85" />
+          <text x="136" y="383" fill={hex('postgres')} fontSize="6.5" fontFamily="monospace"
+            fontWeight="bold" opacity="1" textAnchor="middle">✦ ACTIVE</text>
+        </g>
+      )}
+
+      {/* SalesPulse → Primary DB (ACTIVE, shared co-tenant) */}
+      {svc('postgres') && svc('salespulse') && (
+        <g>
+          <path d="M 490 348 C 390 378 220 402 85 410"
+            stroke={hex('postgres')} strokeWidth="1.5" opacity=".35" fill="none" strokeDasharray="5 3" />
+          {isOnline('postgres') && (
+            <path d="M 490 348 C 390 378 220 402 85 410"
+              stroke={hex('postgres')} strokeWidth="1.5" className="lp" fill="none" />
+          )}
+          <rect x="252" y="374" width="56" height="12" rx="3"
+            fill="#0F172A" opacity="0.85" />
+          <text x="280" y="383" fill={hex('postgres')} fontSize="6.5" fontFamily="monospace"
+            fontWeight="bold" opacity="0.85" textAnchor="middle">SHARED</text>
+        </g>
+      )}
+
+      {/* FleetPulse → FleetPulse DR (DR STANDBY — vertical) */}
+      {svc('app_dr') && svc('app') && (
+        <g>
+          <path d="M 310 348 C 330 378 330 398 310 410"
+            stroke="#F59E0B" strokeWidth="2" opacity=".55" fill="none" strokeDasharray="6 4" />
+          <path d="M 310 348 C 330 378 330 398 310 410"
+            stroke="#F59E0B" strokeWidth="2" className="rp" fill="none" />
+          <rect x="316" y="372" width="62" height="12" rx="3"
+            fill="#0F172A" opacity="0.85" />
+          <text x="347" y="381" fill="#F59E0B" fontSize="6" fontFamily="monospace"
+            fontWeight="bold" opacity="1" textAnchor="middle">⚡ DR STBY</text>
+        </g>
+      )}
+
+      {/* SalesPulse → SalesPulse DR (DR STANDBY — vertical) */}
+      {svc('salespulse_dr') && svc('salespulse') && (
+        <g>
+          <path d="M 490 348 C 470 378 470 398 490 410"
+            stroke="#F59E0B" strokeWidth="2" opacity=".55" fill="none" strokeDasharray="6 4" />
+          <path d="M 490 348 C 470 378 470 398 490 410"
+            stroke="#F59E0B" strokeWidth="2" className="rp" fill="none" />
+          <rect x="422" y="372" width="62" height="12" rx="3"
+            fill="#0F172A" opacity="0.85" />
+          <text x="453" y="381" fill="#F59E0B" fontSize="6" fontFamily="monospace"
+            fontWeight="bold" opacity="1" textAnchor="middle">⚡ DR STBY</text>
+        </g>
+      )}
+
+      {/* FleetPulse DR → DR Postgres */}
+      {svc('app_dr') && svc('dr_postgres') && (
+        <g>
+          <path d="M 260 555 C 285 585 330 612 350 620"
+            stroke="#F59E0B" strokeWidth="1.5" opacity=".4" fill="none" strokeDasharray="4 3" />
+          {isOnline('app_dr') && (
+            <path d="M 260 555 C 285 585 330 612 350 620"
+              stroke="#F59E0B" strokeWidth="1.5" className="rp" fill="none" />
+          )}
+        </g>
+      )}
+
+      {/* SalesPulse DR → DR Postgres */}
+      {svc('salespulse_dr') && svc('dr_postgres') && (
+        <g>
+          <path d="M 540 555 C 515 585 470 612 450 620"
+            stroke="#F59E0B" strokeWidth="1.5" opacity=".4" fill="none" strokeDasharray="4 3" />
+          {isOnline('salespulse_dr') && (
+            <path d="M 540 555 C 515 585 470 612 450 620"
+              stroke="#F59E0B" strokeWidth="1.5" className="rp" fill="none" />
+          )}
+        </g>
+      )}
+
+      {/* Primary DB ↔ DR Postgres: PITR replication */}
+      {hasBoth && (
+        <g>
+          <path d="M 160 490 C 220 560 285 610 325 650"
+            stroke="#F59E0B" strokeWidth="2" opacity=".32" fill="none" strokeDasharray="3 2" />
+          <path d="M 160 490 C 220 560 285 610 325 650"
+            stroke="#F59E0B" strokeWidth="1.5" className="rp" fill="none" />
+          <text x="215" y="568" textAnchor="middle" fill="#F59E0B" fontSize="6"
+            fontFamily="monospace" fontWeight="bold" opacity="0.65"
+            transform="rotate(-45 215 568)">PITR REPLICATION</text>
+        </g>
+      )}
+
+      {/* Primary DB → GitHub */}
+      {svc('github') && svc('postgres') && (
+        <g>
+          <path d="M 85 820 L 85 865" stroke={hex('github')} strokeWidth="1.5" opacity=".2" fill="none" />
+        </g>
+      )}
     </svg>
   )
 }
@@ -197,6 +274,9 @@ function CorePdu({ health }) {
 function TopologyNode({ serviceKey, service, pinging, onPing }) {
   const tone = statusTone(service.status)
   const isDr = serviceKey === 'dr_postgres'
+  const isDrApp = serviceKey === 'app_dr' || serviceKey === 'salespulse_dr'
+  const isPrimary = serviceKey === 'postgres'
+  const isCotenant = serviceKey === 'salespulse' || serviceKey === 'salespulse_dr'
   const hostLink = service.host_link || service.details?.server_url
   const recentLog = service.logs?.[0]
 
@@ -205,7 +285,8 @@ function TopologyNode({ serviceKey, service, pinging, onPing }) {
       <div className={clsx(
         'w-full rounded-lg border bg-slate-900/95 p-2.5 shadow-xl backdrop-blur',
         tone.border,
-        isDr && 'ring-1 ring-amber-500/20',
+        (isDr || isDrApp) && 'ring-1 ring-amber-500/30',
+        isCotenant && 'ring-1 ring-sky-500/25',
       )}>
         {/* Header */}
         <div className="mb-1.5 flex items-center justify-between">
@@ -221,16 +302,18 @@ function TopologyNode({ serviceKey, service, pinging, onPing }) {
           </div>
         </div>
 
-        {/* DR / PRIMARY badge */}
-        {(isDr || serviceKey === 'postgres') && (
+        {/* Role badge */}
+        {(isPrimary || isDr || isDrApp || isCotenant) && (
           <div className="mb-1.5">
             <span className={clsx(
               'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider',
-              isDr
+              isDr || isDrApp
                 ? 'border border-amber-500/30 bg-amber-500/10 text-amber-400'
-                : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+                : isCotenant
+                  ? 'border border-sky-500/30 bg-sky-500/10 text-sky-400'
+                  : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
             )}>
-              {isDr ? '⚡ DR REPLICA' : '✦ PRIMARY'}
+              {isDr ? '⚡ DR REPLICA' : isDrApp ? '⚡ DR APP' : isCotenant ? '◈ CO-TENANT' : '✦ PRIMARY'}
             </span>
           </div>
         )}
@@ -259,9 +342,12 @@ function TopologyNode({ serviceKey, service, pinging, onPing }) {
           {service.region && (
             <NodeRow label="Region" value={service.region} valueClass="text-slate-300" />
           )}
+          {service.schema && (
+            <NodeRow label="Schema" value={service.schema} valueClass="font-mono text-[8px] text-slate-300" />
+          )}
         </div>
 
-        {/* Most recent log line */}
+        {/* Most recent log */}
         {recentLog && (
           <div className="mb-1.5 truncate rounded bg-zinc-900 px-1.5 py-1 font-mono text-[7.5px] text-zinc-400" title={recentLog}>
             {recentLog}
@@ -295,10 +381,10 @@ function NodeRow({ label, value, valueClass }) {
 
 function ConsoleLogs({ logs }) {
   return (
-    <div className="si-card-premium flex h-[730px] flex-col overflow-hidden border border-zinc-800 bg-zinc-950 font-mono">
+    <div className="si-card-premium flex h-[1150px] flex-col overflow-hidden border border-zinc-800 bg-zinc-950 font-mono">
       <div className="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-900/40 px-4 py-3 text-indigo-300">
         <Terminal className="h-4 w-4 text-indigo-300" />
-        <span className="text-[11px] font-bold uppercase tracking-wider">Tactical HUD Console Logs</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider">System Console Logs</span>
       </div>
       <div className="flex-1 space-y-2.5 overflow-y-auto bg-zinc-950 p-4 text-[10px] leading-relaxed">
         {logs.map((line, idx) => (

@@ -14,7 +14,7 @@ _ET = ZoneInfo('America/New_York')
 _SF_BASE   = 'https://aaawcny.lightning.force.com'
 _TOW_CODES = {'TW', 'TB', 'TT', 'TU', 'TM', 'EM'}
 _TIME_CODES = {'E1', 'E2', 'MI', 'Z8'}
-_FLAT_CODES = {'BA', 'BC', 'PC', 'HO', 'PG', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'}
+_FLAT_CODES = {'BA', 'BC', 'PC', 'HO', 'Z5', 'Z7', 'TJ', 'Z0', 'Z1', 'Z3'}  # PG handled separately
 
 _DEFAULT_AUDIT_PROMPT = (
     "You are a senior accounting investigator at AAA Western & Central NY roadside assistance, "
@@ -92,6 +92,45 @@ def invalidate_hdv_cache() -> None:
     global _hdv_cache
     with _hdv_cache_lock:
         _hdv_cache = None
+
+
+# ── Fuel Reimbursement limits cache ─────────────────────────────────────────
+# Loaded once from Postgres. Call invalidate_fuel_cache() after table edits.
+
+_fuel_cache: dict | None = None   # None = not yet loaded
+_fuel_cache_lock = threading.Lock()
+
+
+def _load_fuel_cache() -> dict:
+    """Load fuel reimbursement limits from Postgres. Returns {dispatch_code: amount_usd}."""
+    try:
+        import db_adapter
+        with db_adapter.reader() as db:
+            db.execute("SELECT dispatch_code, amount_usd FROM ref_fuel_reimbursement ORDER BY dispatch_code")
+            rows = db.fetchall()
+        result = {r['dispatch_code']: float(r['amount_usd']) for r in rows}
+        log.info("[fuel_cache] loaded %d fuel limits", len(result))
+        return result
+    except Exception as e:
+        log.warning("[fuel_cache] load failed: %s", e)
+        return {}
+
+
+def _get_fuel_limits() -> dict:
+    """Return cached fuel limits dict, loading on first call."""
+    global _fuel_cache
+    if _fuel_cache is None:
+        with _fuel_cache_lock:
+            if _fuel_cache is None:
+                _fuel_cache = _load_fuel_cache()
+    return _fuel_cache
+
+
+def invalidate_fuel_cache() -> None:
+    """Clear the fuel limits cache so the next call reloads from Postgres."""
+    global _fuel_cache
+    with _fuel_cache_lock:
+        _fuel_cache = None
     log.info("[hdv_cache] invalidated")
 
 
@@ -197,7 +236,8 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
                          on_loc_minutes=None, vehicle_weight=None, vehicle_group=None,
                          all_wolis=None, long_tow_used=False,
                          vehicle_make=None, vehicle_model=None,
-                         already_paid_mh=False):
+                         already_paid_mh=False,
+                         dispatch_code=None, coverage_level=None):
     """Pure math recommendation. Returns (rec, step_by_step_reason, verification)."""
     NAMES = {'ER': 'Enroute Miles', 'TW': 'Tow Miles', 'TB': 'Tow Miles Basic',
              'TT': 'Tow Miles Plus (5-30mi)', 'TU': 'Tow Miles Plus (30-100mi)',
@@ -306,12 +346,31 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
             L.append(f'\n→ Quantity is {requested}, not 1 → REVIEW')
             return 'review', '\n'.join(L), v
 
-        # Rule 2 — WO must not already have a paid MH WOLI
+        # Rule 2 — WO must be a tow call
+        _wolis_for_tow = all_wolis or []
+        _has_tow = any(w.get('code') in TOW_CODES for w in _wolis_for_tow)
+        if not _has_tow:
+            v['note'] = 'Work Order is Not a Tow Call'
+            L.append(f'\n→ No tow line item on WO → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 3 — WO must not already have a paid MH WOLI (audit context: explicit flag)
         if already_paid_mh:
+            v['note'] = 'WOLI for MH-Medium/Heavy Duty already exists on this work order.'
             L.append(f'\n→ WO already contains a paid MH line item → REJECT')
             return 'reject', '\n'.join(L), v
 
-        # Rule 3 — check approved vehicle list
+        # Rule 4 — check WO line items for existing MH payment
+        _has_existing_mh = any(
+            w.get('code') == 'MH' and (w.get('quantity') or 0) > 0
+            for w in (all_wolis or [])
+        )
+        if _has_existing_mh:
+            v['note'] = 'WOLI for MH-Medium/Heavy Duty already exists on this work order.'
+            L.append(f'\n→ WO already has a paid MH line item → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 5 — check approved heavy-duty vehicle list
         confidence, matched_desc = _match_hdv_approved(vehicle_make or '', vehicle_model or '')
         L.append(f'  Approved list: {confidence} — {matched_desc}')
 
@@ -347,6 +406,53 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
             return 'approve', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
         L.append(f'\n→ Request receipt from garage to verify ${requested}.')
         return 'review', '\n'.join(L), {'sf_billed': paid, 'unit': '$'}
+    elif code == 'PG':
+        fuel_limits = _get_fuel_limits()
+        v = {'dispatch_code': dispatch_code, 'coverage_level': coverage_level}
+        L.append(f'\nPLUS/PREMIER FUEL:')
+        L.append(f'  Dispatch Code: {dispatch_code or "N/A"}')
+        L.append(f'  Coverage Level: {coverage_level or "blank (RAP)"}')
+        L.append(f'  Requested: ${requested}')
+
+        # Rule 1 — dispatch code must be L401 or L402
+        if not dispatch_code or dispatch_code not in ('L401', 'L402'):
+            v['note'] = f'Dispatch Code ({dispatch_code or "N/A"}) is not L401 or L402.'
+            L.append(f'\n→ Dispatch Code not L401/L402 → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 2 — coverage level must be Plus, Plus RV, Premier, Premier RV, or blank (RAP)
+        _approved_coverage = {'PLUS', 'PREMIER', 'PLRV', 'PMRV'}
+        _cov_norm = (coverage_level or '').strip().upper()
+        if _cov_norm and _cov_norm not in _approved_coverage:
+            v['note'] = f'Coverage Level ({coverage_level}) is not eligible for Plus/Premier Fuel reimbursement.'
+            L.append(f'\n→ Coverage {coverage_level} not eligible → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 3 — no existing PG WOLI on WO with payment
+        _has_existing_pg = any(
+            w.get('code') == 'PG' and (w.get('quantity') or 0) > 0
+            for w in (all_wolis or [])
+        )
+        if _has_existing_pg:
+            v['note'] = 'A WOLI for PG – Plus/Premier Fuel already exists on this work order.'
+            L.append(f'\n→ Existing PG line item found → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        # Rule 4 — quantity must not exceed max allowance
+        max_amount = fuel_limits.get(dispatch_code)
+        if max_amount is None:
+            v['note'] = f'No fuel limit configured for dispatch code {dispatch_code}.'
+            L.append(f'\n→ No fuel limit configured for {dispatch_code} → REVIEW')
+            return 'review', '\n'.join(L), v
+        fuel_type = 'Gas' if dispatch_code == 'L401' else 'Diesel'
+        L.append(f'  Max allowance ({fuel_type}, {dispatch_code}): ${max_amount}')
+        if requested > max_amount:
+            v['note'] = f'Requested ${requested:.2f} exceeds the ${max_amount:.2f} max allowance for {fuel_type} ({dispatch_code}).'
+            L.append(f'\n→ ${requested} > max ${max_amount} → REVIEW')
+            return 'review', '\n'.join(L), v
+
+        L.append(f'\n→ All criteria met: L401/L402, eligible coverage, no duplicate, ${requested} ≤ ${max_amount} → APPROVE')
+        return 'approve', '\n'.join(L), v
     elif code in FLAT_CODES:
         if paid and paid > 0 and abs(requested - paid) < 0.01:
             L.append(f'\nFLAT FEE / SERVICE EVENT:')
@@ -355,7 +461,7 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
             return 'approve', '\n'.join(L), {'sf_billed': paid}
         L.append(f'\nFLAT FEE / SERVICE EVENT:')
         L.append(f'  {prod_name} — verify the service was performed.')
-        L.append(f'→ Flat-fee products (BA/BC/PC/HO/PG/RAP) always require policy review.')
+        L.append(f'→ Flat-fee products (BA/BC/PC/HO/RAP) always require policy review.')
         return 'review', '\n'.join(L), {'sf_billed': paid}
     else:
         baseline = sf_est_er if sf_est_er and sf_est_er > 0 else sf_er if sf_er and sf_er > 0 else None

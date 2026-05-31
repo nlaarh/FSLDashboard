@@ -11,6 +11,7 @@ import WODiagnosticStrip from './WODiagnosticStrip'
 import AuditVerificationCard from './AuditVerificationCard'
 import WOAAuditMap from './WOAAuditMap'
 import AccountingPhotosCard from './AccountingPhotosCard'
+import AccountingServiceNotesCard from './AccountingServiceNotesCard'
 
 const REC_BADGE = {
   PAY:    'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
@@ -729,6 +730,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
         </div>
 
       </div>}
+
+      {/* ── Service Notes ── */}
+      {audit && <AccountingServiceNotesCard serviceNotes={audit.service_notes} />}
 
       {/* ── Photos ── */}
       {audit && <AccountingPhotosCard photos={audit.photos} code={code} />}

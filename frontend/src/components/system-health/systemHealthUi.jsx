@@ -18,19 +18,22 @@ import { clsx } from 'clsx'
 export const SERVICE_LABELS = {
   salesforce: 'SALESFORCE',
   postgres: 'PRIMARY DB',
-  dr_postgres: 'DR REPLICA',
-  app: 'API NODE',
+  dr_postgres: 'FSLAPP-PG DR',
+  app: 'FLEETPULSE APP',
+  app_dr: 'FLEETPULSE DR',
+  salespulse: 'SALESPULSE APP',
+  salespulse_dr: 'SALESPULSE DR',
   cache: 'CACHE',
-  azure: 'AZURE VM',
-  openai: 'OPENAI SERVICE',
+  azure: 'AZURE APP SVC',
+  openai: 'OPENAI SVC',
   github: 'GITHUB REPO',
   google_maps: 'GOOGLE MAPS',
   agentmail: 'AGENTMAIL',
   duckdb: 'DUCKDB',
 }
 
-export const TOPOLOGY_ORDER = ['salesforce', 'postgres', 'app', 'cache', 'openai', 'github', 'azure', 'dr_postgres']
-export const SERVICE_ORDER = ['salesforce', 'postgres', 'app', 'cache', 'azure', 'openai', 'github', 'google_maps', 'agentmail', 'duckdb']
+export const TOPOLOGY_ORDER = ['salesforce', 'cache', 'app', 'salespulse', 'openai', 'postgres', 'app_dr', 'salespulse_dr', 'dr_postgres', 'github', 'azure']
+export const SERVICE_ORDER = ['salesforce', 'postgres', 'app', 'salespulse', 'cache', 'azure', 'openai', 'github', 'google_maps', 'agentmail', 'duckdb']
 
 export function normalizeStatus(status) {
   if (status === 'healthy') return 'online'
@@ -70,7 +73,7 @@ export function ServiceIcon({ serviceKey, small = false }) {
   const cls = small ? 'h-3.5 w-3.5 text-indigo-300' : 'h-4 w-4 text-indigo-300'
   if (serviceKey === 'postgres' || serviceKey === 'dr_postgres') return <Database className={cls} />
   if (serviceKey === 'cache' || serviceKey === 'duckdb') return <Layers className={cls} />
-  if (serviceKey === 'app') return <Cpu className={cls} />
+  if (serviceKey === 'app' || serviceKey === 'app_dr' || serviceKey === 'salespulse' || serviceKey === 'salespulse_dr') return <Cpu className={cls} />
   if (serviceKey === 'salesforce') return <Layers className={cls} />
   if (serviceKey === 'openai') return <Zap className={cls} />
   if (serviceKey === 'github') return <GitBranch className={cls} />

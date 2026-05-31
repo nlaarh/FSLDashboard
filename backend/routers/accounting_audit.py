@@ -60,7 +60,12 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order__r.Entitlement_Master__r.Name,
                Work_Order__r.Long_Tow_Used__c,
                Work_Order__r.Long_Tow_Miles__c,
-               Work_Order__r.Type__c
+               Work_Order__r.Type__c,
+               Work_Order__r.Dispatch_Code__c,
+               Work_Order__r.Credit_Card_On_File_Bill_Member__c,
+               Work_Order__r.Agent_Comments__c,
+               Work_Order__r.Driver_Directions__c,
+               Work_Order__r.ERS_System_Notes__c
         FROM ERS_Work_Order_Adjustment__c
         WHERE Id = '{woa_id}'
         LIMIT 1
@@ -87,6 +92,7 @@ def _build_woa_data(woa_id: str) -> dict:
                    ERS_Completed_Geolocation__Latitude__s,
                    ERS_Completed_Geolocation__Longitude__s,
                    ERS_Membership_Level_Coverage__c,
+                   ServiceNote,
                    WorkType.Name"""
     _account_id = wo.get('AccountId')
     _woa_date_str = (woa.get('CreatedDate') or '')[:10]
@@ -548,7 +554,9 @@ def _build_woa_data(woa_id: str) -> dict:
         on_loc_minutes=on_location_minutes, vehicle_weight=_safe_float(wo.get('Weight_lbs__c')),
         vehicle_group=wo.get('Vehicle_Group__c'), all_wolis=all_wolis, long_tow_used=long_tow_used,
         vehicle_make=wo.get('Vehicle_Make__c') or None, vehicle_model=wo.get('Vehicle_Model__c') or None,
-        already_paid_mh=_already_paid_mh)
+        already_paid_mh=_already_paid_mh,
+        dispatch_code=wo.get('Dispatch_Code__c') or None,
+        coverage_level=wo.get('Coverage__c') or None)
 
     # Reject E1 claims > 14 min on tow calls with no drop-off photos (on-platform only)
     _has_woli_02 = any(w.get('LineItemNumber') == '00000002' for w in woli_rows)
@@ -745,5 +753,17 @@ def _build_woa_data(woa_id: str) -> dict:
         },
         'ask_garage': [],
         'same_member_same_day': same_day_calls,
+        'service_notes': {
+            'woa_description': woa.get('Description__c') or None,
+            'woa_internal_notes': woa.get('Internal_Notes__c') or None,
+            'agent_comments': wo.get('Agent_Comments__c') or None,
+            'driver_instructions': wo.get('Driver_Directions__c') or None,
+            'system_notes': wo.get('ERS_System_Notes__c') or None,
+            'sa_service_notes': [
+                {'sa_number': s.get('AppointmentNumber', ''), 'note': s.get('ServiceNote') or None}
+                for s in all_sa_rows
+                if s.get('ServiceNote')
+            ],
+        },
         'photos': photos,
     }

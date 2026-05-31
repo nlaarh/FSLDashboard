@@ -105,7 +105,7 @@ function Th({ label, col, sort, onSort, right = false }) {
   return (
     <th
       className={clsx(
-        'px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
+        'px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
         'hover:text-slate-200 transition-colors',
         right ? 'text-right' : 'text-left',
         active ? 'text-brand-400' : 'text-slate-500',
@@ -313,40 +313,54 @@ export default function Accounting() {
       )}
 
       {/* Table */}
+      {(() => {
+      const isPgView = product === 'PG'
+      return (
       <div className="glass rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <table className="w-full text-[10px]">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="px-1 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
+                <th className="px-1 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
                 <Th label="WOA #"      col="woa_number"    sort={sort} onSort={onSort} />
                 <Th label="Facility"   col="facility"      sort={sort} onSort={onSort} />
-                <Th label="Program" col="program" sort={sort} onSort={onSort} />
+                <Th label="Prog" col="program" sort={sort} onSort={onSort} />
                 <Th label="WO #"       col="wo_number"     sort={sort} onSort={onSort} />
                 <Th label="Product"    col="product"       sort={sort} onSort={onSort} />
-                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
-                  onClick={() => onSort('requested_usd')}
-                  title="Estimated dollar value of the claim — requested qty × reference rate. Rates are configurable in Admin → Accounting Rates. May not match your contract.">
-                  Est. $<span className="text-slate-600 ml-0.5">?</span>
-                  {sort.col === 'requested_usd'
-                    ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
-                    : <span className="inline-block w-3 ml-0.5" />}
-                </th>
-                <Th label="Requested"  col="requested_qty" sort={sort} onSort={onSort} right />
-                <Th label="SF Billed"  col="currently_paid" sort={sort} onSort={onSort} right />
-                <Th label="Delta"      col="delta"         sort={sort} onSort={onSort} right />
-                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap cursor-pointer"
+                {isPgView ? (
+                  <>
+                    <Th label="Disp"   col="dispatch_code"   sort={sort} onSort={onSort} />
+                    <Th label="Res" col="resolution_code" sort={sort} onSort={onSort} />
+                    <Th label="Cov"   col="coverage_level"  sort={sort} onSort={onSort} />
+                    <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">CC</th>
+                  </>
+                ) : (
+                  <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
+                    onClick={() => onSort('requested_usd')}
+                    title="Estimated dollar value of the claim — requested qty × reference rate. Rates are configurable in Admin → Accounting Rates. May not match your contract.">
+                    Est. $<span className="text-slate-600 ml-0.5">?</span>
+                    {sort.col === 'requested_usd'
+                      ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
+                      : <span className="inline-block w-3 ml-0.5" />}
+                  </th>
+                )}
+                <Th label="Req"  col="requested_qty" sort={sort} onSort={onSort} right />
+                <Th label="Billed"  col="currently_paid" sort={sort} onSort={onSort} right />
+                <Th label="Δ"      col="delta"         sort={sort} onSort={onSort} right />
+                <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap cursor-pointer"
                   onClick={() => onSort('recommendation')}>
-                  Recommendation
+                  Rec
                   {sort.col === 'recommendation'
                     ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
                     : <span className="inline-block w-3 ml-0.5" />}
                 </th>
-                <Th label="Owner"      col="owner"         sort={sort} onSort={onSort} />
-                <Th label="WOA Age"    col="woa_age_days"  sort={sort} onSort={onSort} right />
-                <Th label="WO→WOA"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
-                <Th label="Created"    col="created_date"  sort={sort} onSort={onSort} />
-                <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">Description</th>
+                {!isPgView && <Th label="Owner"   col="owner"        sort={sort} onSort={onSort} />}
+                {!isPgView && <Th label="WOA Age" col="woa_age_days" sort={sort} onSort={onSort} right />}
+                <Th label="W→W"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
+                <Th label="Date"    col="created_date"  sort={sort} onSort={onSort} />
+                <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">
+                  {isPgView ? 'WOA Desc' : 'Desc'}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/40">
@@ -378,10 +392,10 @@ export default function Accounting() {
                         isLowMat && 'opacity-60',
                       )}
                     >
-                      <td className="px-1 py-2 text-[10px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
+                      <td className="px-1 py-1.5 text-[9px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
 
                       {/* WOA # */}
-                      <td className="px-2 py-2">
+                      <td className="px-1.5 py-1.5">
                         <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1">
                             {r.id ? (
@@ -407,17 +421,17 @@ export default function Accounting() {
                       </td>
 
                       {/* Facility / Territory */}
-                      <td className="px-2 py-2">
+                      <td className="px-1.5 py-1.5">
                         <div className="flex flex-col gap-0">
                           {r.parent_territory && (
                             <span className="text-[9px] text-brand-400 font-mono font-semibold tracking-wide">{r.parent_territory}</span>
                           )}
-                          <span className="text-slate-300 font-medium truncate max-w-[120px] block">{r.facility || '--'}</span>
+                          <span className="text-slate-300 font-medium truncate max-w-[90px] block" title={r.facility}>{r.facility || '--'}</span>
                         </div>
                       </td>
 
                       {/* Program */}
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-1.5 py-1.5 whitespace-nowrap">
                         {r.program ? (
                           <span className={clsx(
                             'px-1.5 py-0.5 rounded text-[9px] font-semibold border',
@@ -437,7 +451,7 @@ export default function Accounting() {
                       </td>
 
                       {/* WO # */}
-                      <td className="px-2 py-2">
+                      <td className="px-1.5 py-1.5">
                         {r.wo_id ? (
                           <a href={`https://aaawcny.lightning.force.com/${r.wo_id}`} target="_blank" rel="noopener noreferrer"
                             onClick={e => e.stopPropagation()}
@@ -450,7 +464,7 @@ export default function Accounting() {
                       </td>
 
                       {/* Product */}
-                      <td className="px-2 py-2">
+                      <td className="px-1.5 py-1.5">
                         {code || r.product ? (
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1.5">
@@ -488,7 +502,7 @@ export default function Accounting() {
                               )}
                             </div>
                             {r.all_products && (
-                              <span className="text-[9px] text-slate-500 font-mono" title={`All non-BA products on this WO: ${r.all_products}`}>
+                              <span className="text-[9px] text-slate-500 font-mono truncate max-w-[100px] block" title={`All non-BA products on this WO: ${r.all_products}`}>
                                 {r.all_products}
                               </span>
                             )}
@@ -501,28 +515,41 @@ export default function Accounting() {
                         )}
                       </td>
 
-                      {/* Est. $ — estimated dollar value of the claim */}
-                      <td className="px-2 py-2 text-right font-mono"
-                        title="Estimated dollar value — requested qty × reference rate. See Admin → Accounting Rates to update rates.">
-                        {r.requested_usd != null
-                          ? <span className="text-slate-300">~${r.requested_usd.toFixed(2)}</span>
-                          : <span className="text-slate-700">—</span>}
-                      </td>
+                      {/* Est. $ (default) or PG dispatch/resolution/coverage/CC columns */}
+                      {isPgView ? (
+                        <>
+                          <td className="px-1.5 py-1.5 font-mono text-slate-300">{r.dispatch_code || <span className="text-slate-700">—</span>}</td>
+                          <td className="px-1.5 py-1.5 font-mono text-slate-300">{r.resolution_code || <span className="text-slate-700">—</span>}</td>
+                          <td className="px-1.5 py-1.5 text-slate-300">{r.coverage_level || <span className="text-slate-500 italic text-[9px]">blank</span>}</td>
+                          <td className="px-1.5 py-1.5 text-center">
+                            {r.credit_card_on_file
+                              ? <span className="text-emerald-400 font-bold text-[10px]">✓</span>
+                              : <span className="text-slate-700 text-[10px]">—</span>}
+                          </td>
+                        </>
+                      ) : (
+                        <td className="px-1.5 py-1.5 text-right font-mono"
+                          title="Estimated dollar value — requested qty × reference rate. See Admin → Accounting Rates to update rates.">
+                          {r.requested_usd != null
+                            ? <span className="text-slate-300">~${r.requested_usd.toFixed(2)}</span>
+                            : <span className="text-slate-700">—</span>}
+                        </td>
+                      )}
 
                       {/* Requested — unit-aware */}
-                      <td className="px-2 py-2 text-right text-slate-300 font-mono">
+                      <td className="px-1.5 py-1.5 text-right text-slate-300 font-mono">
                         {formatQty(r.requested_qty, r.product)}
                       </td>
 
                       {/* Paid — unit-aware */}
-                      <td className="px-2 py-2 text-right font-mono">
+                      <td className="px-1.5 py-1.5 text-right font-mono">
                         <span className={r.currently_paid > 0 ? 'text-emerald-400' : 'text-slate-600'}>
                           {r.currently_paid != null ? formatQty(r.currently_paid, r.product) : '--'}
                         </span>
                       </td>
 
                       {/* Delta — unit-aware */}
-                      <td className="px-2 py-2 text-right font-mono">
+                      <td className="px-1.5 py-1.5 text-right font-mono">
                         <span className={clsx(
                           'font-bold',
                           delta > 0 ? 'text-amber-400' : delta < 0 ? 'text-red-400' : 'text-slate-600',
@@ -532,59 +559,75 @@ export default function Accounting() {
                       </td>
 
                       {/* Recommendation — use audit result once opened, fall back to pre-computed */}
-                      <td className="px-2 py-2">
+                      <td className="px-1.5 py-1.5">
                         <div className="flex flex-col gap-0.5">
-                          {(() => {
-                            const audited = !!auditOverrides[rowKey]
-                            const effectiveRec = (auditOverrides[rowKey]?.recommendation || r.recommendation || '').toLowerCase()
-                            const isTimeProduct = ['MI','E1','E2','Z8'].includes(code)
-                            const provisional = !audited && isTimeProduct
-                            return effectiveRec === 'approve'
-                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
-                                  className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
-                                  title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
-                                  ✓ Approve{provisional ? '*' : ''}
-                                </a>
-                              : effectiveRec === 'reject'
-                              ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
-                                  className="text-[10px] font-bold text-red-400 underline hover:text-red-300"
-                                  title="No drop-off photos found — E1 time > 14 min. Reject and request resubmission with photos.">
-                                  ✗ Reject
-                                </a>
-                              : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
-                                  className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300"
-                                  title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : undefined}>
-                                  ⚠ Review{provisional ? '*' : ''}
-                                </a>
-                          })()}
+                          <div className="flex items-center gap-0.5">
+                            {(() => {
+                              const audited = !!auditOverrides[rowKey]
+                              const effectiveRec = (auditOverrides[rowKey]?.recommendation || r.recommendation || '').toLowerCase()
+                              const isTimeProduct = ['MI','E1','E2','Z8'].includes(code)
+                              const provisional = !audited && isTimeProduct
+                              return effectiveRec === 'approve'
+                                ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
+                                    className="text-[10px] font-bold text-emerald-400 underline hover:text-emerald-300"
+                                    title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : isLowMat ? `Auto-approved — estimated impact $${r.estimated_usd?.toFixed(2)} is below the materiality threshold` : undefined}>
+                                    ✓ Approve{provisional ? '*' : ''}
+                                  </a>
+                                : effectiveRec === 'reject'
+                                ? <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
+                                    className="text-[10px] font-bold text-red-400 underline hover:text-red-300">
+                                    ✗ Reject
+                                  </a>
+                                : <a href="#" onClick={e => { e.preventDefault(); e.stopPropagation(); navigate(`/accounting/woa/${encodeURIComponent(r.id || r.woa_number)}`, { state: { row: r, rows } }) }}
+                                    className="text-[10px] font-bold text-amber-400 underline hover:text-amber-300"
+                                    title={provisional ? 'Provisional — open to verify (list uses travel time; audit uses actual on-scene time)' : undefined}>
+                                    ⚠ Review{provisional ? '*' : ''}
+                                  </a>
+                            })()}
+                            {r.rec_reason && <HelpTip text={r.rec_reason} />}
+                          </div>
+                          {code === 'MH' && r.vehicle_display && (
+                            <span className="text-[9px] text-slate-400 leading-tight">{r.vehicle_display}</span>
+                          )}
+                          {code === 'MH' && r.review_note && (
+                            <span className="text-[9px] text-amber-500/80 italic leading-tight">{r.review_note}</span>
+                          )}
                         </div>
                       </td>
 
-                      {/* Owner */}
-                      <td className="px-2 py-2 text-slate-500 truncate max-w-[80px]">{r.owner || '--'}</td>
+                      {/* Owner — hidden in PG view */}
+                      {!isPgView && <td className="px-1.5 py-1.5 text-slate-500 truncate max-w-[60px]">{r.owner || '--'}</td>}
 
-                      {/* WOA Age */}
-                      <td className="px-2 py-2 text-right font-mono text-[10px]">
-                        {r.woa_age_days != null
-                          ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
-                          : <span className="text-slate-700">--</span>}
-                      </td>
+                      {/* WOA Age — hidden in PG view */}
+                      {!isPgView && (
+                        <td className="px-1.5 py-1.5 text-right font-mono text-[9px]">
+                          {r.woa_age_days != null
+                            ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
+                            : <span className="text-slate-700">--</span>}
+                        </td>
+                      )}
 
                       {/* WO→WOA */}
-                      <td className="px-2 py-2 text-right font-mono text-[10px]">
+                      <td className="px-1 py-1.5 text-right font-mono text-[9px] w-8">
                         {r.woa_age_from_wo_days != null
                           ? <span className={clsx(r.woa_age_from_wo_days > 90 ? 'text-red-400' : r.woa_age_from_wo_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_from_wo_days}d</span>
                           : <span className="text-slate-700">--</span>}
                       </td>
 
                       {/* Created */}
-                      <td className="px-2 py-2 text-slate-500 whitespace-nowrap">{r.created_date || '--'}</td>
+                      <td className="px-1.5 py-1.5 text-slate-500 whitespace-nowrap" title={r.created_date}>{r.created_date ? r.created_date.slice(0, 5) : '--'}</td>
 
-                      {/* Description */}
-                      <td className="px-2 py-2 text-slate-500 max-w-[150px]">
-                        {r.description
-                          ? <span title={r.description} className="truncate block cursor-help">{r.description.slice(0, 50)}{r.description.length > 50 ? '…' : ''}</span>
-                          : <span className="text-slate-700">—</span>}
+                      {/* Description / WOA Description */}
+                      <td className="px-1.5 py-1.5 text-slate-500 max-w-[120px]">
+                        {isPgView ? (
+                          r.woa_description
+                            ? <span title={r.woa_description} className="truncate block cursor-help">{r.woa_description.slice(0, 35)}{r.woa_description.length > 35 ? '…' : ''}</span>
+                            : <span className="text-slate-700">—</span>
+                        ) : (
+                          r.description
+                            ? <span title={r.description} className="truncate block cursor-help">{r.description.slice(0, 35)}{r.description.length > 35 ? '…' : ''}</span>
+                            : <span className="text-slate-700">—</span>
+                        )}
                       </td>
                     </tr>
 
@@ -627,6 +670,7 @@ export default function Accounting() {
           </div>
         )}
       </div>
+      )})()}
       </>}
     </div>
   )
