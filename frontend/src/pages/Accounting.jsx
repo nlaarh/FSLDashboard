@@ -105,7 +105,7 @@ function Th({ label, col, sort, onSort, right = false }) {
   return (
     <th
       className={clsx(
-        'px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
+        'px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap',
         'hover:text-slate-200 transition-colors',
         right ? 'text-right' : 'text-left',
         active ? 'text-brand-400' : 'text-slate-500',
@@ -318,10 +318,10 @@ export default function Accounting() {
       return (
       <div className="glass rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-[10px]">
+          <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="px-1 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
+                <th className="px-1 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right w-4">#</th>
                 <Th label="WOA #"      col="woa_number"    sort={sort} onSort={onSort} />
                 <Th label="Facility"   col="facility"      sort={sort} onSort={onSort} />
                 <Th label="Prog" col="program" sort={sort} onSort={onSort} />
@@ -332,10 +332,10 @@ export default function Accounting() {
                     <Th label="Disp"   col="dispatch_code"   sort={sort} onSort={onSort} />
                     <Th label="Res" col="resolution_code" sort={sort} onSort={onSort} />
                     <Th label="Cov"   col="coverage_level"  sort={sort} onSort={onSort} />
-                    <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">CC</th>
+                    <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">CC</th>
                   </>
                 ) : (
-                  <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
+                  <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
                     onClick={() => onSort('requested_usd')}
                     title="Estimated dollar value of the claim — requested qty × reference rate. Rates are configurable in Admin → Accounting Rates. May not match your contract.">
                     Est. $<span className="text-slate-600 ml-0.5">?</span>
@@ -358,7 +358,7 @@ export default function Accounting() {
                 {!isPgView && <Th label="WOA Age" col="woa_age_days" sort={sort} onSort={onSort} right />}
                 <Th label="W→W"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
                 <Th label="Date"    col="created_date"  sort={sort} onSort={onSort} />
-                <th className="px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">
+                <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">
                   {isPgView ? 'WOA Desc' : 'Desc'}
                 </th>
               </tr>
@@ -392,7 +392,7 @@ export default function Accounting() {
                         isLowMat && 'opacity-60',
                       )}
                     >
-                      <td className="px-1 py-1.5 text-[9px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
+                      <td className="px-1 py-1.5 text-[10px] text-slate-500 text-right">{page * PAGE_SIZE + idx + 1}</td>
 
                       {/* WOA # */}
                       <td className="px-1.5 py-1.5">
@@ -600,7 +600,7 @@ export default function Accounting() {
 
                       {/* WOA Age — hidden in PG view */}
                       {!isPgView && (
-                        <td className="px-1.5 py-1.5 text-right font-mono text-[9px]">
+                        <td className="px-1.5 py-1.5 text-right font-mono text-[10px]">
                           {r.woa_age_days != null
                             ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
                             : <span className="text-slate-700">--</span>}
@@ -608,7 +608,7 @@ export default function Accounting() {
                       )}
 
                       {/* WO→WOA */}
-                      <td className="px-1 py-1.5 text-right font-mono text-[9px] w-8">
+                      <td className="px-1 py-1.5 text-right font-mono text-[10px] w-8">
                         {r.woa_age_from_wo_days != null
                           ? <span className={clsx(r.woa_age_from_wo_days > 90 ? 'text-red-400' : r.woa_age_from_wo_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_from_wo_days}d</span>
                           : <span className="text-slate-700">--</span>}
