@@ -414,10 +414,10 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
         L.append(f'  Coverage Level: {coverage_level or "blank (RAP)"}')
         L.append(f'  Requested: ${requested}')
 
-        # Rule 1 — dispatch code must be L401 or L402
-        if not dispatch_code or dispatch_code not in ('L401', 'L402'):
-            v['note'] = f'Dispatch Code ({dispatch_code or "N/A"}) is not L401 or L402.'
-            L.append(f'\n→ Dispatch Code not L401/L402 → REVIEW')
+        # Rule 1 — dispatch code must be L402 (Gas) or L403 (Diesel)
+        if not dispatch_code or dispatch_code not in ('L402', 'L403'):
+            v['note'] = f'Dispatch Code ({dispatch_code or "N/A"}) is not L402 or L403.'
+            L.append(f'\n→ Dispatch Code not L402/L403 → REVIEW')
             return 'review', '\n'.join(L), v
 
         # Rule 2 — coverage level must be Plus, Plus RV, Premier, Premier RV, or blank (RAP)
@@ -444,14 +444,14 @@ def _calc_recommendation(code, requested, paid, sf_er, sf_est_er, sf_tow, sf_est
             v['note'] = f'No fuel limit configured for dispatch code {dispatch_code}.'
             L.append(f'\n→ No fuel limit configured for {dispatch_code} → REVIEW')
             return 'review', '\n'.join(L), v
-        fuel_type = 'Gas' if dispatch_code == 'L401' else 'Diesel'
+        fuel_type = 'Gas' if dispatch_code == 'L402' else 'Diesel'
         L.append(f'  Max allowance ({fuel_type}, {dispatch_code}): ${max_amount}')
         if requested > max_amount:
             v['note'] = f'Requested ${requested:.2f} exceeds the ${max_amount:.2f} max allowance for {fuel_type} ({dispatch_code}).'
             L.append(f'\n→ ${requested} > max ${max_amount} → REVIEW')
             return 'review', '\n'.join(L), v
 
-        L.append(f'\n→ All criteria met: L401/L402, eligible coverage, no duplicate, ${requested} ≤ ${max_amount} → APPROVE')
+        L.append(f'\n→ All criteria met: L402/L403, eligible coverage, no duplicate, ${requested} ≤ ${max_amount} → APPROVE')
         return 'approve', '\n'.join(L), v
     elif code in FLAT_CODES:
         if paid and paid > 0 and abs(requested - paid) < 0.01:

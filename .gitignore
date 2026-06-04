@@ -57,3 +57,6 @@ reports/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 backend/migrate_users_to_postgres.py
+data/
+tmp/
+doc/

@@ -363,6 +363,38 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
 
       {audit && <WODiagnosticStrip ev={ev} sfUrls={urls} />}
 
+      {/* ── TW fields strip: Dispatch Code, Resolution Code, Coverage, CC/Bill Member, WOA Description ── */}
+      {audit && (isTow || ev.tow_call || (audit.woli_items || []).some(w => TOW_CODES.has(w.code))) && (
+        <div className="px-4 py-2.5 rounded-xl bg-slate-800/30 border border-slate-700/20 text-[10px]">
+          <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-slate-500 uppercase tracking-wider text-[9px]">Dispatch</span>
+              <span className="text-slate-200 font-mono font-semibold">{ev.dispatch_code || <span className="text-slate-600">—</span>}</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-slate-500 uppercase tracking-wider text-[9px]">Resolution</span>
+              <span className="text-slate-200 font-mono">{ev.resolution_code || <span className="text-slate-600">—</span>}</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-slate-500 uppercase tracking-wider text-[9px]">Coverage</span>
+              <span className="text-slate-200">{ev.coverage || <span className="text-slate-500 italic">blank (RAP)</span>}</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-slate-500 uppercase tracking-wider text-[9px]">CC/Bill Member</span>
+              {ev.credit_card_on_file
+                ? <span className="text-emerald-400 font-bold">✓ Yes</span>
+                : <span className="text-slate-500">No</span>}
+            </div>
+            {audit.service_notes?.woa_description && (
+              <div className="flex items-baseline gap-1.5 w-full">
+                <span className="text-slate-500 uppercase tracking-wider text-[9px] shrink-0">WOA Desc</span>
+                <span className="text-slate-300">{audit.service_notes.woa_description}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {!audit && (
         <div className="grid grid-cols-4 gap-3">
           <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />

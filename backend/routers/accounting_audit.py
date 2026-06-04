@@ -711,9 +711,11 @@ def _build_woa_data(woa_id: str) -> dict:
             'sf_estimated_tow_miles': _safe_float(wo.get('ERS_Estimated_Tow_Miles__c')),
             # WO classification — drives billing rules (verified from sf_describe Apr 28 2026)
             'trouble_code': wo.get('Trouble_Code__c'),
+            'dispatch_code': wo.get('Dispatch_Code__c') or None,
             'resolution_code': wo.get('Resolution_Code__c'),
             'clear_code': wo.get('Clear_Code__c'),
             'coverage': wo.get('Coverage__c'),
+            'credit_card_on_file': bool(wo.get('Credit_Card_On_File_Bill_Member__c')),
             'tow_call': wo.get('Tow_Call__c'),
             'facility_id': wo.get('Facility_ID__c'),
             'axle_count': _safe_float(wo.get('Number_of_Axles__c')),

@@ -57,6 +57,8 @@ const SORT_DEF = {
   requested_qty: 'desc', currently_paid: 'desc', delta: 'desc',
   recommendation: 'asc', created_date: 'desc', created_by: 'asc',
   owner: 'asc', woa_age_from_wo_days: 'desc', woa_age_days: 'desc',
+  dispatch_code: 'asc', resolution_code: 'asc', coverage_level: 'asc',
+  credit_card_on_file: 'desc',
 }
 
 const COL_HELP = {
@@ -73,6 +75,10 @@ const COL_HELP = {
   owner: 'Current owner of the WOA record in Salesforce — who is responsible for reviewing/actioning it.',
   woa_age_from_wo_days: 'Days between WO creation and WOA creation.\n\nHow long after the original call before the garage filed this adjustment.',
   woa_age_days: 'Days since this WOA was created.\n\nHow long this adjustment has been sitting unresolved.',
+  dispatch_code: 'Dispatch Code from the Work Order (WorkOrder.Dispatch_Code__c).\n\nThe code used to dispatch this call — e.g. T380, T480, T580. Identifies the type of tow service dispatched.',
+  resolution_code: 'Resolution Code from the Work Order (WorkOrder.Resolution_Code__c).\n\nHow the call was resolved — e.g. N380 = Service Completed, X002 = Cancel En Route.',
+  coverage_level: 'Member coverage level from the Work Order (WorkOrder.Coverage__c).\n\nDetermines what services the member is entitled to — e.g. Plus, Premier, Basic. Blank = RAP call.',
+  credit_card_on_file: 'Credit Card On File / Bill Member checkbox (WorkOrder.Credit_Card_On_File_Bill_Member__c).\n\n✓ = box is checked on the Work Order\nNo = box is not checked',
 }
 
 function HelpTip({ text, children }) {
@@ -315,6 +321,8 @@ export default function Accounting() {
       {/* Table */}
       {(() => {
       const isPgView = product === 'PG'
+      const isTwView = product === 'TW'
+      const isExpandedView = isPgView || isTwView
       return (
       <div className="glass rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -327,12 +335,12 @@ export default function Accounting() {
                 <Th label="Prog" col="program" sort={sort} onSort={onSort} />
                 <Th label="WO #"       col="wo_number"     sort={sort} onSort={onSort} />
                 <Th label="Product"    col="product"       sort={sort} onSort={onSort} />
-                {isPgView ? (
+                {isExpandedView ? (
                   <>
                     <Th label="Disp"   col="dispatch_code"   sort={sort} onSort={onSort} />
                     <Th label="Res" col="resolution_code" sort={sort} onSort={onSort} />
                     <Th label="Cov"   col="coverage_level"  sort={sort} onSort={onSort} />
-                    <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">CC</th>
+                    <Th label="CC/Bill" col="credit_card_on_file" sort={sort} onSort={onSort} />
                   </>
                 ) : (
                   <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap cursor-pointer"
@@ -354,12 +362,12 @@ export default function Accounting() {
                     ? sort.dir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-0.5 -mt-0.5" /> : <ChevronDown className="inline w-3 h-3 ml-0.5 -mt-0.5" />
                     : <span className="inline-block w-3 ml-0.5" />}
                 </th>
-                {!isPgView && <Th label="Owner"   col="owner"        sort={sort} onSort={onSort} />}
-                {!isPgView && <Th label="WOA Age" col="woa_age_days" sort={sort} onSort={onSort} right />}
+                {!isExpandedView && <Th label="Owner"   col="owner"        sort={sort} onSort={onSort} />}
+                {!isExpandedView && <Th label="WOA Age" col="woa_age_days" sort={sort} onSort={onSort} right />}
                 <Th label="W→W"    col="woa_age_from_wo_days" sort={sort} onSort={onSort} right />
                 <Th label="Date"    col="created_date"  sort={sort} onSort={onSort} />
                 <th className="px-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">
-                  {isPgView ? 'WOA Desc' : 'Desc'}
+                  {isExpandedView ? 'WOA Desc' : 'Desc'}
                 </th>
               </tr>
             </thead>
@@ -515,8 +523,8 @@ export default function Accounting() {
                         )}
                       </td>
 
-                      {/* Est. $ (default) or PG dispatch/resolution/coverage/CC columns */}
-                      {isPgView ? (
+                      {/* Est. $ (default) or expanded dispatch/resolution/coverage/CC columns (TW + PG) */}
+                      {isExpandedView ? (
                         <>
                           <td className="px-1.5 py-1.5 font-mono text-slate-300">{r.dispatch_code || <span className="text-slate-700">—</span>}</td>
                           <td className="px-1.5 py-1.5 font-mono text-slate-300">{r.resolution_code || <span className="text-slate-700">—</span>}</td>
@@ -524,7 +532,7 @@ export default function Accounting() {
                           <td className="px-1.5 py-1.5 text-center">
                             {r.credit_card_on_file
                               ? <span className="text-emerald-400 font-bold text-[10px]">✓</span>
-                              : <span className="text-slate-700 text-[10px]">—</span>}
+                              : <span className="text-slate-500 text-[10px]">No</span>}
                           </td>
                         </>
                       ) : (
@@ -595,11 +603,11 @@ export default function Accounting() {
                         </div>
                       </td>
 
-                      {/* Owner — hidden in PG view */}
-                      {!isPgView && <td className="px-1.5 py-1.5 text-slate-500 truncate max-w-[60px]">{r.owner || '--'}</td>}
+                      {/* Owner — hidden in expanded view (TW + PG) */}
+                      {!isExpandedView && <td className="px-1.5 py-1.5 text-slate-500 truncate max-w-[60px]">{r.owner || '--'}</td>}
 
-                      {/* WOA Age — hidden in PG view */}
-                      {!isPgView && (
+                      {/* WOA Age — hidden in expanded view (TW + PG) */}
+                      {!isExpandedView && (
                         <td className="px-1.5 py-1.5 text-right font-mono text-[10px]">
                           {r.woa_age_days != null
                             ? <span className={clsx(r.woa_age_days > 90 ? 'text-red-400' : r.woa_age_days > 30 ? 'text-amber-400' : 'text-slate-400')}>{r.woa_age_days}d</span>
@@ -617,9 +625,9 @@ export default function Accounting() {
                       {/* Created */}
                       <td className="px-1.5 py-1.5 text-slate-500 whitespace-nowrap" title={r.created_date}>{r.created_date ? r.created_date.slice(0, 5) : '--'}</td>
 
-                      {/* Description / WOA Description */}
+                      {/* WOA Description (expanded: TW + PG) or WOLI description (all others) */}
                       <td className="px-1.5 py-1.5 text-slate-500 max-w-[120px]">
-                        {isPgView ? (
+                        {isExpandedView ? (
                           r.woa_description
                             ? <span title={r.woa_description} className="truncate block cursor-help">{r.woa_description.slice(0, 35)}{r.woa_description.length > 35 ? '…' : ''}</span>
                             : <span className="text-slate-700">—</span>

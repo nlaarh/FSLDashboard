@@ -27,7 +27,7 @@ from repositories import settings, activity
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="FSL App", version="1.2.0")
+app = FastAPI(title="FSL App", version="1.2.1")
 
 app.add_middleware(
     CORSMiddleware,
