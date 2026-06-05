@@ -89,3 +89,33 @@ def test_parse_composite_query_results_raises_on_subrequest_error():
         assert "400" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError")
+
+
+def test_data_quality_fetch_defaults_to_parallel(monkeypatch):
+    from routers import data_quality
+
+    calls = []
+    monkeypatch.delenv("SF_DATA_QUALITY_COMPOSITE", raising=False)
+    monkeypatch.setattr(data_quality, "data_quality_soql", lambda since: {"total": "SELECT COUNT(Id) cnt FROM ServiceAppointment"})
+    monkeypatch.setattr(data_quality, "_fetch_data_quality_parallel", lambda queries: calls.append(("parallel", queries)) or {"total": [{"cnt": 1}]})
+    monkeypatch.setattr(data_quality, "_fetch_data_quality_composite", lambda queries, since: calls.append(("composite", queries)) or {})
+
+    result = data_quality._fetch_salesforce_data_quality("2026-05-08T00:00:00Z")
+
+    assert result == {"total": [{"cnt": 1}]}
+    assert calls == [("parallel", {"total": "SELECT COUNT(Id) cnt FROM ServiceAppointment"})]
+
+
+def test_data_quality_fetch_uses_composite_when_enabled(monkeypatch):
+    from routers import data_quality
+
+    calls = []
+    monkeypatch.setenv("SF_DATA_QUALITY_COMPOSITE", "true")
+    monkeypatch.setattr(data_quality, "data_quality_soql", lambda since: {"total": "SELECT COUNT(Id) cnt FROM ServiceAppointment"})
+    monkeypatch.setattr(data_quality, "_fetch_data_quality_parallel", lambda queries: calls.append(("parallel", queries)) or {})
+    monkeypatch.setattr(data_quality, "_fetch_data_quality_composite", lambda queries, since: calls.append(("composite", since)) or {"total": [{"cnt": 2}]})
+
+    result = data_quality._fetch_salesforce_data_quality("2026-05-08T00:00:00Z")
+
+    assert result == {"total": [{"cnt": 2}]}
+    assert calls == [("composite", "2026-05-08T00:00:00Z")]

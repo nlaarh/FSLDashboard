@@ -63,13 +63,13 @@ Salesforce health at end:
 
 `POST /api/data-quality/refresh` is the first target because it is a cold-cache path with 16 Salesforce calls and 34.652 seconds of observed latency. Cached endpoints are already fast and should not be optimized first.
 
-## After Enhancement 1: Data Quality Composite Batch
+## Enhancement 1 Probe: Data Quality Composite Batch
 
-Implemented after the baseline by switching `backend/routers/data_quality.py`
-from two `sf_parallel` groups to one Salesforce Composite Batch for 14
-count-style queries. The `dispatch_sample` query remains on `sf_query_all`
-because the existing `LIMIT 5000` sample may require REST pagination, and
-Composite Batch only returns the first page of a query response.
+Tested switching `backend/routers/data_quality.py` from two `sf_parallel`
+groups to one Salesforce Composite Batch for 14 count-style queries. The
+`dispatch_sample` query remains on `sf_query_all` because the existing
+`LIMIT 5000` sample may require REST pagination, and Composite Batch only
+returns the first page of a query response.
 
 | Endpoint | Method | Repeats | Status | Seconds | SF call delta | SF error delta | Result |
 | --- | --- | ---: | --- | ---: | ---: | ---: | --- |
@@ -78,3 +78,12 @@ Composite Batch only returns the first page of a query response.
 Gain versus baseline: 65.2% faster wall time for this run and 81.3% fewer
 logical Salesforce helper calls. Direct Salesforce verification showed the
 Composite Batch request was accepted with all 14 subrequests returning HTTP 200.
+
+## Final Decision
+
+Composite Batch is not the production default. A later smoke run returned
+`POST /api/data-quality/refresh` in 41.335 seconds, slower than the 34.652 second
+baseline. The endpoint now uses the stable `sf_parallel` path by default and only
+uses Composite Batch when `SF_DATA_QUALITY_COMPOSITE=true` is set for controlled
+testing. This keeps the API v65 helper available without shipping an inconsistent
+performance path.

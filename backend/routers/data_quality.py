@@ -1,6 +1,7 @@
 """Data quality audit endpoints."""
 
 import logging
+import os
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 from fastapi import APIRouter
@@ -19,11 +20,16 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 
-def _fetch_salesforce_data_quality(since: str) -> dict[str, list[dict]]:
-    """Fetch data quality records using Composite Batch with sf_parallel fallback."""
-    requests = data_quality_query_requests(since)
-    queries = data_quality_soql(since)
+def _fetch_data_quality_parallel(queries: dict[str, str]) -> dict[str, list[dict]]:
+    fns = {
+        key: (lambda soql=soql: sf_query_all(soql))
+        for key, soql in queries.items()
+    }
+    return sf_parallel(**fns)
 
+
+def _fetch_data_quality_composite(queries: dict[str, str], since: str) -> dict[str, list[dict]]:
+    requests = data_quality_query_requests(since)
     try:
         response = sf_composite_batch(requests)
         data = parse_composite_query_results(COMPOSITE_QUERY_KEYS, response)
@@ -31,11 +37,16 @@ def _fetch_salesforce_data_quality(since: str) -> dict[str, list[dict]]:
         return data
     except Exception as exc:
         log.warning("Data quality composite batch failed; falling back to sf_parallel: %s", exc)
-        fns = {
-            key: (lambda soql=soql: sf_query_all(soql))
-            for key, soql in queries.items()
-        }
-        return sf_parallel(**fns)
+        return _fetch_data_quality_parallel(queries)
+
+
+def _fetch_salesforce_data_quality(since: str) -> dict[str, list[dict]]:
+    """Fetch data quality records with the stable parallel path by default."""
+    queries = data_quality_soql(since)
+    use_composite = os.getenv("SF_DATA_QUALITY_COMPOSITE", "").lower() in {"1", "true", "yes"}
+    if use_composite:
+        return _fetch_data_quality_composite(queries, since)
+    return _fetch_data_quality_parallel(queries)
 
 
 @router.get("/api/data-quality")
