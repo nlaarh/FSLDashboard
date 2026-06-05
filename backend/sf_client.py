@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 
 log = logging.getLogger('sf_client')
 
+SF_API_VERSION = 'v65.0'
+
 
 def sanitize_soql(value: str) -> str:
     """Sanitize a value for safe SOQL interpolation. Prevents SOQL injection."""
@@ -213,7 +215,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
     for attempt in range(_retries):
         try:
             _t0 = _time.time()
-            r = _session.get(f'{instance}/services/data/v60.0/query',
+            r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
                              headers=headers, params={'q': soql}, timeout=(10, 45))
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
@@ -248,7 +250,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
             token, instance = refresh_auth()
             headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
             _rate_limit_check()
-            r = _session.get(f'{instance}/services/data/v60.0/query',
+            r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
                              headers=headers, params={'q': soql}, timeout=(10, 45))
         break
 
@@ -263,7 +265,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
         token, instance = refresh_auth()
         headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
         _rate_limit_check()
-        r = _session.get(f'{instance}/services/data/v60.0/query',
+        r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
                          headers=headers, params={'q': soql}, timeout=(10, 45))
         result = r.json()
     if isinstance(result, list):

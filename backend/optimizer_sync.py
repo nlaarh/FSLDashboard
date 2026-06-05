@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests as _requests
-from sf_client import get_auth, refresh_auth
+from sf_client import get_auth, refresh_auth, SF_API_VERSION
 import optimizer_db
 from optimizer_parser import parse_run
 
@@ -77,7 +77,7 @@ def _sf_request(url_suffix: str, timeout: int = _SF_QUERY_TIMEOUT,
 
 
 def _sf_query(soql: str) -> dict:
-    return _sf_request('/services/data/v59.0/query/',
+    return _sf_request(f'/services/data/{SF_API_VERSION}/query/',
                        params={'q': soql}).json()
 
 
@@ -146,7 +146,7 @@ def _batch_get_content_versions(run_ids: list[str]) -> dict[str, tuple[str | Non
 
 
 def _download_json(cv_id: str) -> dict:
-    raw = _sf_get_binary(f"/services/data/v59.0/sobjects/ContentVersion/{cv_id}/VersionData")
+    raw = _sf_get_binary(f"/services/data/{SF_API_VERSION}/sobjects/ContentVersion/{cv_id}/VersionData")
     return json.loads(raw)
 
 

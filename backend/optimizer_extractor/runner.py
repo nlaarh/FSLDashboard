@@ -52,7 +52,7 @@ def run(days: int = 2, run_ids: list[str] | None = None,
         soql = (f"SELECT Id, Name, FSL__Status__c, FSL__Type__c, "
                 f"FSL__External_Identifier__c, CreatedDate "
                 f"FROM FSL__Optimization_Request__c WHERE Id IN ('{id_list}')")
-        url = f"{session.instance_url}/services/data/v59.0/query?q={urllib.parse.quote(soql)}"
+        url = f"{session.instance_url}/services/data/v65.0/query?q={urllib.parse.quote(soql)}"
         req = urllib.request.Request(url, headers={'Authorization': f'Bearer {session.access_token}'})
         targets = _json.loads(urllib.request.urlopen(req).read()).get('records', [])
     else:

@@ -41,7 +41,7 @@ def _refresh_lookups(force: bool = False) -> None:
         token, instance = get_auth()
 
         def _soql(q: str) -> list:
-            url = f"{instance}/services/data/v59.0/query?q={urllib.parse.quote(q)}"
+            url = f"{instance}/services/data/v65.0/query?q={urllib.parse.quote(q)}"
             req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
             return json.loads(urllib.request.urlopen(req).read()).get('records', [])
 

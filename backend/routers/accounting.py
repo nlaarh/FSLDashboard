@@ -3,7 +3,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
 
-from sf_client import sanitize_soql
+from sf_client import sanitize_soql, SF_API_VERSION
 import cache
 from routers.accounting_export import build_export
 from routers.accounting_pdf import build_woa_pdf
@@ -424,7 +424,7 @@ def sf_photo_proxy(version_id: str):
     version_id = sanitize_soql(version_id)
     try:
         token, instance = get_auth()
-        url = f"{instance}/services/data/v60.0/sobjects/ContentVersion/{version_id}/VersionData"
+        url = f"{instance}/services/data/{SF_API_VERSION}/sobjects/ContentVersion/{version_id}/VersionData"
         resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, stream=True, timeout=15)
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="SF photo not found")

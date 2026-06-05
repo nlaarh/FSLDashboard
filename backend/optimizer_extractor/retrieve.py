@@ -196,7 +196,7 @@ def _download_via_rest(session: SFSession, run_id: str) -> tuple[bytes, bytes] |
         f"WHERE Title LIKE 'Request_{run_id}%' OR Title LIKE 'Response_{run_id}%' "
         "ORDER BY CreatedDate DESC LIMIT 4"
     )
-    url = f"{session.instance_url}/services/data/v59.0/query?q={urllib.parse.quote(soql)}"
+    url = f"{session.instance_url}/services/data/v65.0/query?q={urllib.parse.quote(soql)}"
     req = urllib.request.Request(url, headers={'Authorization': f'Bearer {session.access_token}'})
     rows = json.loads(urllib.request.urlopen(req).read()).get('records', [])
     request_id = next((r['Id'] for r in rows if r['Title'].startswith('Request_')), None)
@@ -206,7 +206,7 @@ def _download_via_rest(session: SFSession, run_id: str) -> tuple[bytes, bytes] |
         return None
 
     def fetch(cv_id: str) -> bytes:
-        u = f"{session.instance_url}/services/data/v59.0/sobjects/ContentVersion/{cv_id}/VersionData"
+        u = f"{session.instance_url}/services/data/v65.0/sobjects/ContentVersion/{cv_id}/VersionData"
         r = urllib.request.Request(u, headers={'Authorization': f'Bearer {session.access_token}'})
         return urllib.request.urlopen(r).read()
 
