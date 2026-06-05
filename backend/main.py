@@ -159,6 +159,7 @@ from routers import (
     garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
+    salesforce_diagnostics,
 )
 
 app.include_router(auth.router)
@@ -204,6 +205,7 @@ app.include_router(password_reset.router)
 app.include_router(dispatch_score.router)
 app.include_router(admin_reference.router)
 app.include_router(system_health.router)
+app.include_router(salesforce_diagnostics.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
