@@ -111,7 +111,7 @@ export default function DriverDrillDown({ garageId, driverName, startDate, endDa
                     </span>
                   </th>
                 ))}
-                <th className="text-right py-1 px-1 text-slate-500 font-medium text-[10px]">#</th>
+                <th className="text-right py-1 px-1 text-slate-500 font-medium text-[10px]">WOs</th>
                 <th className="text-right py-1 px-1 text-slate-500 font-medium text-[10px]">Hrs</th>
                 <th className="text-right py-1 px-1 text-emerald-600/80 font-medium text-[10px]">Revenue</th>
                 {totalMemberCollected > 0 && (
@@ -155,7 +155,7 @@ export default function DriverDrillDown({ garageId, driverName, startDate, endDa
                         </td>
                       ))}
                       <td className="py-1 px-1 text-right text-slate-300 font-medium text-[10px]">
-                        {Object.values(row.calls_by_type || {}).reduce((s, v) => s + v, 0)}
+                        {(row.wo_details || []).length}
                       </td>
                       <td className="py-1 px-1 text-right text-slate-400 text-[10px]">
                         {row.hours > 0 ? `${row.hours}h` : '—'}
@@ -228,7 +228,7 @@ export default function DriverDrillDown({ garageId, driverName, startDate, endDa
                   </td>
                 ))}
                 <td className="py-1.5 px-1 text-right text-slate-200 font-bold text-[10px]">
-                  {days.reduce((s, r) => s + Object.values(r.calls_by_type || {}).reduce((a, v) => a + v, 0), 0)}
+                  {days.reduce((s, r) => s + (r.wo_details || []).length, 0)}
                 </td>
                 <td className="py-1.5 px-1 text-right text-slate-300 font-semibold text-[10px]">
                   {days.reduce((s, r) => s + r.hours, 0).toFixed(1)}h

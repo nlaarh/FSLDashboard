@@ -1,4 +1,4 @@
-import{r as Ra,j as Al}from"./index-D_gdCuUq.js";/**
+import{r as Ra,j as Al}from"./index-CHUVDV1x.js";/**
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT

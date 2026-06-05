@@ -147,6 +147,9 @@ def _is_battery(sa: dict) -> bool:
 def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
     since = f"{start_date}T00:00:00Z"
     until = f"{(date.fromisoformat(end_date) + timedelta(days=1)).isoformat()}T00:00:00Z"
+    # Extend AH window ±1 day so sessions spanning the period boundary are captured
+    ah_since = f"{(date.fromisoformat(start_date) - timedelta(days=1)).isoformat()}T00:00:00Z"
+    ah_until = f"{(date.fromisoformat(end_date) + timedelta(days=2)).isoformat()}T00:00:00Z"
 
     # Phase 1 — ONE merged AR+SA query (trucks served from cache)
     # Merging SA fields into AR query eliminates a separate SF round-trip.
@@ -232,7 +235,7 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
                     FROM AssetHistory
                     WHERE AssetId IN ({ids_str})
                     AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {since} AND CreatedDate < {until}"""
+                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
             ))
 
         # Collect WOLI results (needed to build WO ID list for Phase 3)
@@ -332,7 +335,7 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
                     })
 
     # Process AssetHistory (fetched in phase 2)
-    hours_map = _process_asset_hours(ah_all, driver_names, since, until)
+    hours_map = _process_asset_hours(ah_all, driver_names, ah_since, ah_until)
 
     # Merge and sort
     drivers = []
@@ -351,6 +354,7 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
             'member_collected':  mc,
             'member_aaa_billed': round(d['member_aaa_billed'], 2),
             'total_revenue':     round(rev + mc, 2),
+            'work_orders':       len(d['wo_seen']) + len(d['battery_wo_seen']),
             'hours':             h,
             'shift_days':        hrs.get('shift_days', 0),
             'rev_per_hour':      round(rev / h, 1) if h > 0 else 0.0,
@@ -380,6 +384,8 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
                           start_date: str, end_date: str) -> dict:
     since = f"{start_date}T00:00:00Z"
     until = f"{(date.fromisoformat(end_date) + timedelta(days=1)).isoformat()}T00:00:00Z"
+    ah_since = f"{(date.fromisoformat(start_date) - timedelta(days=1)).isoformat()}T00:00:00Z"
+    ah_until = f"{(date.fromisoformat(end_date) + timedelta(days=2)).isoformat()}T00:00:00Z"
     safe_name = sanitize_soql(driver_name)
 
     # Phase 1 — single AR+SA query; trucks from cache
@@ -441,7 +447,7 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
                     FROM AssetHistory
                     WHERE AssetId IN ({ids_str})
                     AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {since} AND CreatedDate < {until}"""
+                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
             ))
 
         service_wolis: list = []
@@ -536,8 +542,11 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
                 })
 
     # Process AssetHistory (fetched in phase 2, filter to this one driver)
-    hours_data    = _process_asset_hours(ah_all, {driver_name}, since, until)
-    hours_by_date = hours_data.get(driver_name, {}).get('by_date', {})
+    hours_data    = _process_asset_hours(ah_all, {driver_name}, ah_since, ah_until)
+    hours_by_date = {
+        k: v for k, v in hours_data.get(driver_name, {}).get('by_date', {}).items()
+        if start_date <= k <= end_date
+    }
 
     # Build sorted daily rows
     all_dates = sorted(set(day_data.keys()) | set(hours_by_date.keys()))

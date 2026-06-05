@@ -279,7 +279,7 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
               <div key={d.name}>
                 <HBar
                   label={d.name}
-                  subtitle={`${d.calls} calls`}
+                  subtitle={`${d.work_orders ?? d.calls} WOs`}
                   value={driverTotal(d)}
                   maxValue={maxRev}
                   barClass={i < 5 ? 'bg-brand-500' : i < 15 ? 'bg-amber-500' : 'bg-slate-500'}
