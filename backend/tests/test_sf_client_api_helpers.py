@@ -109,3 +109,26 @@ def test_sf_query_explain_uses_explain_param(monkeypatch):
     assert method == "GET"
     assert url == "https://example.my.salesforce.com/services/data/v65.0/query"
     assert kwargs["params"] == {"explain": "SELECT Id FROM ServiceAppointment LIMIT 1"}
+
+
+def test_sf_graphql_posts_query_and_variables(monkeypatch):
+    import sf_client
+
+    fake = _FakeSession([_FakeResponse(payload={"data": {"uiapi": {}}})])
+    monkeypatch.setattr(sf_client, "_session", fake)
+
+    result = sf_client.sf_graphql(
+        "query Probe($first: Int!) { uiapi { query { Account(first: $first) { edges { node { Id } } } } } }",
+        variables={"first": 1},
+        operation_name="Probe",
+    )
+
+    assert result == {"data": {"uiapi": {}}}
+    method, url, kwargs = fake.calls[0]
+    assert method == "POST"
+    assert url == "https://example.my.salesforce.com/services/data/v65.0/graphql"
+    assert kwargs["json"] == {
+        "query": "query Probe($first: Int!) { uiapi { query { Account(first: $first) { edges { node { Id } } } } } }",
+        "variables": {"first": 1},
+        "operationName": "Probe",
+    }

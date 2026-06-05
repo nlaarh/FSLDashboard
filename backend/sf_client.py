@@ -322,6 +322,18 @@ def sf_query_explain(soql: str) -> dict:
     return result
 
 
+def sf_graphql(query: str, variables: dict | None = None, operation_name: str | None = None) -> dict:
+    body = {'query': query}
+    if variables is not None:
+        body['variables'] = variables
+    if operation_name:
+        body['operationName'] = operation_name
+    result = sf_rest_post('/graphql', body=body)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"SF GraphQL returned non-object response: {result}")
+    return result
+
+
 # ── Query ───────────────────────────────────────────────────────────────────
 
 def sf_query(soql: str, _retries: int = 2) -> dict:
