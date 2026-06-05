@@ -62,3 +62,19 @@ Salesforce health at end:
 ## First Optimization Target
 
 `POST /api/data-quality/refresh` is the first target because it is a cold-cache path with 16 Salesforce calls and 34.652 seconds of observed latency. Cached endpoints are already fast and should not be optimized first.
+
+## After Enhancement 1: Data Quality Composite Batch
+
+Implemented after the baseline by switching `backend/routers/data_quality.py`
+from two `sf_parallel` groups to one Salesforce Composite Batch for 14
+count-style queries. The `dispatch_sample` query remains on `sf_query_all`
+because the existing `LIMIT 5000` sample may require REST pagination, and
+Composite Batch only returns the first page of a query response.
+
+| Endpoint | Method | Repeats | Status | Seconds | SF call delta | SF error delta | Result |
+| --- | --- | ---: | --- | ---: | ---: | ---: | --- |
+| `/api/data-quality/refresh` | POST | 1 | 200 | 12.064 | 3 | 0 | 12 fields, 33,824 SAs, 28,111 completed |
+
+Gain versus baseline: 65.2% faster wall time for this run and 81.3% fewer
+logical Salesforce helper calls. Direct Salesforce verification showed the
+Composite Batch request was accepted with all 14 subrequests returning HTTP 200.
