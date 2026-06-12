@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, Request
 
 from routers.admin import _check_pin
-from routers.data_quality_queries import data_quality_soql
+from salesforce_queries.registry import get_named_query
 from sf_client import sf_query_explain
 
 router = APIRouter()
@@ -13,12 +13,11 @@ router = APIRouter()
 
 def _named_query(name: str) -> tuple[str, str]:
     since = f"{(date.today() - timedelta(days=28)).isoformat()}T00:00:00Z"
-    queries = {
-        "data-quality-total": data_quality_soql(since)["total"],
-    }
-    if name not in queries:
+    try:
+        soql = get_named_query(name, since=since)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Unknown Salesforce diagnostic query")
-    return since, queries[name]
+    return since, soql
 
 
 @router.get("/api/admin/salesforce/query-plan/{name}")

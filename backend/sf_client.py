@@ -8,6 +8,7 @@ Protects the production Salesforce org from being overwhelmed by FSLAPP:
 
 import os, threading, time as _time, logging, re, requests
 from collections import deque
+from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
@@ -136,6 +137,7 @@ def _breaker_failure():
 _stats_lock = threading.Lock()
 _stats = {'total_calls': 0, 'errors': 0, 'rate_waits': 0, 'breaker_trips': 0}
 _recent_errors: deque = deque(maxlen=20)  # last 20 errors with timestamps
+_recent_slow_queries: deque = deque(maxlen=20)  # last 20 slow SF calls
 
 
 def _record_error(error_msg: str, soql_snippet: str = ''):
@@ -148,6 +150,23 @@ def _record_error(error_msg: str, soql_snippet: str = ''):
             'query': soql_snippet[:100] if soql_snippet else '',
         })
     log.error(f"SF error: {error_msg}")
+
+
+def _record_slow_query(kind: str, seconds: float, detail: str):
+    """Record a slow Salesforce call for admin diagnostics."""
+    with _stats_lock:
+        _recent_slow_queries.append({
+            'kind': kind,
+            'seconds': round(seconds, 3),
+            'detail': str(detail)[:200],
+            'recorded_at': datetime.now(timezone.utc).isoformat(),
+        })
+
+
+def get_recent_slow_queries() -> list[dict]:
+    """Return recent slow Salesforce calls, newest first."""
+    with _stats_lock:
+        return list(reversed(_recent_slow_queries))
 
 
 def get_stats():
@@ -237,6 +256,7 @@ def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dic
             )
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
+                _record_slow_query('REST', _elapsed, url_path)
                 log.warning(f"Slow SF REST {method.upper()} ({_elapsed:.1f}s): {url_path[:140]}")
         except requests.exceptions.Timeout:
             if attempt < _retries - 1:
@@ -355,6 +375,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
                              headers=headers, params={'q': soql}, timeout=(10, 45))
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
+                _record_slow_query('SOQL', _elapsed, soql)
                 log.warning(f"Slow SOQL ({_elapsed:.1f}s): {soql[:120]}")
         except requests.exceptions.Timeout:
             if attempt < _retries - 1:
@@ -448,6 +469,7 @@ def sf_query_all(soql: str) -> list[dict]:
                                     headers=headers, timeout=(10, 45))
                 _elapsed = _time.time() - _t0
                 if _elapsed > 5:
+                    _record_slow_query('SOQL pagination', _elapsed, soql)
                     log.warning(f"Slow SOQL pagination p{page} ({_elapsed:.1f}s): {soql[:120]}")
                 result = resp.json()
                 _breaker_success()

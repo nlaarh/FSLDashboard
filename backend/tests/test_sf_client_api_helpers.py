@@ -132,3 +132,18 @@ def test_sf_graphql_posts_query_and_variables(monkeypatch):
         "variables": {"first": 1},
         "operationName": "Probe",
     }
+
+
+def test_recent_slow_queries_returns_latest_first():
+    import sf_client
+
+    sf_client._recent_slow_queries.clear()
+
+    sf_client._record_slow_query("SOQL", 6.4, "SELECT Id FROM ServiceAppointment")
+    sf_client._record_slow_query("REST", 8.1, "/services/data/v65.0/graphql")
+
+    rows = sf_client.get_recent_slow_queries()
+
+    assert [row["kind"] for row in rows] == ["REST", "SOQL"]
+    assert rows[0]["seconds"] == 8.1
+    assert rows[1]["detail"] == "SELECT Id FROM ServiceAppointment"

@@ -36,6 +36,14 @@ def _client(monkeypatch, tmp_path):
         "calls_last_60s": 0,
         "rate_limit": 60,
     })
+    monkeypatch.setattr(system_health, "sf_recent_slow_queries", lambda: [
+        {
+            "kind": "SOQL",
+            "seconds": 7.2,
+            "detail": "SELECT COUNT(Id) cnt FROM ServiceAppointment",
+            "recorded_at": "2026-06-05T18:00:00Z",
+        }
+    ])
     monkeypatch.setattr(system_health, "_backup_recovery_report", lambda: {
         "configured": True,
         "items": [{
@@ -75,6 +83,9 @@ def test_system_health_returns_expected_shape(monkeypatch, tmp_path):
     assert data["quota_safe"] is True
     assert data["status"] in {"healthy", "degraded", "unhealthy"}
     assert data["services"]["salesforce"]["details"]["quota_safe"].startswith("No live ping")
+    assert data["services"]["salesforce_diagnostics"]["status"] == "degraded"
+    assert data["services"]["salesforce_diagnostics"]["details"]["slow_queries"][0]["seconds"] == 7.2
+    assert data["services"]["salesforce_diagnostics"]["details"]["query_plan_checks"][0]["name"] == "data-quality-total"
     assert data["services"]["google_maps"]["details"]["quota_safe"].startswith("No live ping")
     assert data["services"]["openai"]["details"]["quota_safe"].startswith("No live ping")
     assert data["services"]["salesforce"]["host_link"].startswith("https://")

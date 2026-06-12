@@ -8,7 +8,7 @@ from fastapi import APIRouter
 
 from utils import _ET
 from sf_client import sf_query_all, sf_parallel, sf_composite_batch
-from routers.data_quality_queries import (
+from salesforce_queries.data_quality import (
     COMPOSITE_QUERY_KEYS,
     data_quality_query_requests,
     data_quality_soql,

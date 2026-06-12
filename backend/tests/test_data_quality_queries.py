@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 def test_data_quality_query_requests_use_single_composite_batch_window():
-    from routers.data_quality_queries import COMPOSITE_QUERY_KEYS, data_quality_query_requests
+    from salesforce_queries.data_quality import COMPOSITE_QUERY_KEYS, data_quality_query_requests
 
     requests = data_quality_query_requests("2026-05-08T00:00:00Z")
 
@@ -16,7 +16,7 @@ def test_data_quality_query_requests_use_single_composite_batch_window():
 
 
 def test_service_appointment_queries_exclude_tow_drop_off():
-    from routers.data_quality_queries import data_quality_soql
+    from salesforce_queries.data_quality import data_quality_soql
 
     queries = data_quality_soql("2026-05-08T00:00:00Z")
     service_appointment_keys = {
@@ -31,7 +31,7 @@ def test_service_appointment_queries_exclude_tow_drop_off():
 
 
 def test_composite_urls_preserve_soql_in_query_param():
-    from routers.data_quality_queries import data_quality_query_requests
+    from salesforce_queries.data_quality import data_quality_query_requests
 
     request = data_quality_query_requests("2026-05-08T00:00:00Z")[0]
     parsed = urlparse(request["url"])
@@ -47,7 +47,7 @@ def test_composite_urls_preserve_soql_in_query_param():
 
 
 def test_parse_composite_query_results_returns_keyed_records():
-    from routers.data_quality_queries import parse_composite_query_results
+    from salesforce_queries.data_quality import parse_composite_query_results
 
     response = {
         "hasErrors": False,
@@ -72,7 +72,7 @@ def test_parse_composite_query_results_returns_keyed_records():
 
 
 def test_parse_composite_query_results_raises_on_subrequest_error():
-    from routers.data_quality_queries import parse_composite_query_results
+    from salesforce_queries.data_quality import parse_composite_query_results
 
     response = {
         "hasErrors": True,
@@ -119,3 +119,25 @@ def test_data_quality_fetch_uses_composite_when_enabled(monkeypatch):
 
     assert result == {"total": [{"cnt": 2}]}
     assert calls == [("composite", "2026-05-08T00:00:00Z")]
+
+
+def test_query_registry_resolves_data_quality_total():
+    from salesforce_queries.registry import get_named_query
+
+    soql = get_named_query("data-quality-total", since="2026-05-08T00:00:00Z")
+
+    assert "SELECT COUNT(Id) cnt" in soql
+    assert "FROM ServiceAppointment" in soql
+    assert "CreatedDate >= 2026-05-08T00:00:00Z" in soql
+    assert "WorkType.Name != 'Tow Drop-Off'" in soql
+
+
+def test_query_registry_lists_named_queries():
+    from salesforce_queries.registry import list_named_queries
+
+    rows = list_named_queries()
+
+    assert {
+        "name": "data-quality-total",
+        "description": "28-day Data Quality ServiceAppointment count query",
+    } in rows
