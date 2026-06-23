@@ -82,7 +82,7 @@ async def auth_middleware(request: Request, call_next):
         if dept == 'finance' and path.startswith('/api/') and not _finance_ok(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted to Accounting only"})
         role = _get_role(username)
-        if role == 'ers-supervisor' and path.startswith('/api/') and _supervisor_blocked(path):
+        if role in ('ers-supervisor', 'ers-member-relations') and path.startswith('/api/') and _supervisor_blocked(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted"})
         if path.startswith('/api/admin/') and not _admin_allowed(role) and not _reference_allowed(role, path):
             return JSONResponse(status_code=403, content={"detail": "Admin access restricted"})
@@ -155,7 +155,7 @@ from routers import (
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
     issues, pta, chatbot, data_quality, matrix,
-    tracking, misc, misc_diagnostics, insights, insights_health, sa_report,
+    tracking, misc, misc_diagnostics, insights, insights_health, sa_report, search,
     garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
@@ -206,6 +206,7 @@ app.include_router(dispatch_score.router)
 app.include_router(admin_reference.router)
 app.include_router(system_health.router)
 app.include_router(salesforce_diagnostics.router)
+app.include_router(search.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────

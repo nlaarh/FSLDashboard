@@ -28,6 +28,7 @@ from routers.sa_report_timeline import (
     _build_sa_summary, _build_timeline, _build_narrative,
     _build_reassignment_impact, _build_phases,
 )
+from routers.accounting_photos import _normalize_photo_url
 
 router = APIRouter()
 
@@ -44,7 +45,8 @@ _SA_FIELDS = """
            Off_Platform_Truck_Id__c, ERS_PTA__c,
            ERS_Dispatch_Method__c,
            ERS_Dispatched_Geolocation__Latitude__s,
-           ERS_Dispatched_Geolocation__Longitude__s
+           ERS_Dispatched_Geolocation__Longitude__s,
+           ParentRecordId, ServiceNote
     FROM ServiceAppointment
     WHERE AppointmentNumber = '{number}'
     LIMIT 1
@@ -65,9 +67,10 @@ def sa_report(sa_number: str):
         sa_list = sf_query_all(_SA_FIELDS.format(number=sa_number))
         if not sa_list:
             return None
-        sa     = sa_list[0]
-        sa_id  = sa['Id']
-        tid    = sa.get('ServiceTerritoryId')
+        sa      = sa_list[0]
+        sa_id   = sa['Id']
+        woli_id = sa.get('ParentRecordId')
+        tid     = sa.get('ServiceTerritoryId')
         wt_name = (sa.get('WorkType') or {}).get('Name', '').lower()
         sa_lat  = float(sa['Latitude'])  if sa.get('Latitude')  else None
         sa_lon  = float(sa['Longitude']) if sa.get('Longitude') else None
@@ -77,7 +80,8 @@ def sa_report(sa_number: str):
         if not tid:
             return {'sa_summary': sa_summary, 'timeline': [], 'assign_steps': [],
                     'narrative': _build_narrative(sa_summary, [], []),
-                    'phases': [], 'is_towbook': is_towbook}
+                    'phases': [], 'is_towbook': is_towbook,
+                    'wo_classification': None, 'service_notes': None, 'photos': []}
 
         member_tid = tid
 
@@ -94,7 +98,21 @@ def sa_report(sa_number: str):
                   AND ServiceResource.ResourceType = 'T'
             """)
 
-        # Round trip 2: fetch history + assigned resource by SA Id.
+        # Round trip 2: fetch history + assigned resource + WO classification fields (parallel).
+        def _fetch_woli_wo():
+            if not woli_id:
+                return []
+            return sf_query_all(f"""
+                SELECT WorkOrderId,
+                       WorkOrder.Trouble_Code__c, WorkOrder.Resolution_Code__c,
+                       WorkOrder.Clear_Code__c, WorkOrder.Coverage__c,
+                       WorkOrder.Agent_Comments__c, WorkOrder.Driver_Directions__c,
+                       WorkOrder.ERS_System_Notes__c
+                FROM WorkOrderLineItem
+                WHERE Id = '{sanitize_soql(woli_id)}'
+                LIMIT 1
+            """)
+
         p1 = sf_parallel(
             hist=lambda: sf_query_all(f"""
                 SELECT ServiceAppointmentId, Field, NewValue, CreatedDate,
@@ -110,8 +128,90 @@ def sa_report(sa_number: str):
                 WHERE ServiceAppointmentId = '{sa_id}'
                 ORDER BY CreatedDate DESC LIMIT 1
             """),
+            woli_wo=_fetch_woli_wo,
         )
         hist_rows = p1['hist']
+
+        # Extract WO fields from WOLI join result.
+        woli_wo_row = (p1.get('woli_wo') or [None])[0]
+        wo_id      = (woli_wo_row or {}).get('WorkOrderId')
+        wo_record  = (woli_wo_row or {}).get('WorkOrder') or {}
+
+        # Parallel: WOA description/notes + service photos (needs wo_id from above).
+        def _fetch_woa():
+            if not wo_id:
+                return []
+            return sf_query_all(f"""
+                SELECT Description__c, Internal_Notes__c
+                FROM ERS_Work_Order_Adjustment__c
+                WHERE Work_Order__c = '{sanitize_soql(wo_id)}'
+                ORDER BY CreatedDate DESC LIMIT 1
+            """)
+
+        def _fetch_service_photos():
+            if not wo_id:
+                return []
+            return sf_query_all(f"""
+                SELECT Id, Name, Photo_URL__c, Timestamp__c
+                FROM Service_Photo__c
+                WHERE Work_Order__c = '{sanitize_soql(wo_id)}'
+                ORDER BY Timestamp__c ASC NULLS LAST
+                LIMIT 30
+            """)
+
+        def _fetch_cdl_photos():
+            if not woli_id:
+                return []
+            return sf_query_all(f"""
+                SELECT LinkedEntityId, ContentDocumentId,
+                       ContentDocument.Title, ContentDocument.FileType,
+                       ContentDocument.LatestPublishedVersionId
+                FROM ContentDocumentLink
+                WHERE LinkedEntityId = '{sanitize_soql(woli_id)}'
+                  AND ContentDocument.FileType IN ('JPG', 'JPEG', 'PNG')
+                ORDER BY ContentDocument.CreatedDate ASC
+                LIMIT 20
+            """)
+
+        p_meta = sf_parallel(woa=_fetch_woa, sp=_fetch_service_photos, cdl=_fetch_cdl_photos)
+
+        # WO classification
+        wc_data = {
+            'trouble_code':    wo_record.get('Trouble_Code__c'),
+            'resolution_code': wo_record.get('Resolution_Code__c'),
+            'clear_code':      wo_record.get('Clear_Code__c'),
+            'coverage':        wo_record.get('Coverage__c'),
+        }
+        wo_classification = wc_data if any(wc_data.values()) else None
+
+        # Service notes
+        woa_row = (p_meta.get('woa') or [None])[0]
+        sn_data = {
+            'description':        (woa_row or {}).get('Description__c'),
+            'internal_notes':     (woa_row or {}).get('Internal_Notes__c'),
+            'agent_comments':     wo_record.get('Agent_Comments__c'),
+            'driver_instructions': wo_record.get('Driver_Directions__c'),
+            'system_notes':       wo_record.get('ERS_System_Notes__c'),
+            'service_note':       sa.get('ServiceNote'),
+        }
+        service_notes = sn_data if any(sn_data.values()) else None
+
+        # Photos: Service_Photo__c primary, CDL fallback
+        sp_rows  = p_meta.get('sp') or []
+        cdl_rows = p_meta.get('cdl') or []
+        photo_list: list = []
+        if sp_rows:
+            for r in sp_rows:
+                url, direct = _normalize_photo_url(r.get('Photo_URL__c') or '', r.get('Id', ''))
+                if url:
+                    photo_list.append({'url': url, 'title': r.get('Name', ''), 'id': r.get('Id'), 'direct': direct})
+        elif cdl_rows:
+            for r in cdl_rows:
+                doc_id = r.get('ContentDocumentId', '')
+                url, direct = _normalize_photo_url('', doc_id)
+                title = (r.get('ContentDocument') or {}).get('Title', '')
+                if url:
+                    photo_list.append({'url': url, 'title': title, 'id': doc_id, 'direct': direct})
 
         # Build timeline from hist rows.
         timeline = _build_timeline(hist_rows, sa_id)
@@ -192,6 +292,9 @@ def sa_report(sa_number: str):
                 'phases':       phases,
                 'reassignment_impact': reassignment_impact,
                 'is_towbook':   is_towbook,
+                'wo_classification': wo_classification,
+                'service_notes':     service_notes,
+                'photos':            photo_list,
             }
 
         towbook_only_steps = bool(sa_events) and all(
@@ -240,9 +343,14 @@ def sa_report(sa_number: str):
 
         if not members:
             narrative = _build_narrative(sa_summary, timeline, [])
-            return {'sa_summary': sa_summary, 'timeline': timeline, 'assign_steps': [],
-                    'narrative': narrative, 'phases': _build_phases(timeline, sa_summary),
-                    'is_towbook': is_towbook}
+            return {
+                'sa_summary': sa_summary, 'timeline': timeline, 'assign_steps': [],
+                'narrative': narrative, 'phases': _build_phases(timeline, sa_summary),
+                'is_towbook': is_towbook,
+                'wo_classification': wo_classification,
+                'service_notes':     service_notes,
+                'photos':            photo_list,
+            }
 
         all_sr_ids = list({m.get('ServiceResourceId') for m in members if m.get('ServiceResourceId')})
         if assigned_sr_id and assigned_sr_id not in all_sr_ids:
@@ -405,11 +513,12 @@ def sa_report(sa_number: str):
 
         return _finalize(assign_steps)
 
-    result = cache.cached_query(f'sa_report_{sa_number}', _fetch, ttl=3600)  # 1h — historical reports don't change
+    cache_key = f'sa_report_v2_{sa_number}'
+    result = cache.cached_query(cache_key, _fetch, ttl=3600)  # 1h — historical reports don't change
     if result is None:
         raise HTTPException(status_code=404, detail=f'{sa_number} not found')
     # Completed/Canceled SAs won't change — extend cache to 1 hour
     status = (result.get('sa_summary') or {}).get('status', '')
     if status in ('Completed', 'Canceled', 'Unable to Complete', 'No-Show'):
-        cache.put(f'sa_report_{sa_number}', result, ttl=3600)
+        cache.put(cache_key, result, ttl=3600)
     return result
