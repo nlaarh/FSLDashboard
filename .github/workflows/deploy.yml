@@ -48,6 +48,7 @@ jobs:
           *.py \
           routers/ \
           repositories/ \
+          salesforce_queries/ \
           startup.sh requirements.txt \
           static/
         echo "Package size: $(du -h ../deploy.zip | cut -f1)"
