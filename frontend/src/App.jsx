@@ -48,7 +48,7 @@ function AuthApp() {
   if (authed === false) return <Landing /> // not authenticated — show landing in place
 
   const isFinance = department === 'finance'
-  const isSupervisor = role === 'ers-supervisor'
+  const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
 
   return (
     <Routes>

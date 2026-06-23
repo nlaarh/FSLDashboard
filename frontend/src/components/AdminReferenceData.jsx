@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Table2, Plus, Download, Upload, Save, X, Trash2, Loader2, CheckCircle2, Edit2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Table2, Plus, Download, Upload, Save, X, Trash2, Loader2, CheckCircle2, Edit2, Search, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { adminRefTables, adminRefRows, adminRefAddRow, adminRefUpdateRow, adminRefDeleteRow, adminRefExportUrl } from '../api'
 import { clsx } from 'clsx'
 
@@ -17,6 +17,9 @@ export default function AdminReferenceData({ pin }) {
   const [addVals, setAddVals] = useState({})
   const [addSaving, setAddSaving] = useState(false)
   const [feedback, setFeedback] = useState('')
+  const [search, setSearch] = useState('')
+  const [sortCol, setSortCol] = useState(null)
+  const [sortDir, setSortDir] = useState('asc')
 
   useEffect(() => {
     adminRefTables(pin).then(t => {
@@ -31,6 +34,9 @@ export default function AdminReferenceData({ pin }) {
     setEditingPk(null)
     setShowAdd(false)
     setConfirmDelete(null)
+    setSearch('')
+    setSortCol(null)
+    setSortDir('asc')
     try {
       const data = await adminRefRows(pin, key)
       setTableData(data)
@@ -106,6 +112,33 @@ export default function AdminReferenceData({ pin }) {
   const rows = tableData?.rows || []
   const pk = tableData?.pk
 
+  const toggleSort = (key) => {
+    if (sortCol === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(key); setSortDir('asc') }
+  }
+
+  const SortIcon = ({ col }) => {
+    if (sortCol !== col) return <ChevronsUpDown className="w-3 h-3 opacity-25" />
+    return sortDir === 'asc' ? <ChevronUp className="w-3 h-3 text-indigo-400" /> : <ChevronDown className="w-3 h-3 text-indigo-400" />
+  }
+
+  const displayedRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    let result = q
+      ? rows.filter(row => cols.some(c => String(row[c.key] ?? '').toLowerCase().includes(q)))
+      : rows
+    if (sortCol) {
+      result = [...result].sort((a, b) => {
+        const av = String(a[sortCol] ?? '').toLowerCase()
+        const bv = String(b[sortCol] ?? '').toLowerCase()
+        const n = parseFloat(av), m = parseFloat(bv)
+        const cmp = (!isNaN(n) && !isNaN(m)) ? n - m : av.localeCompare(bv)
+        return sortDir === 'asc' ? cmp : -cmp
+      })
+    }
+    return result
+  }, [rows, cols, search, sortCol, sortDir])
+
   return (
     <div className="glass rounded-xl overflow-hidden">
       <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50 flex items-center gap-2">
@@ -135,8 +168,18 @@ export default function AdminReferenceData({ pin }) {
       <div className="p-4">
         {/* Toolbar */}
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs text-slate-500 flex-1">
-            {loading ? 'Loading…' : `${rows.length} rows`}
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search rows…"
+              className="w-full pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+            />
+          </div>
+          <span className="text-xs text-slate-500">
+            {loading ? 'Loading…' : search ? `${displayedRows.length} / ${rows.length}` : `${rows.length} rows`}
           </span>
           {activeTable && (
             <a href={adminRefExportUrl(activeTable, pin)}
@@ -161,8 +204,10 @@ export default function AdminReferenceData({ pin }) {
               <thead>
                 <tr className="bg-slate-800/50 border-b border-slate-700/50">
                   {cols.map(c => (
-                    <th key={c.key} className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-                      {c.label}
+                    <th key={c.key}
+                      className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 font-medium cursor-pointer hover:text-slate-300 select-none"
+                      onClick={() => toggleSort(c.key)}>
+                      <span className="inline-flex items-center gap-1">{c.label}<SortIcon col={c.key} /></span>
                     </th>
                   ))}
                   <th className="px-3 py-2 w-20"></th>
@@ -207,7 +252,7 @@ export default function AdminReferenceData({ pin }) {
                 )}
 
                 {/* Data rows */}
-                {rows.map((row, i) => {
+                {displayedRows.map((row, i) => {
                   const pkVal = row[pk]
                   const isEditing = editingPk === pkVal
                   return (

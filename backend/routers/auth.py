@@ -1,12 +1,38 @@
 """Auth router — login page, login/logout/me endpoints."""
 
-import os, hashlib, hmac, secrets
+import os, hashlib, hmac, secrets, time, threading
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 import users
 from permissions import get_user_features
 
 router = APIRouter()
+
+# ── Login rate limiter ────────────────────────────────────────────────────────
+_rate_lock = threading.Lock()
+_rate_attempts: dict[str, list[float]] = {}  # ip -> [timestamps]
+_RATE_WINDOW = 60    # seconds
+_RATE_MAX    = 15    # max attempts per window per IP
+
+
+def _rate_check(ip: str) -> bool:
+    """Return True if the IP is within the allowed rate. False = block."""
+    now = time.time()
+    with _rate_lock:
+        ts = _rate_attempts.get(ip, [])
+        ts = [t for t in ts if now - t < _RATE_WINDOW]
+        if len(ts) >= _RATE_MAX:
+            _rate_attempts[ip] = ts
+            return False
+        ts.append(now)
+        _rate_attempts[ip] = ts
+        return True
+
+
+def _get_ip(request: Request) -> str:
+    forwarded = request.headers.get('x-forwarded-for', '')
+    return forwarded.split(',')[0].strip() or request.client.host
+
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
@@ -615,6 +641,8 @@ def reset_password_page():
 
 @router.post("/api/auth/login")
 def admin_login(request: Request, creds: dict, response: Response):
+    if not _rate_check(_get_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in a minute.")
     user = users.authenticate(creds.get("username", ""), creds.get("password", ""))
     if user:
         dept = user.get("department", "")

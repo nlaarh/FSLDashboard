@@ -1,14 +1,52 @@
 """Data quality audit endpoints."""
 
+import logging
+import os
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 from fastapi import APIRouter
 
 from utils import _ET
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all, sf_parallel, sf_composite_batch
+from salesforce_queries.data_quality import (
+    COMPOSITE_QUERY_KEYS,
+    data_quality_query_requests,
+    data_quality_soql,
+    parse_composite_query_results,
+)
 import cache
 
 router = APIRouter()
+log = logging.getLogger(__name__)
+
+
+def _fetch_data_quality_parallel(queries: dict[str, str]) -> dict[str, list[dict]]:
+    fns = {
+        key: (lambda soql=soql: sf_query_all(soql))
+        for key, soql in queries.items()
+    }
+    return sf_parallel(**fns)
+
+
+def _fetch_data_quality_composite(queries: dict[str, str], since: str) -> dict[str, list[dict]]:
+    requests = data_quality_query_requests(since)
+    try:
+        response = sf_composite_batch(requests)
+        data = parse_composite_query_results(COMPOSITE_QUERY_KEYS, response)
+        data["dispatch_sample"] = sf_query_all(queries["dispatch_sample"])
+        return data
+    except Exception as exc:
+        log.warning("Data quality composite batch failed; falling back to sf_parallel: %s", exc)
+        return _fetch_data_quality_parallel(queries)
+
+
+def _fetch_salesforce_data_quality(since: str) -> dict[str, list[dict]]:
+    """Fetch data quality records with the stable parallel path by default."""
+    queries = data_quality_soql(since)
+    use_composite = os.getenv("SF_DATA_QUALITY_COMPOSITE", "").lower() in {"1", "true", "yes"}
+    if use_composite:
+        return _fetch_data_quality_composite(queries, since)
+    return _fetch_data_quality_parallel(queries)
 
 
 @router.get("/api/data-quality")
@@ -19,144 +57,17 @@ def api_data_quality():
         d28 = (date.today() - timedelta(days=28)).isoformat()
         since = f"{d28}T00:00:00Z"
 
-        # Batch 1: SA-level counts (8 queries max)
-        batch1 = sf_parallel(
-            total=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            completed=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND Status = 'Completed'
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_actual_start=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND Status = 'Completed'
-                  AND ActualStartTime != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_actual_end=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND Status = 'Completed'
-                  AND ActualEndTime != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_sched_start=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND SchedStartTime != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_pta=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_PTA__c != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            pta_bad=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_PTA__c != null
-                  AND (ERS_PTA__c = 0 OR ERS_PTA__c >= 999)
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_dispatch_method=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_Dispatch_Method__c != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-        )
-
-        # Batch 2: remaining queries (7 queries — removed ungroupable dispatch_methods
-        # and cross-field ata_valid which SOQL doesn't support)
-        batch2 = sf_parallel(
-            # Dispatch method sample (get individual values to count in Python)
-            dispatch_sample=lambda: sf_query_all(f"""
-                SELECT ERS_Dispatch_Method__c
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_Dispatch_Method__c != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-                LIMIT 5000
-            """),
-            wo_count=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM WorkOrder
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-            """),
-            survey_count=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM Survey_Result__c
-                WHERE CreatedDate >= {since}
-                  AND ERS_Overall_Satisfaction__c != null
-            """),
-            has_auto_assign=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_Auto_Assign__c = true
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            has_assigned_resource=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM AssignedResource
-                WHERE ServiceAppointment.CreatedDate >= {since}
-                  AND ServiceAppointment.ServiceTerritoryId != null
-                  AND ServiceAppointment.Status = 'Completed'
-            """),
-            has_parent_territory=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {since}
-                  AND ServiceTerritoryId != null
-                  AND ERS_Parent_Territory__c != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-            """),
-            sa_history_count=lambda: sf_query_all(f"""
-                SELECT COUNT(Id) cnt
-                FROM ServiceAppointmentHistory
-                WHERE Field = 'ServiceTerritory'
-                  AND ServiceAppointment.CreatedDate >= {since}
-            """),
-        )
+        data = _fetch_salesforce_data_quality(since)
 
         # Count dispatch methods from sample in Python
         dm_counter = defaultdict(int)
-        for r in batch2.get('dispatch_sample', []):
+        for r in data.get('dispatch_sample', []):
             dm = r.get('ERS_Dispatch_Method__c') or 'Unknown'
             dm_counter[dm] += 1
-        batch2['dispatch_methods'] = [{'method': k, 'cnt': v} for k, v in dm_counter.items()]
+        data['dispatch_methods'] = [{'method': k, 'cnt': v} for k, v in dm_counter.items()]
         # ATA valid = same as has_actual_start (SOQL can't compare two fields;
         # negative ATA is filtered in Python at calc time with diff > 0 check)
-        batch2['ata_valid'] = batch1['has_actual_start']
-
-        # Merge batches
-        data = {**batch1, **batch2}
+        data['ata_valid'] = data['has_actual_start']
 
         def _cnt(key):
             return data[key][0].get('cnt', 0) if data.get(key) else 0

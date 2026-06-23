@@ -131,8 +131,10 @@ async def add_row(table_key: str, request: Request):
     _access_check(request)
     reg = _get_reg(table_key)
     body = await request.json()
-    cols = [c["key"] for c in reg["columns"] if not c.get("readonly")]
-    values = [body.get(c) for c in cols]
+    editable = [c for c in reg["columns"] if not c.get("readonly")]
+    cols = [c["key"] for c in editable]
+    # Apply registry default when field is absent from body (prevents NOT NULL violations)
+    values = [body.get(c["key"], c.get("default")) for c in editable]
     placeholders = ", ".join(["%s"] * len(cols))
     col_names = ", ".join(cols)
     with db_adapter.writer() as db:

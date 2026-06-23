@@ -8,6 +8,7 @@ Protects the production Salesforce org from being overwhelmed by FSLAPP:
 
 import os, threading, time as _time, logging, re, requests
 from collections import deque
+from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
@@ -136,6 +137,7 @@ def _breaker_failure():
 _stats_lock = threading.Lock()
 _stats = {'total_calls': 0, 'errors': 0, 'rate_waits': 0, 'breaker_trips': 0}
 _recent_errors: deque = deque(maxlen=20)  # last 20 errors with timestamps
+_recent_slow_queries: deque = deque(maxlen=20)  # last 20 slow SF calls
 
 
 def _record_error(error_msg: str, soql_snippet: str = ''):
@@ -148,6 +150,23 @@ def _record_error(error_msg: str, soql_snippet: str = ''):
             'query': soql_snippet[:100] if soql_snippet else '',
         })
     log.error(f"SF error: {error_msg}")
+
+
+def _record_slow_query(kind: str, seconds: float, detail: str):
+    """Record a slow Salesforce call for admin diagnostics."""
+    with _stats_lock:
+        _recent_slow_queries.append({
+            'kind': kind,
+            'seconds': round(seconds, 3),
+            'detail': str(detail)[:200],
+            'recorded_at': datetime.now(timezone.utc).isoformat(),
+        })
+
+
+def get_recent_slow_queries() -> list[dict]:
+    """Return recent slow Salesforce calls, newest first."""
+    with _stats_lock:
+        return list(reversed(_recent_slow_queries))
 
 
 def get_stats():
@@ -198,6 +217,143 @@ def refresh_auth() -> tuple[str, str]:
     return _token, _instance
 
 
+# ── REST Helpers ─────────────────────────────────────────────────────────────
+
+def _versioned_path(path: str) -> str:
+    if path.startswith('/services/data/'):
+        return path
+    if not path.startswith('/'):
+        path = '/' + path
+    return f'/services/data/{SF_API_VERSION}{path}'
+
+
+def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dict | list:
+    """Authenticated Salesforce REST request with shared rate/breaker handling."""
+    _breaker_check()
+    _rate_limit_check()
+
+    with _stats_lock:
+        _stats['total_calls'] += 1
+
+    token, instance = get_auth()
+    url_path = _versioned_path(path)
+    headers = kwargs.pop('headers', {}) or {}
+    headers.setdefault('Authorization', f'Bearer {token}')
+    headers.setdefault('Content-Type', 'application/json')
+    timeout = kwargs.pop('timeout', (10, 45))
+
+    method_name = method.lower()
+    request_fn = getattr(_session, method_name)
+
+    for attempt in range(_retries):
+        try:
+            _t0 = _time.time()
+            resp = request_fn(
+                f'{instance}{url_path}',
+                headers=headers,
+                timeout=timeout,
+                **kwargs,
+            )
+            _elapsed = _time.time() - _t0
+            if _elapsed > 5:
+                _record_slow_query('REST', _elapsed, url_path)
+                log.warning(f"Slow SF REST {method.upper()} ({_elapsed:.1f}s): {url_path[:140]}")
+        except requests.exceptions.Timeout:
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+                continue
+            _breaker_failure()
+            _record_error(f"SF REST {method.upper()} timed out after retries", url_path)
+            raise RuntimeError(f"SF REST {method.upper()} timed out after retries")
+        except requests.exceptions.ConnectionError as ce:
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+                continue
+            _breaker_failure()
+            _record_error(f"SF REST {method.upper()} connection failed: {ce}", url_path)
+            raise RuntimeError(f"SF REST {method.upper()} connection failed after retries")
+
+        if resp.status_code in (401, 403):
+            token, instance = refresh_auth()
+            headers['Authorization'] = f'Bearer {token}'
+            _rate_limit_check()
+            resp = request_fn(f'{instance}{url_path}', headers=headers, timeout=timeout, **kwargs)
+
+        if resp.status_code in (500, 502, 503):
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+                continue
+            _breaker_failure()
+            _record_error(f"SF REST server error {resp.status_code} after {_retries} retries", url_path)
+            raise RuntimeError(f"SF REST server error {resp.status_code} after {_retries} retries")
+        break
+
+    result = resp.json()
+    if isinstance(result, list):
+        has_error = bool(result and result[0].get('errorCode'))
+        is_expired = has_error and 'INVALID_SESSION' in result[0].get('errorCode', '').upper()
+    elif isinstance(result, dict):
+        has_error = 'errorCode' in result
+        is_expired = 'INVALID_SESSION' in result.get('errorCode', '').upper()
+    else:
+        has_error = False
+        is_expired = False
+
+    if is_expired:
+        token, instance = refresh_auth()
+        headers['Authorization'] = f'Bearer {token}'
+        _rate_limit_check()
+        resp = request_fn(f'{instance}{url_path}', headers=headers, timeout=timeout, **kwargs)
+        result = resp.json()
+        has_error = isinstance(result, dict) and 'errorCode' in result
+
+    if has_error:
+        _breaker_failure()
+        _record_error(f"SF REST error: {result}", url_path)
+        raise RuntimeError(f"SF REST error: {result}")
+
+    _breaker_success()
+    return result
+
+
+def sf_rest_get(path: str, params: dict | None = None, **kwargs) -> dict | list:
+    return _sf_rest_request('GET', path, params=params or {}, **kwargs)
+
+
+def sf_rest_post(path: str, body: dict | None = None, **kwargs) -> dict | list:
+    return _sf_rest_request('POST', path, json=body or {}, **kwargs)
+
+
+def sf_composite_batch(batch_requests: list[dict], halt_on_error: bool = False) -> dict:
+    body = {
+        'haltOnError': halt_on_error,
+        'batchRequests': batch_requests,
+    }
+    result = sf_rest_post('/composite/batch', body=body)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"SF composite batch returned non-object response: {result}")
+    return result
+
+
+def sf_query_explain(soql: str) -> dict:
+    result = sf_rest_get('/query', params={'explain': soql})
+    if not isinstance(result, dict):
+        raise RuntimeError(f"SF query explain returned non-object response: {result}")
+    return result
+
+
+def sf_graphql(query: str, variables: dict | None = None, operation_name: str | None = None) -> dict:
+    body = {'query': query}
+    if variables is not None:
+        body['variables'] = variables
+    if operation_name:
+        body['operationName'] = operation_name
+    result = sf_rest_post('/graphql', body=body)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"SF GraphQL returned non-object response: {result}")
+    return result
+
+
 # ── Query ───────────────────────────────────────────────────────────────────
 
 def sf_query(soql: str, _retries: int = 2) -> dict:
@@ -219,6 +375,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
                              headers=headers, params={'q': soql}, timeout=(10, 45))
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
+                _record_slow_query('SOQL', _elapsed, soql)
                 log.warning(f"Slow SOQL ({_elapsed:.1f}s): {soql[:120]}")
         except requests.exceptions.Timeout:
             if attempt < _retries - 1:
@@ -312,6 +469,7 @@ def sf_query_all(soql: str) -> list[dict]:
                                     headers=headers, timeout=(10, 45))
                 _elapsed = _time.time() - _t0
                 if _elapsed > 5:
+                    _record_slow_query('SOQL pagination', _elapsed, soql)
                     log.warning(f"Slow SOQL pagination p{page} ({_elapsed:.1f}s): {soql[:120]}")
                 result = resp.json()
                 _breaker_success()

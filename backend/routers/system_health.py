@@ -20,7 +20,8 @@ from fastapi import APIRouter, HTTPException, Request
 import cache
 import db_adapter
 from routers.admin import _check_pin, _start_time
-from sf_client import get_stats as sf_stats
+from salesforce_queries.registry import list_named_queries
+from sf_client import get_recent_slow_queries as sf_recent_slow_queries, get_stats as sf_stats
 
 router = APIRouter()
 
@@ -326,6 +327,27 @@ def _salesforce_service() -> dict:
     }, key="salesforce")
 
 
+def _salesforce_diagnostics_service() -> dict:
+    slow_queries = _safe_call(sf_recent_slow_queries, [])
+    status = "degraded" if slow_queries else "healthy"
+    summary = (
+        f"{len(slow_queries)} recent slow Salesforce call(s) recorded"
+        if slow_queries else
+        "No recent slow Salesforce calls recorded"
+    )
+    return _service("Salesforce Diagnostics", status, summary, {
+        "quota_safe": "No live explain on health load; use query_plan_endpoint for live Salesforce plan",
+        "slow_queries": slow_queries,
+        "query_plan_checks": [
+            {
+                **row,
+                "query_plan_endpoint": f"/api/admin/salesforce/query-plan/{row['name']}",
+            }
+            for row in list_named_queries()
+        ],
+    }, key="salesforce")
+
+
 def _configured_service(key: str, label: str, require_all: bool = True) -> dict:
     status, summary = _config_status(SERVICE_KEY_GROUPS[key], require_all=require_all)
     return _service(label, status, summary, {
@@ -395,6 +417,7 @@ def _build_services() -> dict[str, dict]:
         "duckdb": _duckdb_service(),
         "cache": _cache_service(),
         "salesforce": _salesforce_service(),
+        "salesforce_diagnostics": _salesforce_diagnostics_service(),
         "google_maps": _configured_service("google_maps", "Google Maps"),
         "openai": _configured_service("openai", "AI Providers", require_all=False),
         "github": _configured_service("github", "GitHub"),

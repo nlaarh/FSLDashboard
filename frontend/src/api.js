@@ -39,6 +39,7 @@ export const fetchCommandCenter = (hours = 24) => api.get(`/command-center?hours
 export const fetchSchedulerInsights = () => api.get('/scheduler-insights').then(r => r.data)
 export const lookupSA = (number) => api.get(`/sa/${number}`).then(r => r.data)
 export const fetchSAReport = (number) => api.get(`/sa/${number}/report`).then(r => r.data)
+export const searchQuery = (q) => api.get(`/search?q=${encodeURIComponent(q)}`).then(r => r.data)
 export const fetchPerformance = (id, start, end) =>
   api.get(`/garages/${id}/performance?period_start=${start}&period_end=${end}`).then(r => r.data)
 export const fetchMapGrids = () => api.get('/map/grids').then(r => r.data)

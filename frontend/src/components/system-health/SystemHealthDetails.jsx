@@ -1,4 +1,4 @@
-import { Cloud, Cpu, Database, Download, ExternalLink, HardDrive, Loader2, Search } from 'lucide-react'
+import { AlertTriangle, Cloud, Cpu, Database, Download, ExternalLink, HardDrive, Loader2, Search } from 'lucide-react'
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import { adminSystemHealthBackup } from '../../api'
@@ -15,12 +15,85 @@ export default function SystemHealthDetails({ health, pin, onRefresh, setSuccess
     <div className="space-y-6">
       <BackupConsole health={health} pin={pin} onRefresh={onRefresh} setSuccess={setSuccess} setError={setError} />
 
+      <SalesforceDiagnostics service={health.services?.salesforce_diagnostics} />
+
       <EnvironmentExplorer
         rows={envRows}
-        files={health.environment?.files || []}
         query={query}
         onQuery={setQuery}
       />
+    </div>
+  )
+}
+
+function SalesforceDiagnostics({ service }) {
+  if (!service) return null
+  const slowQueries = service.details?.slow_queries || []
+  const checks = service.details?.query_plan_checks || []
+
+  return (
+    <div className="si-card-premium si-animate-enter p-6">
+      <div className="flex flex-col gap-3 border-b border-slate-700/40 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-wider text-indigo-300">
+            <AlertTriangle className="h-4 w-4" />
+            Salesforce Query Diagnostics
+          </h3>
+          <p className="mt-0.5 text-[11px] text-slate-500">{service.summary}</p>
+        </div>
+        <span className={clsx(
+          'rounded border px-2.5 py-1 text-[10px] font-bold uppercase',
+          slowQueries.length
+            ? 'border-amber-500/20 bg-amber-500/10 text-amber-400'
+            : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400',
+        )}>
+          {slowQueries.length ? 'Slow calls found' : 'No slow calls'}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div>
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Recent Slow Salesforce Calls
+          </div>
+          {slowQueries.length ? (
+            <div className="overflow-hidden rounded-lg border border-slate-700/60">
+              {slowQueries.slice(0, 5).map((row, idx) => (
+                <div key={`${row.recorded_at}-${idx}`} className="border-b border-slate-800/70 bg-slate-950/30 px-4 py-3 last:border-b-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                      {row.kind}
+                    </span>
+                    <span className="font-mono text-[11px] font-bold text-slate-100">{row.seconds}s</span>
+                  </div>
+                  <div className="mt-2 line-clamp-2 font-mono text-[10px] text-slate-500" title={row.detail}>
+                    {row.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-4 text-[12px] text-slate-500">
+              No Salesforce calls over the slow threshold have been recorded in this process.
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Query Plan Checks
+          </div>
+          <div className="overflow-hidden rounded-lg border border-slate-700/60">
+            {checks.map((check) => (
+              <div key={check.name} className="border-b border-slate-800/70 bg-slate-950/30 px-4 py-3 last:border-b-0">
+                <div className="font-mono text-[11px] font-bold text-slate-100">{check.name}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{check.description}</div>
+                <div className="mt-2 font-mono text-[10px] text-indigo-300">{check.query_plan_endpoint}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -142,7 +215,7 @@ function formatBytes(value) {
   return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`
 }
 
-function EnvironmentExplorer({ rows, files, query, onQuery }) {
+function EnvironmentExplorer({ rows, query, onQuery }) {
   return (
     <div className="si-card-premium si-animate-enter p-6">
       <div className="flex flex-col gap-4 border-b border-slate-700/40 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -195,16 +268,6 @@ function EnvironmentExplorer({ rows, files, query, onQuery }) {
         </table>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
-        {files.map((file) => (
-          <div key={file.path} className="rounded-lg border border-slate-700 bg-slate-800/20 px-3 py-2 text-[11px]">
-            <div className="font-mono text-slate-100">{file.path}</div>
-            <div className={file.exists ? 'text-emerald-400' : 'text-slate-500'}>
-              {file.exists ? `${file.keys_count} keys loaded` : 'File not found'}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

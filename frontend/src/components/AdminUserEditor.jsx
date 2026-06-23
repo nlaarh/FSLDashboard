@@ -33,10 +33,10 @@ export default function AdminUserEditor({
   const canSave = !userSaving && passwordReady
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overflow-x-hidden bg-black/60 p-3 backdrop-blur-sm sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-6">
       <button className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="Close user editor" />
-      <section className="relative my-auto w-full max-w-3xl overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950 shadow-2xl shadow-black/40">
-        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:px-5">
+      <section className="relative flex flex-col w-full max-w-3xl max-h-[calc(100vh-1.5rem)] overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950 shadow-2xl shadow-black/40">
+        <header className="flex-shrink-0 flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:px-5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600/15 text-brand-300">
             <KeyRound className="h-4 w-4" />
           </div>
@@ -57,7 +57,7 @@ export default function AdminUserEditor({
           </button>
         </header>
 
-        <div className="max-h-[calc(100vh-9rem)] overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="Username">
               <input
@@ -215,7 +215,7 @@ export default function AdminUserEditor({
           )}
         </div>
 
-        <footer className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:px-5">
+        <footer className="flex-shrink-0 flex flex-wrap justify-end gap-2 border-t border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:px-5">
           <button
             onClick={onClose}
             className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-brand-500/30"

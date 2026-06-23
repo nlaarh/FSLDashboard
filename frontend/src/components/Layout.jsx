@@ -1,8 +1,8 @@
-import { useState, useEffect, useContext } from 'react'
+import { useState, useEffect, useContext, useRef, useCallback } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, DollarSign, BrainCircuit, FileText, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, Loader2, DollarSign, BrainCircuit, FileText, Sun, Moon, X as XIcon } from 'lucide-react'
 import FloatingChat from './FloatingChat'
-import { fetchFeatures } from '../api'
+import { fetchFeatures, searchQuery } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
 
 /* ── FleetPulse Logo (AI Brain + Fleet Routes) ────────────────────────── */
@@ -44,31 +44,147 @@ function Logo({ className = '' }) {
 }
 
 function SASearch() {
-  const [query, setQuery] = useState('')
+  const [query, setQuery]   = useState('')
+  const [results, setResults] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen]     = useState(false)
   const ctx = useContext(SAReportContext)
+  const wrapRef = useRef(null)
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    const q = query.trim()
-    if (!q) return
-    const num = q.toUpperCase().startsWith('SA-') ? q.trim() : `SA-${q.trim()}`
-    ctx?.open(num)
-    setQuery('')
+  const isSaDirect = (q) => {
+    const u = q.toUpperCase()
+    return u.startsWith('SA-') || (/^\d+$/.test(q) && q.length <= 7)
   }
 
+  const handleSubmit = async (e) => {
+    e?.preventDefault()
+    const q = query.trim()
+    if (!q) return
+    if (isSaDirect(q)) {
+      const num = q.toUpperCase().startsWith('SA-') ? q.toUpperCase() : `SA-${q}`
+      ctx?.open(num)
+      setQuery('')
+      setResults(null)
+      setOpen(false)
+      return
+    }
+    setLoading(true)
+    try {
+      const data = await searchQuery(q)
+      setResults(data.results || [])
+      setOpen(true)
+    } catch {
+      setResults([])
+      setOpen(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const openSA = (saNumber) => {
+    ctx?.open(saNumber)
+    setQuery('')
+    setResults(null)
+    setOpen(false)
+  }
+
+  const clearResults = () => { setResults(null); setOpen(false); setQuery('') }
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   return (
-    <form onSubmit={handleSubmit} className="flex items-center">
-      <div className="relative">
-        <Search className="w-3.5 h-3.5 text-slate-600 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="SA#"
-          className="w-40 focus:w-52 transition-all bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-2 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:bg-slate-800"
-        />
-      </div>
-    </form>
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <form onSubmit={handleSubmit} className="flex items-center gap-1">
+        <div className="relative">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => results && setOpen(true)}
+            placeholder="SA#, WO#, Member # or Name"
+            className="w-52 focus:w-72 transition-all bg-slate-800/50 border border-slate-700/50 rounded-lg pl-3 pr-6 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:bg-slate-800"
+          />
+          {query && (
+            <button type="button" onClick={clearResults}
+              style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                       background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <XIcon size={11} color="#475569" />
+            </button>
+          )}
+        </div>
+        <button type="submit"
+          style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px',
+                   background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)',
+                   borderRadius: 6, cursor: 'pointer', color: '#818cf8', fontSize: 11 }}>
+          {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+          {loading ? 'Searching…' : 'Search'}
+        </button>
+      </form>
+
+      {open && results !== null && (
+        <div style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)',
+          width: 380, maxHeight: 420, overflowY: 'auto',
+          background: '#0f172a', border: '1px solid #1e293b',
+          borderRadius: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.7)',
+          zIndex: 10000,
+        }}>
+          {results.length === 0 ? (
+            <div style={{ padding: '14px 16px', color: '#64748b', fontSize: 12, textAlign: 'center' }}>
+              No results found
+            </div>
+          ) : results.map((r, i) => (
+            <div key={i} style={{
+              padding: '10px 14px',
+              borderBottom: i < results.length - 1 ? '1px solid #1e293b' : 'none',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>
+                  {r.wo_number}
+                  {r.customer_name && (
+                    <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 11 }}>
+                      {r.customer_name}
+                    </span>
+                  )}
+                </div>
+                <span style={{ fontSize: 10, color: '#475569', flexShrink: 0, marginLeft: 8 }}>{r.created}</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 7, display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
+                {r.facility && <span>{r.facility}</span>}
+                {r.service_datetime && <span>{r.service_datetime}</span>}
+                {r.work_type && <span>{r.work_type}</span>}
+                {r.status && (
+                  <span style={{ color: r.status === 'Completed' ? '#10b981' : r.status === 'Canceled' ? '#ef4444' : '#94a3b8' }}>
+                    {r.status}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {r.sa_numbers.length > 0
+                  ? r.sa_numbers.map(saNum => (
+                    <button key={saNum} onClick={() => openSA(saNum)}
+                      style={{
+                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                        background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)',
+                        color: '#818cf8', cursor: 'pointer',
+                      }}>
+                      {saNum}
+                    </button>
+                  ))
+                  : <span style={{ fontSize: 10, color: '#334155' }}>No SAs</span>
+                }
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -105,7 +221,7 @@ export default function Layout() {
 
   // finance = accounting only; supervisor = no accounting/admin; everyone else = everything
   const isFinance = department === 'finance'
-  const isSupervisor = role === 'ers-supervisor'
+  const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
 
   const handleLogout = async () => {
     try {

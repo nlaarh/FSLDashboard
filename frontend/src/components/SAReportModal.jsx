@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { X, Printer, Loader2, Truck, ExternalLink } from 'lucide-react'
+import { X, Printer, Loader2, Truck, ExternalLink, Camera, FileText, Tag } from 'lucide-react'
 import { fetchSAReport } from '../api'
 import { TimelineSection, AssignStepsSection } from './SAReportTimeline'
 
@@ -167,6 +167,117 @@ export default function SAReportModal({ saNumber, onClose }) {
                       <div key={i} style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.6 }}>
                         {line}
                       </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* ── WO Classification ─────────────────────────────────────── */}
+              {report.wo_classification && (() => {
+                const wc = report.wo_classification
+                const fields = [
+                  ['Trouble Code',    wc.trouble_code],
+                  ['Resolution Code', wc.resolution_code],
+                  ['Clear Code',      wc.clear_code],
+                  ['Coverage',        wc.coverage],
+                ].filter(([, v]) => v)
+                if (!fields.length) return null
+                return (
+                  <section style={{ marginBottom: 24 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
+                                  textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10,
+                                  display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Tag size={11} color="#64748b" /> WO Classification
+                    </div>
+                    <div style={{
+                      background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+                      padding: '14px 16px',
+                      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '8px 24px',
+                    }}>
+                      {fields.map(([label, value]) => (
+                        <div key={label}>
+                          <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>{label}: </span>
+                          <span style={{ fontSize: 12, color: '#cbd5e1' }}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )
+              })()}
+
+              {/* ── Service Notes ─────────────────────────────────────────── */}
+              {report.service_notes && (() => {
+                const sn = report.service_notes
+                const fields = [
+                  ['Description',       sn.description],
+                  ['Internal Notes',    sn.internal_notes],
+                  ['Agent Comments',    sn.agent_comments],
+                  ['Driver Instructions', sn.driver_instructions],
+                  ['System Notes',      sn.system_notes],
+                  ['Service Note',      sn.service_note],
+                ].filter(([, v]) => v)
+                if (!fields.length) return null
+                return (
+                  <section style={{ marginBottom: 24 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
+                                  textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10,
+                                  display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <FileText size={11} color="#64748b" /> Service Notes
+                    </div>
+                    <div style={{
+                      background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+                      padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14,
+                    }}>
+                      {fields.map(([label, value]) => (
+                        <div key={label}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b',
+                                        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                            {label}
+                          </div>
+                          <div style={{ fontSize: 12, color: '#cbd5e1', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                            {value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )
+              })()}
+
+              {/* ── Service Photos ────────────────────────────────────────── */}
+              {report.photos?.length > 0 && (
+                <section style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
+                                textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10,
+                                display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Camera size={11} color="#64748b" /> Service Photos ({report.photos.length})
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                    gap: 8,
+                  }}>
+                    {report.photos.map((photo, i) => (
+                      <a key={i} href={photo.url} target="_blank" rel="noopener noreferrer"
+                        style={{ textDecoration: 'none', borderRadius: 8, overflow: 'hidden',
+                                 border: '1px solid #1e293b', display: 'block', background: '#0f172a' }}>
+                        {photo.direct ? (
+                          <img src={photo.url} alt={photo.title || `Photo ${i + 1}`}
+                            style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }} />
+                        ) : (
+                          <div style={{ height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        flexDirection: 'column', gap: 6, background: '#0f172a' }}>
+                            <Camera size={20} color="#475569" />
+                            <span style={{ fontSize: 9, color: '#64748b' }}>View in Salesforce</span>
+                          </div>
+                        )}
+                        {photo.title && (
+                          <div style={{ padding: '4px 6px', fontSize: 9, color: '#64748b',
+                                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {photo.title}
+                          </div>
+                        )}
+                      </a>
                     ))}
                   </div>
                 </section>

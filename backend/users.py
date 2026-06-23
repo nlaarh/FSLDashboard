@@ -16,6 +16,33 @@ _sessions: dict[str, dict] = {}
 _sess_last_flush: dict[str, float] = {}   # token -> last DB touch timestamp
 _TOUCH_INTERVAL = 60                       # max one DB write per session per minute
 
+# ── User record cache ─────────────────────────────────────────────────────────
+# Absorbs the /api/auth/me → get_user() Postgres hit for every page load.
+# TTL=60s: stale for at most one minute after admin edits, acceptable trade-off.
+_user_cache: dict[str, tuple[dict, float]] = {}  # username -> (user_dict, expires)
+_user_cache_lock = threading.Lock()
+_USER_CACHE_TTL = 60
+
+
+def _cache_get(username: str) -> dict | None:
+    with _user_cache_lock:
+        entry = _user_cache.get(username)
+        if entry and time.time() < entry[1]:
+            return entry[0]
+    return None
+
+
+def _cache_put(username: str, data: dict | None):
+    if data is None:
+        return
+    with _user_cache_lock:
+        _user_cache[username] = (data, time.time() + _USER_CACHE_TTL)
+
+
+def _cache_invalidate(username: str):
+    with _user_cache_lock:
+        _user_cache.pop(username, None)
+
 
 # ── Password hashing ─────────────────────────────────────────────────────────
 
@@ -130,7 +157,12 @@ def authenticate(username: str, password: str) -> dict | None:
 
 
 def get_user(username: str) -> dict | None:
-    return _user_repo.get_user(username)
+    cached = _cache_get(username)
+    if cached is not None:
+        return cached
+    data = _user_repo.get_user(username)
+    _cache_put(username, data)
+    return data
 
 
 def get_user_with_hash(username: str) -> dict | None:
@@ -156,6 +188,7 @@ def create_user(username: str, password: str, name: str, role: str = "viewer",
     _user_repo.create_user(
         username, name, role, email, phone, h, salt, 1, time.time(), department
     )
+    _cache_invalidate(username)
     _trigger_backup()
     return {"username": username, "name": name, "role": role,
             "email": email, "phone": phone, "department": department}
@@ -167,6 +200,7 @@ def update_user(username: str, name: str = None, role: str = None, department: s
         username, name=name, role=role, department=department,
         password=password, active=active, email=email, phone=phone
     )
+    _cache_invalidate(username)
     _trigger_backup()
     return result
 
@@ -175,6 +209,7 @@ def delete_user(username: str):
     """Soft-delete: deactivates the user (active=0). Row is kept so it can be restored.
     Use this instead of hard DELETE to prevent accidental permanent data loss."""
     _user_repo.delete_user(username)
+    _cache_invalidate(username)
     with _sess_lock:
         to_remove = [t for t, s in _sessions.items() if s["user"] == username]
         for t in to_remove:
@@ -185,6 +220,7 @@ def delete_user(username: str):
 def restore_user(username: str) -> dict:
     """Restore a soft-deleted (inactive) user by setting active=1."""
     result = _user_repo.restore_user(username)
+    _cache_invalidate(username)
     _trigger_backup()
     return result
 

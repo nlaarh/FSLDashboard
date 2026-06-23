@@ -33,9 +33,9 @@ PG_DATABASE = os.environ.get('FSLAPP_PG_DATABASE', 'fslapp')
 PG_USER     = os.environ.get('FSLAPP_PG_USER',     'nlaaroubi@nyaaa.com')
 PG_SCHEMA   = os.environ.get('FSLAPP_PG_SCHEMA',   'optimizer')
 
-READER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_READER_MIN', '2'))
-READER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_READER_MAX', '10'))
-READER_TIMEOUT  = int(os.environ.get('FSLAPP_PG_READER_TIMEOUT_S', '5'))
+READER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_READER_MIN', '5'))
+READER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_READER_MAX', '20'))
+READER_TIMEOUT  = int(os.environ.get('FSLAPP_PG_READER_TIMEOUT_S', '8'))
 
 WRITER_MIN_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MIN', '2'))
 WRITER_MAX_SIZE = int(os.environ.get('FSLAPP_PG_WRITER_MAX', '4'))
