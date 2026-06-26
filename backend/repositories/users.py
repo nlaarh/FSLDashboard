@@ -111,7 +111,19 @@ def list_users() -> list[dict]:
         with db_adapter.reader() as db:
             db.execute("SELECT * FROM users ORDER BY username")
             rows = db.fetchall()
-            return [_row_to_full(r) for r in rows if r is not None]
+            users = [_row_to_full(r) for r in rows if r is not None]
+            # Attach assigned garages in a single grouped query (no N+1).
+            db.execute(
+                "SELECT username, garage_id, garage_name FROM user_garages ORDER BY username, garage_id"
+            )
+            by_user: dict[str, list[dict]] = {}
+            for g in db.fetchall():
+                by_user.setdefault(g["username"], []).append(
+                    {"id": g["garage_id"], "name": g["garage_name"]}
+                )
+            for u in users:
+                u["garages"] = by_user.get(u["username"], [])
+            return users
     except Exception as e:
         log.warning(f"[repo.users] list_users failed: {e}")
         raise
