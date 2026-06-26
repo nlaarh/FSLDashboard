@@ -193,8 +193,14 @@ CREATE TABLE IF NOT EXISTS users (
   salt          TEXT NOT NULL,
   active        INTEGER DEFAULT 1,
   created_at    DOUBLE PRECISION,
-  department    TEXT DEFAULT '',
-  territories   TEXT DEFAULT '[]'
+  department    TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS user_garages (
+  username    TEXT NOT NULL,
+  garage_id   TEXT NOT NULL,
+  garage_name TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (username, garage_id)
 );
 
 CREATE TABLE IF NOT EXISTS settings (
