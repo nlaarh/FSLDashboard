@@ -460,15 +460,20 @@ export default function Accounting() {
 
                       {/* WO # */}
                       <td className="px-1.5 py-1.5">
-                        {r.wo_id ? (
-                          <a href={`https://aaawcny.lightning.force.com/${r.wo_id}`} target="_blank" rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            className="text-brand-400 hover:text-brand-300 font-mono hover:underline">
-                            {r.wo_number || '--'}
-                          </a>
-                        ) : (
-                          <span className="font-mono text-slate-400">{r.wo_number || '--'}</span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {r.wo_id ? (
+                            <a href={`https://aaawcny.lightning.force.com/${r.wo_id}`} target="_blank" rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="text-brand-400 hover:text-brand-300 font-mono hover:underline">
+                              {r.wo_number || '--'}
+                            </a>
+                          ) : (
+                            <span className="font-mono text-slate-400">{r.wo_number || '--'}</span>
+                          )}
+                          {r.has_photos && (
+                            <Camera className="w-3 h-3 text-sky-400 shrink-0" title="Has photos" />
+                          )}
+                        </div>
                       </td>
 
                       {/* Product */}

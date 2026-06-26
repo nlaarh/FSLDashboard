@@ -199,6 +199,7 @@ export const askChatbot = (question, complexity = 'mid', history = []) =>
 
 // User Management (PIN-protected)
 export const adminListUsers = (pin) => api.get('/admin/users', pinHeader(pin)).then(r => r.data)
+export const adminTerritoriesList = (pin) => api.get('/admin/territories-list', pinHeader(pin)).then(r => r.data)
 export const adminCreateUser = (pin, data) => api.post('/admin/users', data, pinHeader(pin)).then(r => r.data)
 export const adminUpdateUser = (pin, username, data) => api.put(`/admin/users/${username}`, data, pinHeader(pin)).then(r => r.data)
 export const adminDeleteUser = (pin, username) => api.delete(`/admin/users/${username}`, pinHeader(pin)).then(r => r.data)

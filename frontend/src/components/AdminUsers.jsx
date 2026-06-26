@@ -88,7 +88,7 @@ export default function AdminUsers({ pin }) {
 
   const openEditUser = (u) => {
     setEditingUser(u.username)
-    setUserForm({ username: u.username, password: '', passwordConfirm: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '' })
+    setUserForm({ username: u.username, password: '', passwordConfirm: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '', territories: u.territories || [] })
     setShowPassword(false)
     setPasswordChangeOpen(false)
     setUserError('')
@@ -145,7 +145,7 @@ export default function AdminUsers({ pin }) {
             return
           }
         }
-        const data = { name: userForm.name, role: userForm.role, email: userForm.email, phone: userForm.phone, department: userForm.department }
+        const data = { name: userForm.name, role: userForm.role, email: userForm.email, phone: userForm.phone, department: userForm.department, territories: userForm.territories || [] }
         if (changingPassword) data.password = userForm.password
         const result = await adminUpdateUser(pin, editingUser, data)
         if (changingPassword) {
@@ -407,7 +407,9 @@ export default function AdminUsers({ pin }) {
                   <td className="py-2.5 px-4">
                     <span className={clsx('px-2 py-0.5 rounded text-[10px] font-bold border',
                       ROLE_STYLE[u.role] || ROLE_STYLE.viewer)}>
-                      {u.role}
+                      {u.role === 'contractor' && (u.territories?.length > 0)
+                        ? `contractor (${u.territories.length} garage${u.territories.length !== 1 ? 's' : ''})`
+                        : u.role}
                     </span>
                   </td>
                   <td className="py-2.5 px-4">
@@ -488,6 +490,7 @@ export default function AdminUsers({ pin }) {
 
         {showUserForm && (
           <AdminUserEditor
+            pin={pin}
             editingUser={editingUser}
             userForm={userForm}
             setUserForm={setUserForm}

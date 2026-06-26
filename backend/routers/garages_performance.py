@@ -1,6 +1,6 @@
 """Garage performance dashboard — response decomposition, acceptance, completion."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from datetime import datetime, date, timedelta, timezone
 from collections import defaultdict
 
@@ -10,6 +10,7 @@ from utils import (
     is_fleet_territory,
 )
 from dispatch_decomposition import get_response_decomposition
+from routers.garages import _check_territory_access
 import cache
 
 router = APIRouter()
@@ -19,10 +20,12 @@ router = APIRouter()
 
 @router.get("/api/garages/{territory_id}/performance")
 def get_performance(
+    request: Request,
     territory_id: str,
     period_start: str = Query(...),
     period_end: str = Query(...),
 ):
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     period_start = sanitize_soql(period_start)
     period_end = sanitize_soql(period_end)
@@ -330,11 +333,13 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
 
 @router.get("/api/garages/{territory_id}/decomposition")
 def api_response_decomposition(
+    request: Request,
     territory_id: str,
     period_start: str = Query(...),
     period_end: str = Query(...),
 ):
     """Response time decomposition + decline analysis + driver leaderboard."""
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     period_start = sanitize_soql(period_start)
     period_end = sanitize_soql(period_end)

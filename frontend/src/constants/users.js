@@ -1,4 +1,4 @@
-export const ROLES = ['superadmin', 'admin', 'executive', 'ers', 'finance', 'manager', 'officer', 'viewer']
+export const ROLES = ['superadmin', 'admin', 'executive', 'ers', 'finance', 'manager', 'officer', 'contractor', 'viewer']
 
 export const DEPTS = [
   { value: '', label: '— None —' },
@@ -22,5 +22,6 @@ export const ROLE_STYLE = {
   manager: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   officer: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   supervisor: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  contractor: 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
   viewer: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
 }

@@ -3,7 +3,7 @@ Future: move FEATURE_ROLES to DB so admin can assign dynamically.
 """
 
 FEATURE_ROLES = {
-    "garage.revenue_performance": {"superadmin", "admin", "executive", "ers-director"},
+    "garage.revenue_performance": {"superadmin", "admin", "executive", "ers-director", "contractor"},
     "reporting.user_adoption":    {"superadmin", "admin", "executive"},
     "admin.panel":                {"superadmin", "admin"},
     "admin.impersonate":          {"superadmin"},

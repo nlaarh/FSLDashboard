@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS users (
   salt          TEXT NOT NULL,
   active        INTEGER DEFAULT 1,
   created_at    DOUBLE PRECISION,
-  department    TEXT DEFAULT ''
+  department    TEXT DEFAULT '',
+  territories   TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS settings (

@@ -1,0 +1,476 @@
+"""Contractor portal — payment history and billing recommendations.
+
+Scoped to the authenticated contractor's assigned SF ServiceTerritories.
+All endpoints read-only: no DML, no SF mutations.
+"""
+
+import logging
+from datetime import datetime, timezone, timedelta
+
+from fastapi import APIRouter, HTTPException, Request, Query
+
+import users as _users
+from routers.auth import get_request_username
+from sf_client import sf_query_all, sanitize_soql
+from routers.accounting_photos import fetch_photos
+from routers.accounting_list import _fetch_photo_wo_ids
+from routers.accounting_calc import _fmt_et, _safe_float
+from utils import parse_dt as _parse_dt
+
+log = logging.getLogger("contractor")
+
+router = APIRouter()
+
+_SF_BASE = "https://aaawcny.lightning.force.com"
+_SF_WOA_NEW = (
+    f"{_SF_BASE}/lightning/o/ERS_Work_Order_Adjustment__c/new"
+    "?defaultFieldValues=Work_Order__c={wo_id}"
+)
+
+_DAYS_BACK = 90
+_MAX_RECS = 200
+
+
+# ── Auth helper ───────────────────────────────────────────────────────────────
+
+def _require_contractor_facilities(request: Request) -> list[str]:
+    """Return Facility_ID__c codes for the contractor's territories.
+
+    ServiceTerritory is a region that can span multiple facilities; filtering
+    by ServiceTerritoryId would leak WOs from sibling facilities in the same
+    region. We derive the exact facility codes from the territory names
+    (format: "076DO - TRANSIT AUTO DETAIL" → "076DO") so SOQL can filter
+    on Facility_ID__c instead.
+    """
+    from routers.auth import _get_garage_names  # avoids circular at module level
+    username = get_request_username(request)
+    user = _users.get_user(username) if username else None
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    role = user.get("role", "")
+    territories: list[str] = user.get("territories") or []
+    if role not in ("superadmin", "admin", "contractor"):
+        raise HTTPException(status_code=403, detail="Contractor access only")
+    if not territories:
+        raise HTTPException(status_code=400, detail="No territories assigned to this account")
+    garage_names = _get_garage_names(territories)
+    facility_ids = [g["name"].split(" - ")[0].strip() for g in garage_names if " - " in g.get("name", "")]
+    if not facility_ids:
+        raise HTTPException(status_code=400, detail="No facilities resolved for this account")
+    return facility_ids
+
+
+def _facility_in_clause(facility_ids: list[str]) -> str:
+    """Build a SOQL IN clause for Facility_ID__c values."""
+    safe = [sanitize_soql(f) for f in facility_ids]
+    return "'" + "','".join(safe) + "'"
+
+
+def _cutoff_date(days: int = _DAYS_BACK) -> str:
+    """Return an ISO date string N days ago, UTC."""
+    dt = datetime.now(timezone.utc) - timedelta(days=days)
+    return dt.strftime("%Y-%m-%d")
+
+
+# ── GET /api/contractor/wo-payments ──────────────────────────────────────────
+
+@router.get("/api/contractor/wo-payments")
+def contractor_wo_payments(
+    request: Request,
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=2000),
+):
+    """Paginated WOLI payment history for contractor territories."""
+    facility_ids = _require_contractor_facilities(request)
+    f_clause = _facility_in_clause(facility_ids)
+
+    try:
+        datetime.strptime(start_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+
+    soql = f"""
+        SELECT Id, WorkOrderId, WorkOrder.WorkOrderNumber, WorkOrder.Facility_ID__c,
+               WorkOrder.CreatedDate, WorkOrder.Status,
+               WorkOrder.ServiceTerritory.Name, WorkOrder.WorkType.Name,
+               PricebookEntry.Name, PricebookEntry.ProductCode,
+               Quantity, UnitPrice, TotalPrice, TaxAmount,
+               Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c
+        FROM WorkOrderLineItem
+        WHERE WorkOrder.Facility_ID__c IN ({f_clause})
+          AND WorkOrder.CreatedDate >= {start_date}T00:00:00Z
+          AND WorkOrder.CreatedDate <= {end_date}T23:59:59Z
+          AND PricebookEntryId != null
+        ORDER BY WorkOrder.CreatedDate DESC
+        LIMIT 2000
+    """
+    rows = sf_query_all(soql)
+
+    items = []
+    for r in rows:
+        wo = r.get("WorkOrder") or {}
+        pbe = r.get("PricebookEntry") or {}
+        basic = r.get("Basic_Cost__c") or 0
+        plus  = r.get("Plus_Cost__c") or 0
+        prem  = r.get("Premier_Cost__c") or 0
+        rv    = r.get("RV_Cost__c") or 0
+        other = r.get("Other_Cost__c") or 0
+        tax   = r.get("TaxAmount") or 0
+        row_total = round(basic + plus + prem + rv + other, 2)
+        items.append({
+            "wo_number": wo.get("WorkOrderNumber") or "",
+            "facility": wo.get("Facility_ID__c") or "",
+            "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
+            "call_type": (wo.get("WorkType") or {}).get("Name") or "",
+            "created_date": wo.get("CreatedDate") or "",
+            "status": wo.get("Status") or "",
+            "product_code": pbe.get("ProductCode") or "",
+            "product_name": pbe.get("Name") or "",
+            "quantity": r.get("Quantity"),
+            "unit_price": r.get("UnitPrice"),
+            "tax_amount": tax,
+            "total_price": row_total,
+            "basic_cost": r.get("Basic_Cost__c"),
+            "plus_cost": r.get("Plus_Cost__c"),
+            "premier_cost": r.get("Premier_Cost__c"),
+            "rv_cost": r.get("RV_Cost__c"),
+            "other_cost": r.get("Other_Cost__c"),
+            "wo_id": r.get("WorkOrderId") or "",
+            "woli_id": r.get("Id") or "",
+        })
+
+    total = len(items)
+    total_payment = round(sum((x.get("total_price") or 0) for x in items), 2)
+
+    start_idx = (page - 1) * page_size
+    page_items = items[start_idx: start_idx + page_size]
+
+    return {
+        "items": page_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_payment": total_payment,
+    }
+
+
+# ── GET /api/contractor/calls ─────────────────────────────────────────────────
+
+@router.get("/api/contractor/calls")
+def contractor_calls(
+    request: Request,
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=2000),
+):
+    """WO-centric calls log for contractor territories."""
+    facility_ids = _require_contractor_facilities(request)
+    f_clause = _facility_in_clause(facility_ids)
+
+    try:
+        datetime.strptime(start_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+
+    soql = f"""
+        SELECT Id, WorkOrderNumber, Coverage__c, Resolution_Code__c,
+               Status, CreatedDate, Facility_ID__c, Facility_Name__c,
+               ServiceTerritory.Name, Trouble_Code__c, Type__c,
+               Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c
+        FROM WorkOrder
+        WHERE Facility_ID__c IN ({f_clause})
+          AND CreatedDate >= {start_date}T00:00:00Z
+          AND CreatedDate <= {end_date}T23:59:59Z
+        ORDER BY CreatedDate DESC
+        LIMIT 2000
+    """
+    rows = sf_query_all(soql)
+
+    items = []
+    for r in rows:
+        items.append({
+            "wo_id": r["Id"],
+            "wo_number": r.get("WorkOrderNumber") or "",
+            "call_type": r.get("Type__c") or "",
+            "coverage": r.get("Coverage__c") or "",
+            "resolution_code": r.get("Resolution_Code__c") or "",
+            "status": r.get("Status") or "",
+            "created_date": r.get("CreatedDate") or "",
+            "facility": r.get("Facility_ID__c") or "",
+            "facility_name": r.get("Facility_Name__c") or "",
+            "territory_name": (r.get("ServiceTerritory") or {}).get("Name") or "",
+            "notes": r.get("Notes__c") or "",
+            "description": r.get("Description") or "",
+            "customer_name": r.get("Customer_Name__c") or "",
+            "trouble_code": r.get("Trouble_Code__c") or "",
+            "total_cost": round(sum(filter(None, [
+                r.get("Basic_Cost__c"), r.get("Plus_Cost__c"), r.get("Premier_Cost__c"),
+                r.get("RV_Cost__c"), r.get("Other_Cost__c")
+            ])), 2),
+        })
+
+    # Stamp has_photos on every item using the same batch query as accounting list
+    all_wo_ids = [i["wo_id"] for i in items if i.get("wo_id")]
+    photo_ids = _fetch_photo_wo_ids(all_wo_ids)
+    for i in items:
+        i["has_photos"] = i.get("wo_id", "") in photo_ids
+
+    total = len(items)
+    start_idx = (page - 1) * page_size
+    page_items = items[start_idx: start_idx + page_size]
+
+    return {
+        "items": page_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+# ── GET /api/contractor/calls/{wo_id} ────────────────────────────────────────
+
+@router.get("/api/contractor/calls/{wo_id}")
+def contractor_call_detail(
+    wo_id: str,
+    request: Request,
+):
+    """Full detail for a single WO: SA, WOLIs, photos."""
+    facility_ids = _require_contractor_facilities(request)
+    safe_wo_id = sanitize_soql(wo_id)
+
+    # Fetch SA
+    sa_rows = sf_query_all(f"""
+        SELECT Id, AppointmentNumber, ServiceNote, Status,
+               ERS_PTA__c, ActualStartTime, SchedStartTime,
+               ERS_Dispatch_Method__c, ERS_Membership_Level_Coverage__c
+        FROM ServiceAppointment
+        WHERE ERS_Work_Order__c = '{safe_wo_id}'
+        LIMIT 1
+    """)
+    sa = sa_rows[0] if sa_rows else None
+
+    # Fetch WOLIs
+    woli_rows = sf_query_all(f"""
+        SELECT Id, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
+               Quantity, UnitPrice, TotalPrice,
+               Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c
+        FROM WorkOrderLineItem
+        WHERE WorkOrderId = '{safe_wo_id}'
+          AND PricebookEntryId != null
+    """)
+    wolis = []
+    for w in woli_rows:
+        pbe = w.get("PricebookEntry") or {}
+        basic = w.get("Basic_Cost__c") or 0
+        plus  = w.get("Plus_Cost__c") or 0
+        prem  = w.get("Premier_Cost__c") or 0
+        rv    = w.get("RV_Cost__c") or 0
+        other = w.get("Other_Cost__c") or 0
+        wolis.append({
+            "id": w.get("Id") or "",
+            "line_item_number": w.get("LineItemNumber") or "",
+            "product_code": pbe.get("ProductCode") or "",
+            "product_name": pbe.get("Name") or "",
+            "quantity": w.get("Quantity"),
+            "unit_price": w.get("UnitPrice"),
+            "total_price": round(basic + plus + prem + rv + other, 2),
+            "basic_cost": w.get("Basic_Cost__c"),
+            "plus_cost": w.get("Plus_Cost__c"),
+            "premier_cost": w.get("Premier_Cost__c"),
+            "rv_cost": w.get("RV_Cost__c"),
+            "other_cost": w.get("Other_Cost__c"),
+        })
+
+    # Photos need ALL WOLIs including 00000001/00000002 which have no PricebookEntry.
+    # The billing WOLI query above filters PricebookEntryId != null and misses them.
+    all_woli_rows = sf_query_all(f"""
+        SELECT Id, LineItemNumber
+        FROM WorkOrderLineItem
+        WHERE WorkOrderId = '{safe_wo_id}'
+    """)
+    photos = fetch_photos(wo_id, all_woli_rows, is_fleet=False)
+
+    return {
+        "wo_id": wo_id,
+        "sa": sa,
+        "wolis": wolis,
+        "photos": photos,
+    }
+
+
+# ── GET /api/contractor/calls/{wo_id}/audit ───────────────────────────────────
+
+_STATUS_TRANSITIONS = [
+    'None', 'Scheduled', 'Assigned', 'Dispatched', 'Accepted', 'Declined',
+    'En Route', 'On Location', 'In Progress', 'Completed', 'Cannot Complete', 'Canceled',
+]
+
+_SF_BASE_URL = "https://aaawcny.lightning.force.com"
+
+
+@router.get("/api/contractor/calls/{wo_id}/audit")
+def contractor_call_audit(wo_id: str, request: Request):
+    """Return WO detail in the same shape as the accounting audit endpoint.
+
+    Contractor-scoped: no WOA, no AI, no distance verification.
+    Enables direct reuse of AccountingAuditPanel on the frontend.
+    """
+    facility_ids = _require_contractor_facilities(request)
+    safe_id = sanitize_soql(wo_id)
+
+    # Fetch WO + SA + SAHistory + WOLIs in separate queries (no sf_parallel here to keep it simple)
+    wo_rows = sf_query_all(f"""
+        SELECT Id, WorkOrderNumber, WorkType.Name, Coverage__c, Resolution_Code__c,
+               Status, CreatedDate, Facility_ID__c, Facility_Name__c, Trouble_Code__c,
+               ServiceTerritory.Name, ServiceTerritoryId,
+               Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c,
+               Tax, GrandTotal, Total_Amount_Invoiced__c,
+               Vehicle_Make__c, Vehicle_Model__c, Customer_Name__c
+        FROM WorkOrder
+        WHERE Id = '{safe_id}'
+        LIMIT 1
+    """)
+    wo = wo_rows[0] if wo_rows else {}
+
+    # Scope check: verify this WO belongs to one of the contractor's facilities
+    if not wo:
+        raise HTTPException(status_code=404, detail="Work order not found")
+    if wo.get('Facility_ID__c') not in facility_ids:
+        raise HTTPException(status_code=403, detail="Access denied: work order not in your facilities")
+
+    sa_rows = sf_query_all(f"""
+        SELECT Id, AppointmentNumber, ServiceNote, Status, SchedStartTime,
+               ERS_PTA__c, ActualStartTime, ERS_Dispatch_Method__c,
+               ERS_Membership_Level_Coverage__c, WorkType.Name
+        FROM ServiceAppointment
+        WHERE ERS_Work_Order__c = '{safe_id}'
+        ORDER BY SchedStartTime ASC
+        LIMIT 5
+    """)
+    sa = sa_rows[0] if sa_rows else {}
+
+    sah_rows = sf_query_all(f"""
+        SELECT ServiceAppointmentId, CreatedDate, OldValue, NewValue
+        FROM ServiceAppointmentHistory
+        WHERE ServiceAppointmentId IN (
+            SELECT Id FROM ServiceAppointment WHERE ERS_Work_Order__c = '{safe_id}'
+        )
+          AND Field = 'Status'
+        ORDER BY CreatedDate ASC
+        LIMIT 200
+    """)
+
+    woli_rows = sf_query_all(f"""
+        SELECT Id, LineItemNumber, PricebookEntry.Name, PricebookEntry.ProductCode,
+               Quantity, UnitPrice, TotalPrice, Status,
+               Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c
+        FROM WorkOrderLineItem
+        WHERE WorkOrderId = '{safe_id}'
+    """)
+
+    # Build SA timeline
+    sa_timeline = []
+    _prev_ts = None
+    for h in sah_rows:
+        nv = h.get('NewValue', '')
+        if nv in _STATUS_TRANSITIONS:
+            cur_ts = _parse_dt(h.get('CreatedDate'))
+            elapsed = round((_parse_dt(h.get('CreatedDate')) - _prev_ts).total_seconds()) if (_prev_ts and cur_ts) else None
+            sa_timeline.append({
+                'time': _fmt_et(h.get('CreatedDate')),
+                'from': h.get('OldValue') or '',
+                'to': nv,
+                'elapsed_seconds': elapsed,
+            })
+            if cur_ts:
+                _prev_ts = cur_ts
+
+    # Build woli_items in accounting audit shape.
+    # Use TotalPrice (actual billed amount per WOLI) as the subtotal — the custom
+    # coverage-tier fields (Basic_Cost__c etc.) are 0 for ER/TW/non-BA products.
+    wo_tax = _safe_float(wo.get('Tax')) or 0
+    total_subtotal = sum(_safe_float(w.get('TotalPrice')) or 0 for w in woli_rows)
+    woli_items = []
+    for w in woli_rows:
+        pbe = w.get('PricebookEntry') or {}
+        product_name = pbe.get('Name') or ''
+        product_code = pbe.get('ProductCode') or (product_name.split(' - ')[0].strip() if ' - ' in product_name else '')
+        subtotal = _safe_float(w.get('TotalPrice')) or 0
+        tax_share = round(wo_tax * subtotal / total_subtotal, 2) if subtotal and total_subtotal > 0 else None
+        grand_total = round(subtotal + (tax_share or 0), 2)
+        woli_items.append({
+            'id': w.get('Id') or '',
+            'name': w.get('LineItemNumber') or '',
+            'product': product_name,
+            'code': product_code,
+            'quantity': w.get('Quantity'),
+            'unit_price': _safe_float(w.get('UnitPrice')),
+            'subtotal': subtotal,
+            'tax': tax_share,
+            'grand_total': grand_total,
+            'status': w.get('Status') or '',
+        })
+
+    # woli_rows already has all WOLIs (no PricebookEntryId filter) — use directly
+    photos = fetch_photos(wo_id, woli_rows, is_fleet=False)
+
+    territory = wo.get('ServiceTerritory') or {}
+    vehicle = ' '.join(filter(None, [wo.get('Vehicle_Make__c'), wo.get('Vehicle_Model__c')]))
+
+    return {
+        'wo_id': wo_id,
+        'wo_number': wo.get('WorkOrderNumber') or '',
+        'territory_name': territory.get('Name') or '',
+        'woa_status': None,
+        'evidence': {
+            'coverage': wo.get('Coverage__c') or '',
+            'dispatch_code': wo.get('Trouble_Code__c') or '',
+            'resolution_code': wo.get('Resolution_Code__c') or '',
+            'facility_id': wo.get('Facility_ID__c') or '',
+            'status_quality': 'OK',
+            'vehicle_make': wo.get('Vehicle_Make__c') or '',
+            'vehicle_model': wo.get('Vehicle_Model__c') or '',
+            'wo_type': (wo.get('WorkType') or {}).get('Name') or '',
+            'membership_level_coverage': sa.get('ERS_Membership_Level_Coverage__c') or '',
+        },
+        'wo_pricing': (lambda _bc=(_safe_float(wo.get('Basic_Cost__c')) or 0),
+                             _pc=(_safe_float(wo.get('Plus_Cost__c')) or 0),
+                             _oc=(_safe_float(wo.get('Other_Cost__c')) or 0),
+                             _tax=(_safe_float(wo.get('Tax')) or 0): {
+            'tax': _tax or None,
+            # GrandTotal on WO = tax only in SF; compute true total from cost components
+            'grand_total': round(_bc + _pc + _oc + _tax, 2),
+            'basic_cost': _bc or None,
+            'plus_cost': _pc or None,
+            'other_cost': _oc or None,
+            'total_invoiced': round(_bc + _pc + _oc + _tax, 2),
+        })(),
+        'woli_items': woli_items,
+        'sa_timeline': sa_timeline,
+        'secondary_sa_timelines': [],
+        'sf_urls': {
+            'woa': None,
+            'wo': f'{_SF_BASE_URL}/{wo_id}',
+            'sa': f'{_SF_BASE_URL}/{sa.get("Id")}' if sa.get('Id') else None,
+            'facility': None,
+        },
+        'service_notes': {
+            'woa_description': None,
+            'woa_internal_notes': None,
+            'agent_comments': wo.get('Notes__c') or None,
+            'driver_instructions': None,
+            'system_notes': None,
+            'sa_service_notes': [
+                {'sa_number': s.get('AppointmentNumber', ''), 'note': s.get('ServiceNote')}
+                for s in sa_rows if s.get('ServiceNote')
+            ],
+        },
+        'photos': photos,
+        'recommendation': None,
+        'cache_status': 'fresh',
+    }

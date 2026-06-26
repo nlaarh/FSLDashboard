@@ -4,6 +4,7 @@ Replaces direct calls to core_users.py and users.py database functions.
 All SQL uses %%s placeholders (db_adapter handles SQLite conversion).
 """
 
+import json
 import logging
 
 import bcrypt
@@ -32,6 +33,19 @@ def _hash_password(password: str) -> tuple[str, str]:
     return h, "bcrypt"
 
 
+def _parse_territories(raw) -> list:
+    """Parse a JSON string or list into a list of territory strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        result = json.loads(raw)
+        return result if isinstance(result, list) else []
+    except Exception:
+        return []
+
+
 def _row_to_public(row: dict | None) -> dict | None:
     if row is None:
         return None
@@ -42,6 +56,7 @@ def _row_to_public(row: dict | None) -> dict | None:
         "email": row.get("email", ""),
         "active": bool(row.get("active", 1)),
         "department": row.get("department") or "",
+        "territories": _parse_territories(row.get("territories")),
     }
 
 
@@ -57,6 +72,7 @@ def _row_to_full(row: dict | None) -> dict | None:
         "active": bool(row.get("active", 1)),
         "created": row.get("created_at"),
         "department": row.get("department") or "",
+        "territories": _parse_territories(row.get("territories")),
     }
 
 
@@ -128,14 +144,16 @@ def create_user(
     active,
     created_at,
     department,
+    territories=None,
 ):
+    territories_json = json.dumps(territories if isinstance(territories, list) else [])
     try:
         with db_adapter.writer() as db:
             db.execute(
                 """
                 INSERT INTO users
-                    (username, name, role, email, phone, password_hash, salt, active, created_at, department)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (username, name, role, email, phone, password_hash, salt, active, created_at, department, territories)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     username,
@@ -148,6 +166,7 @@ def create_user(
                     active,
                     created_at,
                     department,
+                    territories_json,
                 ),
             )
             db.commit()
@@ -167,6 +186,7 @@ def update_user(
     active=None,
     email=None,
     phone=None,
+    territories=None,
 ):
     try:
         row = _get_raw(username)
@@ -199,6 +219,9 @@ def update_user(
             params.append(h)
             sets.append("salt = %s")
             params.append(salt)
+        if territories is not None:
+            sets.append("territories = %s")
+            params.append(json.dumps(territories if isinstance(territories, list) else []))
 
         if not sets:
             return _row_to_full(row)

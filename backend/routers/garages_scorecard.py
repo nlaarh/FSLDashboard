@@ -3,12 +3,13 @@
 import logging
 from datetime import date as _date
 from collections import defaultdict
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt, is_fleet_territory, totally_satisfied_pct as _totally_satisfied_pct, soql_date_range, load_ai_settings as _load_ai_settings, call_openai_simple as _call_openai_simple
 import cache
+from routers.garages import _check_territory_access
 
 router = APIRouter()
 log = logging.getLogger('garages_scorecard')
@@ -32,13 +33,14 @@ _SCORECARD_SYSTEM = (
 
 @router.get("/api/garages/{territory_id}/performance-scorecard")
 def api_garage_performance_scorecard(
+    request: Request,
     territory_id: str,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
 ):
     """Garage performance scorecard: 4 satisfaction scores, primary/secondary split,
     driver breakdown with bonus calculation, AI executive summary."""
-
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
 
     # Default date range: current month

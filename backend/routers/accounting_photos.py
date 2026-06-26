@@ -75,22 +75,30 @@ def fetch_photos(wo_id: str, woli_rows: list, is_fleet: bool) -> dict:
 
 def _fetch_towbook_photos(wo_id: str) -> dict:
     """Towbook: direct photo URLs from Photo_URL__c field on Service_Photo__c."""
+    cache_key = f'accounting:towbook_photos:{wo_id}'
     try:
-        def _query():
-            return sf_query_all(f"""
-                SELECT Id, Name, Photo_URL__c, Timestamp__c
-                FROM Service_Photo__c
-                WHERE Work_Order__c = '{sanitize_soql(wo_id)}'
-                ORDER BY Timestamp__c ASC NULLS LAST
-                LIMIT 30
-            """)
+        # Only serve from cache when photos actually exist — never cache empty results.
+        # cached_query_persistent L1 uses raw keys (not version-prefixed), so stale
+        # empty entries survive CACHE_VERSION bumps and cause list/detail mismatches.
+        cached = cache.get(cache_key)
+        if cached and cached.get('photos'):
+            return cached
 
-        rows = cache.cached_query_persistent(f'accounting:towbook_photos:{wo_id}', _query, ttl=86400)
+        rows = sf_query_all(f"""
+            SELECT Id, Name, Photo_URL__c, Timestamp__c
+            FROM Service_Photo__c
+            WHERE Work_Order__c = '{sanitize_soql(wo_id)}'
+            ORDER BY Timestamp__c ASC NULLS LAST
+            LIMIT 30
+        """)
         photos = []
         for r in (rows or []):
             url, direct = _normalize_photo_url(r.get('Photo_URL__c') or '', r.get('Id', ''))
             photos.append({'url': url, 'title': r.get('Name', ''), 'id': r.get('Id'), 'direct': direct})
-        return {'type': 'towbook', 'photos': photos}
+        result = {'type': 'towbook', 'photos': photos}
+        if photos:
+            cache.put(cache_key, result, 3600)
+        return result
     except Exception as e:
         log.warning(f"Towbook photos fetch failed for WO {wo_id}: {e}")
         return {'type': 'towbook', 'photos': [], 'error': str(e)[:200]}
@@ -131,7 +139,12 @@ def _fetch_on_platform_photos(wo_id: str, woli_rows: list) -> dict:
             """)
 
         cache_key = f"accounting:on_platform_photos:{wo_id}:{':'.join(target_ids)}"
-        rows = cache.cached_query_persistent(cache_key, _query, ttl=86400)
+        # Only serve from cache when photos exist — same rationale as towbook path.
+        cached = cache.get(cache_key)
+        if cached and (cached.get('pickup_photos') or cached.get('dropoff_photos')):
+            return cached
+
+        rows = _query()
 
         def _link(r):
             doc_id = r.get('ContentDocumentId', '')
@@ -145,13 +158,16 @@ def _fetch_on_platform_photos(wo_id: str, woli_rows: list) -> dict:
 
         pickup = [_link(r) for r in (rows or []) if r.get('LinkedEntityId') == woli_01_id]
         dropoff = [_link(r) for r in (rows or []) if r.get('LinkedEntityId') == woli_02_id]
-        return {
+        result = {
             'type': 'on_platform',
             'pickup_photos': pickup,
             'dropoff_photos': dropoff,
             'woli_01_sf_url': f'{_SF_BASE}/{woli_01_id}' if woli_01_id else None,
             'woli_02_sf_url': f'{_SF_BASE}/{woli_02_id}' if woli_02_id else None,
         }
+        if pickup or dropoff:
+            cache.put(cache_key, result, 3600)
+        return result
     except Exception as e:
         log.warning(f"On-platform photos fetch failed for WO {wo_id}: {e}")
         return {

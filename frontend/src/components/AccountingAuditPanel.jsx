@@ -34,7 +34,7 @@ const SkeletonCard = () => (
   </div>
 )
 
-export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, onOpenWoa }) {
+export default function AccountingAuditPanel({ woaId, onComplete, recReason, siblingWoas, allWoSiblings, isLowMateriality, estimatedUsd, rowRec, onOpenWoa, auditFn = null, contractorMode = false }) {
   const [audit, setAudit] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -92,14 +92,15 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       })
       .finally(() => setLoading(false))
   }
+  const _resolvedAuditFn = auditFn ?? fetchWOAAudit
   useEffect(() => {
     let t
-    load(fetchWOAAudit)
+    load(_resolvedAuditFn)
       .then(data => {
-        // If stale, auto-refetch in background after 3s
-        if (data.cache_status === 'stale') {
+        // If stale, auto-refetch in background after 3s (skip in contractorMode — no cache)
+        if (!contractorMode && data.cache_status === 'stale') {
           t = setTimeout(() => {
-            fetchWOAAudit(woaId).then(fresh => {
+            _resolvedAuditFn(woaId).then(fresh => {
               handleResult(fresh)
             }).catch(() => {})
           }, 3000)
@@ -110,7 +111,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
   }, [woaId])
   const handleRecalculate = () => { setRecalcing(true); recalculateWOAAudit(woaId).then(handleResult).catch(e => setError(e.message || 'Failed')).finally(() => setRecalcing(false)) }
   const handleForceRefresh = useCallback(() => {
-    fetchWOAAudit(woaId, true).then(data => {
+    _resolvedAuditFn(woaId, true).then(data => {
       handleResult(data)
     }).catch(() => {})
   }, [woaId])
@@ -240,9 +241,14 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       {isStale && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-700/30">
           <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-          <span className="text-[10px] text-amber-300">
-            Cached from before latest update — click <strong>Recalculate</strong> to refresh.
+          <span className="text-[10px] text-amber-300 flex-1">
+            Cached from before latest update — recalculate to refresh.
           </span>
+          <button onClick={handleRecalculate} disabled={recalcing}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-700/40 hover:bg-amber-700/70 text-amber-200 hover:text-white transition-colors disabled:opacity-50 shrink-0">
+            <RefreshCw className={clsx('w-3 h-3', recalcing && 'animate-spin')} />
+            {recalcing ? 'Working…' : 'Recalculate'}
+          </button>
         </div>
       )}
 
@@ -257,31 +263,33 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           </span>
         </div>
       )}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
-          {rec || 'UNKNOWN'}
-        </span>
-        {ev.program && (
-          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/60 text-slate-300 border border-slate-600/40 shrink-0">
-            {ev.program}
+      {!contractorMode && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
+            {rec || 'UNKNOWN'}
           </span>
-        )}
-        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">
-          {audit ? headerSummary(ev, code) : (recReason || <span className="text-slate-600 italic">Loading details…</span>)}
-        </span>
-        <button onClick={handleRecalculate} disabled={recalcing}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 shrink-0">
-          <RefreshCw className={clsx('w-3 h-3', recalcing && 'animate-spin')} />
-          {recalcing ? 'Working…' : 'Recalculate'}
-        </button>
-        <a href={`/api/accounting/wo-adjustments/${woaId}/pdf`} target="_blank" rel="noreferrer"
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-blue-700 text-slate-400 hover:text-white transition-colors shrink-0">
-          PDF
-        </a>
-      </div>
-      {audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
+          {ev.program && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/60 text-slate-300 border border-slate-600/40 shrink-0">
+              {ev.program}
+            </span>
+          )}
+          <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">
+            {audit ? headerSummary(ev, code) : (recReason || <span className="text-slate-600 italic">Loading details…</span>)}
+          </span>
+          <button onClick={handleRecalculate} disabled={recalcing}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 shrink-0">
+            <RefreshCw className={clsx('w-3 h-3', recalcing && 'animate-spin')} />
+            {recalcing ? 'Working…' : 'Recalculate'}
+          </button>
+          <a href={`/api/accounting/wo-adjustments/${woaId}/pdf`} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-slate-800 hover:bg-blue-700 text-slate-400 hover:text-white transition-colors shrink-0">
+            PDF
+          </a>
+        </div>
+      )}
+      {!contractorMode && audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
 
-      {isLowMateriality && recRaw === 'REVIEW' && (
+      {!contractorMode && isLowMateriality && recRaw === 'REVIEW' && (
         <div className="text-[9px] text-slate-500 px-1">Auto-approved: below materiality threshold</div>
       )}
       {status.startsWith('BAD') && (
@@ -556,10 +564,11 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       )}
 
       {/* ── 3-column: Verification | WO Context | SA Timeline ── */}
-      {audit && <div className="grid grid-cols-3 gap-3">
+      {/* In contractorMode: 2-column (WO Context | SA Timeline) — no distance verification */}
+      {audit && <div className={contractorMode ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-3 gap-3'}>
 
         {/* Left: Verification — product-specific, extracted to AuditVerificationCard */}
-        <AuditVerificationCard
+        {!contractorMode && <AuditVerificationCard
           ev={ev} code={code} vehicle={vehicle}
           isTow={isTow} isMileage={isMileage} isTime={isTime} isFlat={isFlat}
           googleMi={googleMi} googleTowMi={googleTowMi} towDestLat={towDestLat} origin={origin}
@@ -571,7 +580,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           allWoSiblings={allWoSiblings}
           onOpenWoa={onOpenWoa}
           recReason={audit?.rec_reason}
-        />
+        />}
 
         {/* Right: WO Context — everything the auditor needs to know about this WO */}
         <div className="glass rounded-xl border border-slate-700/30 p-4 space-y-3">
@@ -770,7 +779,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       {audit && <AccountingPhotosCard photos={audit.photos} code={code} />}
 
       {/* ── Auditor Summary — full width below grid ── */}
-      {audit && (localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
+      {audit && !contractorMode && (localSummary || showAi || aiLoading || (rec === 'REVIEW' && audit.ask_garage?.length > 0)) && (
         <div className="glass rounded-xl border border-slate-700/20 px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
             <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Auditor Summary</div>

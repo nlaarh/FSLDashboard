@@ -183,26 +183,42 @@ def list_users() -> list[dict]:
 
 
 def create_user(username: str, password: str, name: str, role: str = "viewer",
-                email: str = "", phone: str = "", department: str = "") -> dict:
+                email: str = "", phone: str = "", department: str = "",
+                territories: list = None) -> dict:
     h, salt = _hash_password(password)
     _user_repo.create_user(
-        username, name, role, email, phone, h, salt, 1, time.time(), department
+        username, name, role, email, phone, h, salt, 1, time.time(), department,
+        territories=territories or [],
     )
     _cache_invalidate(username)
     _trigger_backup()
     return {"username": username, "name": name, "role": role,
-            "email": email, "phone": phone, "department": department}
+            "email": email, "phone": phone, "department": department,
+            "territories": territories or []}
 
 
 def update_user(username: str, name: str = None, role: str = None, department: str = None,
-                password: str = None, active: bool = None, email: str = None, phone: str = None) -> dict:
+                password: str = None, active: bool = None, email: str = None, phone: str = None,
+                territories: list = None) -> dict:
     result = _user_repo.update_user(
         username, name=name, role=role, department=department,
-        password=password, active=active, email=email, phone=phone
+        password=password, active=active, email=email, phone=phone,
+        territories=territories,
     )
     _cache_invalidate(username)
     _trigger_backup()
     return result
+
+
+def get_user_territories(username: str) -> list:
+    """Return the territories list for a user. Empty list if not found or on error."""
+    try:
+        user = _user_repo.get_user(username)
+        if user:
+            return user.get("territories") or []
+    except Exception:
+        pass
+    return []
 
 
 def delete_user(username: str):
@@ -237,8 +253,10 @@ def invalidate_user_sessions(username: str):
 
 def create_session(username: str, role: str, name: str, department: str = '') -> str:
     token = secrets.token_hex(32)
+    territories = get_user_territories(username)
     with _sess_lock:
         _sessions[token] = {"user": username, "name": name, "role": role, "department": department,
+                            "territories": territories,
                             "login_time": time.time(), "last_seen": time.time()}
     _session_repo.record_login(token, username, name, role, department)
     return token
@@ -273,11 +291,13 @@ def get_session(token: str) -> dict | None:
         return None
     now = time.time()
     _maybe_touch(token, now)
+    uname = persisted["username"]
     return {
-        "user": persisted["username"],
-        "name": persisted.get("name") or persisted["username"],
+        "user": uname,
+        "name": persisted.get("name") or uname,
         "role": persisted.get("role") or "",
         "department": persisted.get("department") or "",
+        "territories": get_user_territories(uname),
         "login_time": persisted["login_time"],
         "last_seen": persisted["last_seen"],
     }

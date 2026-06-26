@@ -18,6 +18,13 @@ import Accounting from './pages/Accounting'
 import AccountingWoaDetail from './pages/AccountingWoaDetail'
 import OptimizerDecoder from './pages/OptimizerDecoder'
 import Reporting from './pages/Reporting'
+import ContractorLayout from './pages/contractor/ContractorLayout'
+import ContractorWatchlist from './pages/contractor/ContractorWatchlist'
+import ContractorGarages from './pages/contractor/ContractorGarages'
+import ContractorForecast from './pages/contractor/ContractorForecast'
+import ContractorPta from './pages/contractor/ContractorPta'
+import ContractorAccounting from './pages/contractor/ContractorAccounting'
+import ContractorCallDetail from './pages/contractor/ContractorCallDetail'
 
 /*
  * AuthApp — renders the full app when authenticated.
@@ -49,6 +56,24 @@ function AuthApp() {
 
   const isFinance = department === 'finance'
   const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
+  const isContractor = role === 'contractor'
+
+  if (isContractor) {
+    return (
+      <Routes>
+        <Route element={<ContractorLayout />}>
+          <Route path="/contractor/watchlist" element={<ContractorWatchlist />} />
+          <Route path="/contractor/garages" element={<ContractorGarages />} />
+          <Route path="/contractor/garage/:id" element={<GarageDetail />} />
+          <Route path="/contractor/forecast" element={<ContractorForecast />} />
+          <Route path="/contractor/pta" element={<ContractorPta />} />
+          <Route path="/contractor/accounting" element={<ContractorAccounting />} />
+          <Route path="/contractor/accounting/calls/:woId" element={<ContractorCallDetail />} />
+          <Route path="*" element={<Navigate to="/contractor/watchlist" replace />} />
+        </Route>
+      </Routes>
+    )
+  }
 
   return (
     <Routes>

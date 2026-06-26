@@ -8,9 +8,11 @@ SA# is handled client-side; this endpoint covers WO#, Member#, Name.
 
 import logging
 import re
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from sf_client import sf_query_all, sf_rest_get, sanitize_soql
 from utils import to_eastern as _to_eastern
+import users as _users
+from routers.auth import get_request_username
 
 log = logging.getLogger('search')
 router = APIRouter()
@@ -51,7 +53,7 @@ def _fetch_sas_for_wos(wo_ids: list[str]) -> tuple[list, list]:
     try:
         sa_rows = sf_query_all(f"""
             SELECT Id, AppointmentNumber, Status, CreatedDate, ActualStartTime,
-                   ParentRecordId, WorkType.Name, ServiceTerritory.Name
+                   ParentRecordId, WorkType.Name, ServiceTerritoryId, ServiceTerritory.Name
             FROM ServiceAppointment
             WHERE ParentRecordId IN ({woli_ids})
             ORDER BY CreatedDate ASC
@@ -95,9 +97,10 @@ def _build_results(wo_rows: list, sa_rows: list, woli_rows: list) -> list:
                 _fmt_dt(primary.get('ActualStartTime')) or _fmt_dt(primary.get('CreatedDate'))
                 if primary else None
             ),
-            'status':     (primary.get('Status') if primary else None),
-            'work_type':  ((primary.get('WorkType') or {}).get('Name') if primary else None),
-            'territory':  ((primary.get('ServiceTerritory') or {}).get('Name') if primary else None),
+            'status':       (primary.get('Status') if primary else None),
+            'work_type':    ((primary.get('WorkType') or {}).get('Name') if primary else None),
+            'territory':    ((primary.get('ServiceTerritory') or {}).get('Name') if primary else None),
+            'territory_id': (primary.get('ServiceTerritoryId') if primary else None),
         })
     return results
 
@@ -135,10 +138,15 @@ def _sosl_name_search(q: str) -> list[dict]:
 
 
 @router.get('/api/search')
-def search(q: str = ''):
+def search(request: Request, q: str = ''):
     q = q.strip()
     if len(q) < 2:
         return {'type': 'empty', 'results': []}
+
+    # Determine contractor territory scope
+    username = get_request_username(request)
+    user = _users.get_user(username) if username else None
+    territories: list[str] = (user.get("territories") or []) if user and user.get("role") == "contractor" else []
 
     qu = q.upper()
     is_wo     = qu.startswith('WO-')
@@ -177,4 +185,6 @@ def search(q: str = ''):
     wo_ids = [w['Id'] for w in wo_rows]
     sa_rows, woli_rows = _fetch_sas_for_wos(wo_ids)
     results = _build_results(wo_rows, sa_rows, woli_rows)
+    if territories:
+        results = [r for r in results if r.get('territory_id') in territories]
     return {'type': search_type, 'results': results}

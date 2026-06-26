@@ -1,4 +1,16 @@
-"""HTML page templates for auth routes (login, forgot-password, reset-password)."""
+"""HTML page templates and page-route handlers for the auth flow.
+
+Kept separate from auth.py to stay under the 600-line ceiling.
+Imported by auth.py — do not import auth.py from here (circular).
+"""
+
+import os
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
+
+router = APIRouter()
+
+_TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
 
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en"><head>
@@ -518,3 +530,24 @@ else{msg.textContent=d.detail||'Something went wrong';msg.className='msg error';
 catch(err){msg.textContent='Network error. Please try again.';msg.className='msg error';btn.disabled=false;btn.textContent='Update Password';validate()}}
 </script>
 </body></html>"""
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page():
+    return _LOGIN_HTML
+
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page():
+    html = _FORGOT_PASSWORD_HTML
+    if _TURNSTILE_SITE_KEY:
+        html = html.replace('data-sitekey=""', f'data-sitekey="{_TURNSTILE_SITE_KEY}"')
+    else:
+        # If no site key configured, hide the widget container
+        html = html.replace('<div class="cf-turnstile"', '<div class="cf-turnstile" style="display:none"')
+    return html
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page():
+    return _RESET_PASSWORD_HTML

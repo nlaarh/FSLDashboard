@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 import users
 import cache
 from password_policy import password_policy_error
-from sf_client import get_stats as sf_stats
+from sf_client import get_stats as sf_stats, sf_query
 from repositories import settings, activity, accounting
 from email_templates import welcome_email_url, password_changed_email_url
 import time
@@ -129,15 +129,18 @@ def admin_create_user(request: Request, body: dict):
         raise HTTPException(status_code=400, detail=password_error)
     email = body.get("email", "").strip()
     phone = body.get("phone", "").strip()
-    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor", "ers-director", "ers-member-relations")
+    valid_roles = ("superadmin", "admin", "manager", "officer", "supervisor", "viewer", "finance", "ers", "executive", "ers-manager", "ers-supervisor", "ers-director", "ers-member-relations", "contractor")
     if role not in valid_roles:
         raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(valid_roles)}")
     department = body.get("department", "").strip().lower()
     valid_depts = ("", "ers", "finance", "executive")
     if department not in valid_depts:
         raise HTTPException(status_code=400, detail=f"department must be one of: ers, finance, executive (or empty)")
+    territories = body.get("territories", [])
+    if not isinstance(territories, list):
+        territories = []
     try:
-        result = users.create_user(username, password, name, role, email=email, phone=phone, department=department)
+        result = users.create_user(username, password, name, role, email=email, phone=phone, department=department, territories=territories)
         email = welcome_email_url(
             username=username,
             name=name,
@@ -164,6 +167,9 @@ def admin_update_user(request: Request, username: str, body: dict):
         password_error = password_policy_error(password)
         if password_error:
             raise HTTPException(status_code=400, detail=password_error)
+    territories = body.get("territories")  # None means "don't change"; [] means "clear"
+    if territories is not None and not isinstance(territories, list):
+        territories = None
     try:
         result = users.update_user(
             username,
@@ -174,6 +180,7 @@ def admin_update_user(request: Request, username: str, body: dict):
             active=body.get("active"),
             email=body.get("email"),
             phone=body.get("phone"),
+            territories=territories,
         )
         if password:
             email = password_changed_email_url(
@@ -421,3 +428,20 @@ def api_get_activity_stats(request: Request):
     """Get activity log summary stats."""
     _check_pin(request)
     return activity.get_activity_stats()
+
+
+# ── Territories List ──────────────────────────────────────────────────────────
+
+@router.get("/api/admin/territories-list")
+def admin_territories_list(request: Request):
+    """Return all active Salesforce Service Territories. Used to assign contractors."""
+    _check_pin(request)
+    try:
+        result = sf_query(
+            "SELECT Id, Name FROM ServiceTerritory WHERE IsActive = true ORDER BY Name"
+        )
+        records = result.get("records", []) if isinstance(result, dict) else []
+        territories = [{"id": r["Id"], "name": r["Name"]} for r in records]
+        return {"territories": territories}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Salesforce query failed: {e}")

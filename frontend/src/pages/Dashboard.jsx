@@ -21,7 +21,7 @@ const SORT_DEF = {
 }
 const STATUS_RANK = { critical: 0, behind: 1, good: 2, inactive: 3 }
 
-export default function Dashboard() {
+export default function Dashboard({ onNav: onNavProp } = {}) {
   const [garages,    setGarages]    = useState([])
   const [ccData,     setCcData]     = useState(null)
   const [garLoading, setGarLoading] = useState(true)
@@ -119,7 +119,7 @@ export default function Dashboard() {
     )
   }
 
-  const onNav = (id, tab, name) => navigate(`/garage/${id}?tab=${tab}${name ? '&name=' + encodeURIComponent(name) : ''}`)
+  const onNav = onNavProp || ((id, tab, name) => navigate(`/garage/${id}?tab=${tab}${name ? '&name=' + encodeURIComponent(name) : ''}`))
 
   // ── Summary ───────────────────────────────────────────────────────────────────
   const active   = rows.filter(r => r.hasLive)

@@ -3,8 +3,10 @@ import { AlertTriangle, CheckCircle2, Copy, Eye, EyeOff, ExternalLink, KeyRound,
 import { clsx } from 'clsx'
 import { DEPTS, ROLES } from '../constants/users'
 import { FORM_PASSWORD_COPY_KEY, passwordChecks, passwordIssues } from '../utils/passwords'
+import AdminGaragePicker from './AdminGaragePicker'
 
 export default function AdminUserEditor({
+  pin,
   editingUser,
   userForm,
   setUserForm,
@@ -113,6 +115,17 @@ export default function AdminUserEditor({
               />
             </Field>
           </div>
+
+          {/* Garage picker — contractor role only */}
+          {userForm.role === 'contractor' && (
+            <div className="mt-4">
+              <AdminGaragePicker
+                pin={pin}
+                selected={userForm.territories || []}
+                onChange={ids => setUserForm(f => ({ ...f, territories: ids }))}
+              />
+            </div>
+          )}
 
           <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
             <div className="flex flex-wrap items-center gap-3">

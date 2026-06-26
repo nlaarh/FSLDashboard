@@ -5,6 +5,8 @@ import json as _json
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Request
+import users as _users
+from routers.auth import get_request_username
 
 from utils import _ET, parse_dt as _parse_dt
 from dispatch import _driver_tier, _call_tier, _can_serve
@@ -64,9 +66,14 @@ def _count_by_tier(driver_list):
 
 
 @router.get("/api/pta-advisor")
-def pta_advisor():
+def pta_advisor(request: Request):
     """Projected PTA for all active garages. Pre-cached, auto-refreshes."""
     ttl = _pta_refresh_interval()
+
+    # Determine contractor territory scope (applied after cache fetch)
+    username = get_request_username(request)
+    user = _users.get_user(username) if username else None
+    territories: list[str] = (user.get("territories") or []) if user and user.get("role") == "contractor" else []
 
     def _fetch():
         now_utc = datetime.now(timezone.utc)
@@ -496,7 +503,19 @@ def pta_advisor():
             },
         }
 
-    return cache.cached_query('pta_advisor', _fetch, ttl=ttl)
+    result = cache.cached_query('pta_advisor', _fetch, ttl=ttl)
+    if territories and isinstance(result, dict) and 'garages' in result:
+        filtered_garages = [g for g in result['garages'] if g.get('id') in territories]
+        result = dict(result)  # shallow copy to avoid mutating cached object
+        result['garages'] = filtered_garages
+        totals = result.get('totals', {})
+        result['totals'] = {
+            'garages_active': len(filtered_garages),
+            'total_queue': sum(g.get('queue_depth', 0) for g in filtered_garages),
+            'total_drivers': sum(g.get('drivers', {}).get('total', 0) for g in filtered_garages),
+            'total_idle': sum(g.get('drivers', {}).get('idle', 0) for g in filtered_garages),
+        }
+    return result
 
 
 @router.post("/api/pta-advisor/refresh")
@@ -504,7 +523,7 @@ def pta_advisor_refresh(request: Request):
     """Force refresh PTA advisor cache. PIN-protected."""
     _check_pin(request)
     cache.invalidate('pta_advisor')
-    return pta_advisor()
+    return pta_advisor(request)
 
 
 ## NOTE: /api/admin/settings GET and PUT are in routers/admin.py

@@ -23,15 +23,16 @@ def _fetch_photo_wo_ids(wo_ids: list) -> set:
 
     found = set()
     try:
+        # No GROUP BY — SF aggregate queries return AggregateResult wrappers that
+        # can break field access. Python set dedup is sufficient here.
         rows = batch_soql_parallel("""
             SELECT Work_Order__c
             FROM Service_Photo__c
             WHERE Work_Order__c IN ('{id_list}')
-            GROUP BY Work_Order__c
         """, wo_ids, chunk_size=400)
         found = {r.get('Work_Order__c') for r in (rows or []) if r.get('Work_Order__c')}
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"_fetch_photo_wo_ids Service_Photo__c query failed: {e}")
 
     # CDL fallback for WOs not found in Service_Photo__c
     remaining = [wid for wid in wo_ids if wid not in found]
@@ -46,19 +47,19 @@ def _fetch_photo_wo_ids(wo_ids: list) -> set:
             woli_ids = [r.get('Id') for r in (woli_rows or []) if r.get('Id')]
             woli_to_wo = {r.get('Id'): r.get('WorkOrderId') for r in (woli_rows or []) if r.get('Id')}
             if woli_ids:
+                # No GROUP BY — deduplicate in Python
                 cdl_rows = batch_soql_parallel("""
                     SELECT LinkedEntityId
                     FROM ContentDocumentLink
                     WHERE LinkedEntityId IN ('{id_list}')
                       AND ContentDocument.FileType IN ('JPG', 'JPEG', 'PNG')
-                    GROUP BY LinkedEntityId
                 """, woli_ids, chunk_size=400)
                 for r in (cdl_rows or []):
                     woli_id = r.get('LinkedEntityId')
                     if woli_id and woli_id in woli_to_wo:
                         found.add(woli_to_wo[woli_id])
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"_fetch_photo_wo_ids CDL fallback query failed: {e}")
 
     return found
 

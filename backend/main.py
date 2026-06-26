@@ -84,6 +84,8 @@ async def auth_middleware(request: Request, call_next):
         role = _get_role(username)
         if role in ('ers-supervisor', 'ers-member-relations') and path.startswith('/api/') and _supervisor_blocked(path):
             return JSONResponse(status_code=403, content={"detail": "Access restricted"})
+        if role == 'contractor' and path.startswith('/api/admin/'):
+            return JSONResponse(status_code=403, content={"detail": "Access restricted"})
         if path.startswith('/api/admin/') and not _admin_allowed(role) and not _reference_allowed(role, path):
             return JSONResponse(status_code=403, content={"detail": "Admin access restricted"})
         return await call_next(request)
@@ -150,7 +152,7 @@ async def activity_log_middleware(request: Request, call_next):
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (
-    auth, admin, garages, garages_performance, garages_revenue, command_center, ops,
+    auth, auth_pages, admin, garages, garages_performance, garages_revenue, command_center, ops,
     map as map_router,
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
@@ -160,9 +162,11 @@ from routers import (
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
+    contractor, contractor_recommendations,
 )
 
 app.include_router(auth.router)
+app.include_router(auth_pages.router)
 app.include_router(admin.router)
 app.include_router(garages.router)
 app.include_router(command_center.router)
@@ -207,6 +211,8 @@ app.include_router(admin_reference.router)
 app.include_router(system_health.router)
 app.include_router(salesforce_diagnostics.router)
 app.include_router(search.router)
+app.include_router(contractor.router)
+app.include_router(contractor_recommendations.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────
@@ -386,6 +392,21 @@ _NEW_ACCOUNTING_RATES = [
 ]
 
 
+def _ensure_users_territories_column():
+    """Add territories column to core.users if absent (Phase 1 contractor portal migration)."""
+    try:
+        import db_adapter
+        with db_adapter.writer() as db:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS territories TEXT DEFAULT '[]'"
+            )
+        import logging
+        logging.getLogger('startup').info("core.users.territories column ensured")
+    except Exception as e:
+        import logging
+        logging.getLogger('startup').warning("Could not ensure users.territories column: %s", e)
+
+
 def _ensure_accounting_rates_rows():
     """Insert missing reference rate rows into an existing deployment."""
     try:
@@ -469,6 +490,7 @@ async def startup():
     _ensure_cache_table()
     _ensure_dispatchers_table()
     _ensure_accounting_rates_rows()
+    _ensure_users_territories_column()
 
     import users
     users.seed_users()

@@ -1,6 +1,6 @@
 """Garage endpoints — analytics space."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from datetime import datetime, date, timedelta, timezone
 from collections import defaultdict
 
@@ -14,14 +14,25 @@ from scheduler import generate_schedule
 from simulator import simulate_day
 from scorer import compute_score
 import cache
+import users as _users
+from routers.auth import get_request_username
 
 router = APIRouter()
 
 
 # ── Garages ──────────────────────────────────────────────────────────────────
 
+def _get_contractor_territories(request: Request) -> list[str]:
+    """Return territory IDs for the requesting user if they are a contractor, else []."""
+    username = get_request_username(request)
+    user = _users.get_user(username) if username else None
+    if user and user.get("role") == "contractor":
+        return user.get("territories") or []
+    return []
+
+
 @router.get("/api/garages")
-def list_garages():
+def list_garages(request: Request):
     """List roadside garages -- territories with recent SA volume."""
     def _fetch():
         from ops import _get_priority_matrix
@@ -71,16 +82,29 @@ def list_garages():
             })
         return garages
 
-    return cache.cached_query('garages_list', _fetch, ttl=600)
+    garages = cache.cached_query('garages_list', _fetch, ttl=600)
+    territories = _get_contractor_territories(request)
+    if territories:
+        garages = [g for g in garages if g.get("id") in territories]
+    return garages
 
 
 # ── Schedule ─────────────────────────────────────────────────────────────────
 
+def _check_territory_access(request: Request, territory_id: str):
+    """Raise 403 if the requesting user is a contractor without access to this territory."""
+    territories = _get_contractor_territories(request)
+    if territories and territory_id not in territories:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
 @router.get("/api/garages/{territory_id}/schedule")
-def get_schedule(territory_id: str,
+def get_schedule(request: Request,
+                 territory_id: str,
                  weeks: int = Query(4, ge=1, le=12),
                  start_date: str = Query(None),
                  end_date: str = Query(None)):
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     if start_date:
         start_date = sanitize_soql(start_date)
@@ -100,8 +124,9 @@ def get_schedule(territory_id: str,
 # ── Scorecard -- Goal-Based Performance ───────────────────────────────────
 
 @router.get("/api/garages/{territory_id}/scorecard")
-def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
+def get_scorecard(request: Request, territory_id: str, weeks: int = Query(4, ge=1, le=12)):
     """Performance scorecard: SLA compliance, fleet capacity, and gap analysis."""
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     days = weeks * 7
     cutoff = (date.today() - timedelta(days=days)).isoformat()
@@ -424,8 +449,9 @@ def get_scorecard(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
 # ── Appointments (Day View) ─────────────────────────────────────────────────
 
 @router.get("/api/garages/{territory_id}/appointments")
-def get_appointments(territory_id: str, date_str: str = Query(..., alias='date')):
+def get_appointments(request: Request, territory_id: str, date_str: str = Query(..., alias='date')):
     """Get all SAs for a territory on a specific date."""
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     date_str = sanitize_soql(date_str)
     def _fetch():
@@ -473,7 +499,8 @@ def get_appointments(territory_id: str, date_str: str = Query(..., alias='date')
 # ── Simulation ───────────────────────────────────────────────────────────────
 
 @router.get("/api/garages/{territory_id}/simulate")
-def run_simulation(territory_id: str, date_str: str = Query(..., alias='date')):
+def run_simulation(request: Request, territory_id: str, date_str: str = Query(..., alias='date')):
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     date_str = sanitize_soql(date_str)
     def _fetch():
@@ -513,7 +540,8 @@ def run_simulation(territory_id: str, date_str: str = Query(..., alias='date')):
 # ── Performance Score ────────────────────────────────────────────────────────
 
 @router.get("/api/garages/{territory_id}/score")
-def get_score(territory_id: str, weeks: int = Query(4, ge=1, le=12)):
+def get_score(request: Request, territory_id: str, weeks: int = Query(4, ge=1, le=12)):
+    _check_territory_access(request, territory_id)
     territory_id = sanitize_soql(territory_id)
     result = compute_score(territory_id, weeks)
     if result.get('error'):
