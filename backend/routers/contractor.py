@@ -34,27 +34,25 @@ _MAX_RECS = 200
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
 def _require_contractor_facilities(request: Request) -> list[str]:
-    """Return Facility_ID__c codes for the contractor's territories.
+    """Return Facility_ID__c codes for the contractor's assigned garages.
 
     ServiceTerritory is a region that can span multiple facilities; filtering
     by ServiceTerritoryId would leak WOs from sibling facilities in the same
-    region. We derive the exact facility codes from the territory names
-    (format: "076DO - TRANSIT AUTO DETAIL" → "076DO") so SOQL can filter
+    region. We derive the exact facility codes from the garage names stored in
+    the DB (format: "076DO - TRANSIT AUTO DETAIL" → "076DO") so SOQL can filter
     on Facility_ID__c instead.
     """
-    from routers.auth import _get_garage_names  # avoids circular at module level
     username = get_request_username(request)
     user = _users.get_user(username) if username else None
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     role = user.get("role", "")
-    territories: list[str] = user.get("territories") or []
     if role not in ("superadmin", "admin", "contractor"):
         raise HTTPException(status_code=403, detail="Contractor access only")
-    if not territories:
+    garages = _users.get_user_garages(username) if username else []
+    if not garages:
         raise HTTPException(status_code=400, detail="No territories assigned to this account")
-    garage_names = _get_garage_names(territories)
-    facility_ids = [g["name"].split(" - ")[0].strip() for g in garage_names if " - " in g.get("name", "")]
+    facility_ids = [g["name"].split(" - ")[0].strip() for g in garages if " - " in g.get("name", "")]
     if not facility_ids:
         raise HTTPException(status_code=400, detail="No facilities resolved for this account")
     return facility_ids
@@ -80,7 +78,7 @@ def contractor_wo_payments(
     start_date: str = Query(..., description="YYYY-MM-DD"),
     end_date: str = Query(..., description="YYYY-MM-DD"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=2000),
+    page_size: int = Query(50, ge=1, le=50000),
 ):
     """Paginated WOLI payment history for contractor territories."""
     facility_ids = _require_contractor_facilities(request)
@@ -97,7 +95,7 @@ def contractor_wo_payments(
                WorkOrder.CreatedDate, WorkOrder.Status,
                WorkOrder.ServiceTerritory.Name, WorkOrder.WorkType.Name,
                PricebookEntry.Name, PricebookEntry.ProductCode,
-               Quantity, UnitPrice, TotalPrice, TaxAmount,
+               Quantity, UnitPrice, TotalPrice,
                Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c
         FROM WorkOrderLineItem
         WHERE WorkOrder.Facility_ID__c IN ({f_clause})
@@ -105,7 +103,7 @@ def contractor_wo_payments(
           AND WorkOrder.CreatedDate <= {end_date}T23:59:59Z
           AND PricebookEntryId != null
         ORDER BY WorkOrder.CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """
     rows = sf_query_all(soql)
 
@@ -118,7 +116,6 @@ def contractor_wo_payments(
         prem  = r.get("Premier_Cost__c") or 0
         rv    = r.get("RV_Cost__c") or 0
         other = r.get("Other_Cost__c") or 0
-        tax   = r.get("TaxAmount") or 0
         row_total = round(basic + plus + prem + rv + other, 2)
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
@@ -131,7 +128,6 @@ def contractor_wo_payments(
             "product_name": pbe.get("Name") or "",
             "quantity": r.get("Quantity"),
             "unit_price": r.get("UnitPrice"),
-            "tax_amount": tax,
             "total_price": row_total,
             "basic_cost": r.get("Basic_Cost__c"),
             "plus_cost": r.get("Plus_Cost__c"),
@@ -164,10 +160,8 @@ def contractor_calls(
     request: Request,
     start_date: str = Query(..., description="YYYY-MM-DD"),
     end_date: str = Query(..., description="YYYY-MM-DD"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=2000),
 ):
-    """WO-centric calls log for contractor territories."""
+    """WO-centric calls log for contractor territories. Returns all matching WOs."""
     facility_ids = _require_contractor_facilities(request)
     f_clause = _facility_in_clause(facility_ids)
 
@@ -187,7 +181,6 @@ def contractor_calls(
           AND CreatedDate >= {start_date}T00:00:00Z
           AND CreatedDate <= {end_date}T23:59:59Z
         ORDER BY CreatedDate DESC
-        LIMIT 2000
     """
     rows = sf_query_all(soql)
 
@@ -220,15 +213,9 @@ def contractor_calls(
     for i in items:
         i["has_photos"] = i.get("wo_id", "") in photo_ids
 
-    total = len(items)
-    start_idx = (page - 1) * page_size
-    page_items = items[start_idx: start_idx + page_size]
-
     return {
-        "items": page_items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
+        "items": items,
+        "total": len(items),
     }
 
 
@@ -330,7 +317,7 @@ def contractor_call_audit(wo_id: str, request: Request):
                ServiceTerritory.Name, ServiceTerritoryId,
                Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c,
                Tax, GrandTotal, Total_Amount_Invoiced__c,
-               Vehicle_Make__c, Vehicle_Model__c, Customer_Name__c
+               Vehicle_Make__c, Vehicle_Model__c, Customer_Name__c, Notes__c
         FROM WorkOrder
         WHERE Id = '{safe_id}'
         LIMIT 1
@@ -391,30 +378,41 @@ def contractor_call_audit(wo_id: str, request: Request):
                 _prev_ts = cur_ts
 
     # Build woli_items in accounting audit shape.
-    # Use TotalPrice (actual billed amount per WOLI) as the subtotal — the custom
-    # coverage-tier fields (Basic_Cost__c etc.) are 0 for ER/TW/non-BA products.
+    # TotalPrice/UnitPrice are $0 for contractor WOs; derive from coverage-tier fields.
     wo_tax = _safe_float(wo.get('Tax')) or 0
-    total_subtotal = sum(_safe_float(w.get('TotalPrice')) or 0 for w in woli_rows)
     woli_items = []
     for w in woli_rows:
         pbe = w.get('PricebookEntry') or {}
         product_name = pbe.get('Name') or ''
         product_code = pbe.get('ProductCode') or (product_name.split(' - ')[0].strip() if ' - ' in product_name else '')
-        subtotal = _safe_float(w.get('TotalPrice')) or 0
-        tax_share = round(wo_tax * subtotal / total_subtotal, 2) if subtotal and total_subtotal > 0 else None
-        grand_total = round(subtotal + (tax_share or 0), 2)
+        basic = _safe_float(w.get('Basic_Cost__c')) or 0
+        plus  = _safe_float(w.get('Plus_Cost__c')) or 0
+        prem  = _safe_float(w.get('Premier_Cost__c')) or 0
+        rv    = _safe_float(w.get('RV_Cost__c')) or 0
+        other = _safe_float(w.get('Other_Cost__c')) or 0
+        coverage_total = round(basic + plus + prem + rv + other, 2)
+        subtotal = _safe_float(w.get('TotalPrice')) or coverage_total
+        raw_unit = _safe_float(w.get('UnitPrice')) or 0
+        qty = w.get('Quantity') or 1
+        unit_price = raw_unit if raw_unit else (round(subtotal / qty, 2) if subtotal and qty else 0)
         woli_items.append({
             'id': w.get('Id') or '',
             'name': w.get('LineItemNumber') or '',
             'product': product_name,
             'code': product_code,
             'quantity': w.get('Quantity'),
-            'unit_price': _safe_float(w.get('UnitPrice')),
+            'unit_price': unit_price,
             'subtotal': subtotal,
-            'tax': tax_share,
-            'grand_total': grand_total,
+            'tax': None,
+            'grand_total': subtotal,
             'status': w.get('Status') or '',
         })
+    total_subtotal = sum(i['subtotal'] for i in woli_items)
+    if wo_tax and total_subtotal > 0:
+        for item in woli_items:
+            tax_share = round(wo_tax * item['subtotal'] / total_subtotal, 2)
+            item['tax'] = tax_share
+            item['grand_total'] = round(item['subtotal'] + tax_share, 2)
 
     # woli_rows already has all WOLIs (no PricebookEntryId filter) — use directly
     photos = fetch_photos(wo_id, woli_rows, is_fleet=False)
@@ -474,3 +472,59 @@ def contractor_call_audit(wo_id: str, request: Request):
         'recommendation': None,
         'cache_status': 'fresh',
     }
+
+
+# ── GET /api/contractor/pending-woas ─────────────────────────────────────────
+
+@router.get("/api/contractor/pending-woas")
+def contractor_pending_woas(
+    request: Request,
+    start_date: str = Query(default=None, description="YYYY-MM-DD (default: 90 days ago)"),
+    end_date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+):
+    """Pending (Status=New) WOAs for contractor facilities within date range."""
+    facility_ids = _require_contractor_facilities(request)
+    f_clause = _facility_in_clause(facility_ids)
+
+    now = datetime.now(timezone.utc)
+    if not start_date:
+        start_date = now.strftime("%Y-%m-01")
+    if not end_date:
+        end_date = now.strftime("%Y-%m-%d")
+
+    try:
+        datetime.strptime(start_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+
+    soql = f"""
+        SELECT Id, Name, Work_Order__c, Work_Order__r.WorkOrderNumber,
+               Work_Order__r.Facility_ID__c, Work_Order__r.ServiceTerritory.Name,
+               Work_Order__r.Type__c, Work_Order__r.CreatedDate,
+               Status__c, CreatedDate
+        FROM ERS_Work_Order_Adjustment__c
+        WHERE Work_Order__r.Facility_ID__c IN ({f_clause})
+          AND Status__c = 'New'
+          AND CreatedDate >= {start_date}T00:00:00Z
+          AND CreatedDate <= {end_date}T23:59:59Z
+        ORDER BY CreatedDate DESC
+        LIMIT 500
+    """
+    rows = sf_query_all(soql)
+
+    items = [
+        {
+            "woa_id": r.get("Id"),
+            "woa_name": r.get("Name"),
+            "wo_id": r.get("Work_Order__c"),
+            "wo_number": (r.get("Work_Order__r") or {}).get("WorkOrderNumber") or "",
+            "facility": (r.get("Work_Order__r") or {}).get("Facility_ID__c") or "",
+            "territory": ((r.get("Work_Order__r") or {}).get("ServiceTerritory") or {}).get("Name") or "",
+            "call_type": (r.get("Work_Order__r") or {}).get("Type__c") or "",
+            "created_date": r.get("CreatedDate") or "",
+        }
+        for r in rows
+    ]
+
+    return {"items": items, "total": len(items)}

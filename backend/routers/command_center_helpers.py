@@ -222,8 +222,12 @@ def build_today_metrics(today_sas_all, fleet_lb_sas, fleet_ar, cc_trucks, busy_a
         cancel_reason = sa.get('ERS_Cancellation_Reason__c')
         if cancel_reason:
             cancel_reasons[cancel_reason] += 1
+        # Only count decline reason if the SA was NOT completed — a Completed SA
+        # means the call was resolved (possibly after cascading from another territory).
+        # Counting decline reasons on Completed SAs inflates the count with stale
+        # cascade history that doesn't reflect the current territory's behavior.
         decline_reason = sa.get('ERS_Facility_Decline_Reason__c')
-        if decline_reason:
+        if decline_reason and st not in ('Completed', 'Closed'):
             decline_reasons[decline_reason] += 1
         created = _parse_dt(sa.get('CreatedDate'))
         if created:

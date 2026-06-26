@@ -25,7 +25,11 @@ _DEFAULT_PTA = {'tow': 60, 'winch': 50, 'battery': 45, 'light': 45}  # fallback 
 # PTA type mapping: ERS_Type__c → our call tier
 _PTA_TYPE_MAP = {
     'D': 'default',
-    'F': 'tow',       # Full Service = tow/flatbed
+    'F': 'tow',           # Full Service = tow/flatbed
+    'Tow Pick-Up': 'tow',
+    'Tow Drop-Off': 'tow',
+    'Tow': 'tow',
+    'Flatbed': 'tow',
     'Battery': 'battery',
     'BA': 'battery',
     'Lockout': 'light',
@@ -125,7 +129,7 @@ def pta_advisor(request: Request):
             """),
             # Current PTA settings per territory+type
             pta_settings=lambda: _sqa("""
-                SELECT ERS_Service_Territory__c, ERS_Type__c, ERS_Minutes__c
+                SELECT Id, ERS_Service_Territory__c, ERS_Type__c, ERS_Minutes__c
                 FROM ERS_Service_Appointment_PTA__c
             """),
         )
@@ -163,14 +167,20 @@ def pta_advisor(request: Request):
         busy_driver_ids = set(driver_sa_ids.keys())
 
         # Current PTA settings: territory_id → {call_tier: minutes, 'default': minutes}
+        # pta_id_map: territory_id → {call_tier: SF record Id}
+        _SF_BASE_URL = 'https://aaawcny.lightning.force.com'
         pta_map = defaultdict(dict)
+        pta_id_map = defaultdict(dict)
         for p in data['pta_settings']:
             tid = p.get('ERS_Service_Territory__c')
             ptype = p.get('ERS_Type__c', '')
             mins = p.get('ERS_Minutes__c')
+            rec_id = p.get('Id')
             if tid and mins is not None:
                 mapped = _PTA_TYPE_MAP.get(ptype, 'default')
                 pta_map[tid][mapped] = round(mins)
+                if rec_id:
+                    pta_id_map[tid][mapped] = f'{_SF_BASE_URL}/{rec_id}'
 
         # SA by ID for quick lookup
         sa_by_id = {}
@@ -287,10 +297,15 @@ def pta_advisor(request: Request):
                             if scdt.tzinfo is None:
                                 scdt = scdt.replace(tzinfo=timezone.utc)
                             swait = round((now_utc - scdt).total_seconds() / 60)
+                        raw_pta = round(float(s['ERS_PTA__c'])) if s.get('ERS_PTA__c') and float(s['ERS_PTA__c']) > 0 else None
+                        # SF auto-sets ERS_PTA__c=90 on new SAs as a placeholder.
+                        # Only show it if ActualStartTime is set (driver en route → real PTA)
+                        # or if it differs from the SF default of 90 (was actually updated).
+                        display_pta = raw_pta if (raw_pta is not None and raw_pta != 90) or s.get('ActualStartTime') else None
                         job_details.append({
                             'work_type': wt_n,
                             'wait_min': swait,
-                            'pta_min': round(float(s['ERS_PTA__c'])) if s.get('ERS_PTA__c') else None,
+                            'pta_min': display_pta,
                             'has_arrived': s.get('ActualStartTime') is not None,
                         })
                     busy_list.append({
@@ -339,10 +354,15 @@ def pta_advisor(request: Request):
                         if scdt.tzinfo is None:
                             scdt = scdt.replace(tzinfo=timezone.utc)
                         swait = round((now_utc - scdt).total_seconds() / 60)
+                    raw_pta = round(float(s['ERS_PTA__c'])) if s.get('ERS_PTA__c') and float(s['ERS_PTA__c']) > 0 else None
+                    # SF auto-sets ERS_PTA__c=90 on new SAs as a placeholder.
+                    # Only show it if ActualStartTime is set (driver en route → real PTA)
+                    # or if it differs from the SF default of 90 (was actually updated).
+                    display_pta = raw_pta if (raw_pta is not None and raw_pta != 90) or s.get('ActualStartTime') else None
                     job_details.append({
                         'work_type': wt_n,
                         'wait_min': swait,
-                        'pta_min': round(float(s['ERS_PTA__c'])) if s.get('ERS_PTA__c') else None,
+                        'pta_min': display_pta,
                         'has_arrived': s.get('ActualStartTime') is not None,
                     })
                 # Infer tier from truck ID pattern or default to 'tow' for Towbook
@@ -371,35 +391,17 @@ def pta_advisor(request: Request):
                 travel = _DISPATCH_TRAVEL.get(call_type, 25)
 
                 if capable_idle:
-                    # Idle driver available → use type-specific PTA if set,
-                    # otherwise scale the default by call complexity
-                    type_specific = current_settings.get(call_type)
-                    if type_specific:
-                        projected_min = type_specific
-                    elif current_min:
-                        # Default setting exists but no per-type override
-                        # Scale: default is typically calibrated for tow (most common)
-                        # Battery/light are faster service → shorter PTA
-                        type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
-                        projected_min = round(current_min * type_scale.get(call_type, 1.0))
-                    else:
-                        projected_min = _DEFAULT_PTA.get(call_type, 45)
+                    # Idle driver available → only dispatch processing + travel time
+                    projected_min = _DISPATCH_TRAVEL.get(call_type, 25)
                 elif capable_busy:
                     if not has_fleet_drivers:
-                        # Towbook garage: use ERS_PTA__c from live SAs matching
-                        # THIS call type — different types have different PTAs.
-                        # Fall back to all types, then setting, then default.
-                        type_ptas = [oc['pta_min'] for oc in all_open
-                                     if oc.get('pta_min') and oc.get('tier') == call_type]
-                        if type_ptas:
-                            projected_min = round(sum(type_ptas) / len(type_ptas))
+                        # Towbook garage: SA.ERS_PTA__c mirrors the territory's D record —
+                        # not a real-time estimate. Use the PTA settings table directly.
+                        if current_min:
+                            type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
+                            projected_min = round(current_min * type_scale.get(call_type, 1.0))
                         else:
-                            # No live SAs of this type → use PTA setting or default
-                            if current_min:
-                                type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
-                                projected_min = round(current_min * type_scale.get(call_type, 1.0))
-                            else:
-                                projected_min = _DEFAULT_PTA.get(call_type, 45)
+                            projected_min = _DEFAULT_PTA.get(call_type, 45)
                     else:
                         # Fleet garage: simulate — busy drivers become free,
                         # serve queued calls, then our new call
@@ -415,13 +417,9 @@ def pta_advisor(request: Request):
                         next_free = heapq.heappop(heap) if heap else 0
                         projected_min = round(next_free + travel)
                 else:
-                    # No capable drivers — Towbook: use type-matched PTA or setting
+                    # No capable drivers — Towbook: use PTA settings table directly
                     if not has_fleet_drivers:
-                        type_ptas = [oc['pta_min'] for oc in all_open
-                                     if oc.get('pta_min') and oc.get('tier') == call_type]
-                        if type_ptas:
-                            projected_min = round(sum(type_ptas) / len(type_ptas))
-                        elif current_min:
+                        if current_min:
                             type_scale = {'tow': 1.0, 'winch': 0.75, 'battery': 0.65, 'light': 0.7}
                             projected_min = round(current_min * type_scale.get(call_type, 1.0))
                         else:
@@ -441,10 +439,15 @@ def pta_advisor(request: Request):
                 else:
                     rec = 'ok'
 
+                # SF URL: prefer type-specific record, fall back to default record
+                sf_urls = pta_id_map.get(tid, {})
+                sf_url = sf_urls.get(call_type) or sf_urls.get('default')
+
                 projected[call_type] = {
                     'projected_min': projected_min,
                     'current_setting_min': current_min,
                     'recommendation': rec,
+                    'sf_url': sf_url,
                 }
 
             # Queue stats (all_open = assigned + unassigned, for display)

@@ -10,7 +10,7 @@ export const EMPTY_USER_FORM = {
   email: '',
   phone: '',
   department: '',
-  territories: [],
+  garages: [],
 }
 
 function shuffle(chars) {

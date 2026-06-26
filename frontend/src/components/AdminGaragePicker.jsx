@@ -7,8 +7,8 @@ import { adminTerritoriesList } from '../api'
  *
  * Props:
  *   pin           - Admin PIN (forwarded to territories-list endpoint)
- *   selected      - string[] of selected territory IDs
- *   onChange      - (ids: string[]) => void
+ *   selected      - {id, name}[] of selected garages
+ *   onChange      - (garages: {id, name}[]) => void
  */
 export default function AdminGaragePicker({ pin, selected = [], onChange }) {
   const [territories, setTerritories] = useState([])
@@ -33,10 +33,11 @@ export default function AdminGaragePicker({ pin, selected = [], onChange }) {
     t.id.toLowerCase().includes(search.toLowerCase())
   )
 
-  const toggle = (id) => {
-    const next = selected.includes(id)
-      ? selected.filter(x => x !== id)
-      : [...selected, id]
+  const toggle = (t) => {
+    const isSelected = selected.some(s => s.id === t.id)
+    const next = isSelected
+      ? selected.filter(s => s.id !== t.id)
+      : [...selected, { id: t.id, name: t.name }]
     onChange(next)
   }
 
@@ -85,7 +86,7 @@ export default function AdminGaragePicker({ pin, selected = [], onChange }) {
               </div>
             )}
             {filtered.map(t => {
-              const isChecked = selected.includes(t.id)
+              const isChecked = selected.some(s => s.id === t.id)
               return (
                 <label
                   key={t.id}
@@ -96,7 +97,7 @@ export default function AdminGaragePicker({ pin, selected = [], onChange }) {
                   <input
                     type="checkbox"
                     checked={isChecked}
-                    onChange={() => toggle(t.id)}
+                    onChange={() => toggle(t)}
                     className="w-3.5 h-3.5 rounded border-slate-600 accent-fuchsia-500 cursor-pointer flex-shrink-0"
                   />
                   <Building2 className={`w-3 h-3 flex-shrink-0 ${isChecked ? 'text-fuchsia-400' : 'text-slate-600'}`} />

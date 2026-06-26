@@ -1,14 +1,18 @@
 import { useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import ContractorCalls from './ContractorCalls'
 import ContractorAccountingRecs from './ContractorAccountingRecs'
+import ContractorPendingWoas from './ContractorPendingWoas'
 
 const TABS = [
-  { key: 'calls', label: 'Work Orders' },
-  { key: 'recs',  label: 'Recommendations' },
+  { key: 'calls',   label: 'Work Orders' },
+  { key: 'recs',    label: 'Recommendations' },
+  { key: 'pending', label: 'Work Order Adjs' },
 ]
 
 export default function ContractorAccounting() {
-  const [activeTab, setActiveTab] = useState('calls')
+  const location = useLocation()
+  const [activeTab, setActiveTab] = useState(location.state?.tab || 'calls')
 
   return (
     <div>
@@ -32,8 +36,9 @@ export default function ContractorAccounting() {
         ))}
       </div>
 
-      {activeTab === 'calls' && <ContractorCalls />}
-      {activeTab === 'recs' && <ContractorAccountingRecs />}
+      {activeTab === 'calls'   && <ContractorCalls />}
+      {activeTab === 'recs'    && <ContractorAccountingRecs />}
+      {activeTab === 'pending' && <ContractorPendingWoas />}
     </div>
   )
 }

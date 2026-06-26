@@ -9,7 +9,6 @@ import os, hashlib, hmac, secrets, time, threading
 from fastapi import APIRouter, HTTPException, Request, Response
 import users
 from permissions import get_user_features
-from sf_client import sf_query_all
 
 # Page routes are registered on this router via auth_pages.router; main.py must
 # include both routers.  We do NOT re-export the page router here to avoid
@@ -116,35 +115,6 @@ def get_request_username(request: Request) -> str | None:
     return None
 
 
-# ── Garage-names cache (contractor territory lookup) ─────────────────────────
-# Keyed by frozenset of territory IDs to avoid redundant SF calls.
-_garage_names_cache: dict[frozenset, list[dict]] = {}
-
-
-def _get_garage_names(territory_ids: list[str]) -> list[dict]:
-    """Return [{id, name}, ...] for the given territory IDs.
-
-    Only called for contractor users who have territories. Results are cached
-    in-memory per unique territory set for the lifetime of the process.
-    """
-    if not territory_ids:
-        return []
-    key = frozenset(territory_ids)
-    if key in _garage_names_cache:
-        return _garage_names_cache[key]
-    ids_str = ', '.join(f"'{t}'" for t in territory_ids)
-    try:
-        rows = sf_query_all(
-            f"SELECT Id, Name FROM ServiceTerritory WHERE Id IN ({ids_str})"
-        )
-        result = [{'id': r['Id'], 'name': r['Name']} for r in (rows or [])]
-    except Exception:
-        log.exception("Failed to fetch garage names for territories %s", territory_ids)
-        result = []
-    _garage_names_cache[key] = result
-    return result
-
-
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
 @router.post("/api/auth/login")
@@ -187,14 +157,13 @@ def auth_me(request: Request):
                 department = sess.get("department", "")
         # Get email + department + territories from user record (authoritative; also handles old sessions without dept)
         user_record = users.get_user(username)
-        territories: list = []
         if user_record:
             email = user_record.get("email", "")
             if not department:
                 department = user_record.get("department", "")
-            territories = user_record.get("territories") or []
-        # Resolve territory IDs to names — only for contractor users
-        garage_names = _get_garage_names(territories) if role == "contractor" and territories else []
+        territories = users.get_user_territories(username)
+        # Resolve territory IDs to names — only for contractor users (names stored in DB, no SF call needed)
+        garage_names = users.get_user_garages(username) if role == "contractor" else []
         return {
             "user": username, "name": name, "role": role,
             "email": email, "department": department,

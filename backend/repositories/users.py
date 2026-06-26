@@ -4,7 +4,6 @@ Replaces direct calls to core_users.py and users.py database functions.
 All SQL uses %%s placeholders (db_adapter handles SQLite conversion).
 """
 
-import json
 import logging
 
 import bcrypt
@@ -33,19 +32,6 @@ def _hash_password(password: str) -> tuple[str, str]:
     return h, "bcrypt"
 
 
-def _parse_territories(raw) -> list:
-    """Parse a JSON string or list into a list of territory strings."""
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        return raw
-    try:
-        result = json.loads(raw)
-        return result if isinstance(result, list) else []
-    except Exception:
-        return []
-
-
 def _row_to_public(row: dict | None) -> dict | None:
     if row is None:
         return None
@@ -56,7 +42,6 @@ def _row_to_public(row: dict | None) -> dict | None:
         "email": row.get("email", ""),
         "active": bool(row.get("active", 1)),
         "department": row.get("department") or "",
-        "territories": _parse_territories(row.get("territories")),
     }
 
 
@@ -72,7 +57,6 @@ def _row_to_full(row: dict | None) -> dict | None:
         "active": bool(row.get("active", 1)),
         "created": row.get("created_at"),
         "department": row.get("department") or "",
-        "territories": _parse_territories(row.get("territories")),
     }
 
 
@@ -133,6 +117,37 @@ def list_users() -> list[dict]:
         raise
 
 
+def get_user_garages(username: str) -> list[dict]:
+    """Return garages assigned to a user as [{id, name}]."""
+    try:
+        with db_adapter.reader() as db:
+            db.execute(
+                "SELECT garage_id, garage_name FROM user_garages WHERE username = %s ORDER BY garage_id",
+                (username,),
+            )
+            rows = db.fetchall()
+            return [{"id": r["garage_id"], "name": r["garage_name"]} for r in rows]
+    except Exception as e:
+        log.warning(f"[repo.users] get_user_garages failed: {e}")
+        raise
+
+
+def set_user_garages(username: str, garages: list[dict]) -> None:
+    """Replace all garage assignments for a user atomically."""
+    try:
+        with db_adapter.writer() as db:
+            db.execute("DELETE FROM user_garages WHERE username = %s", (username,))
+            for g in garages:
+                db.execute(
+                    "INSERT INTO user_garages (username, garage_id, garage_name) VALUES (%s, %s, %s)",
+                    (username, g["id"], g["name"]),
+                )
+            db.commit()
+    except Exception as e:
+        log.warning(f"[repo.users] set_user_garages failed: {e}")
+        raise
+
+
 def create_user(
     username,
     name,
@@ -144,16 +159,15 @@ def create_user(
     active,
     created_at,
     department,
-    territories=None,
+    garages=None,
 ):
-    territories_json = json.dumps(territories if isinstance(territories, list) else [])
     try:
         with db_adapter.writer() as db:
             db.execute(
                 """
                 INSERT INTO users
-                    (username, name, role, email, phone, password_hash, salt, active, created_at, department, territories)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (username, name, role, email, phone, password_hash, salt, active, created_at, department)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     username,
@@ -166,9 +180,15 @@ def create_user(
                     active,
                     created_at,
                     department,
-                    territories_json,
                 ),
             )
+            if garages:
+                db.execute("DELETE FROM user_garages WHERE username = %s", (username,))
+                for g in garages:
+                    db.execute(
+                        "INSERT INTO user_garages (username, garage_id, garage_name) VALUES (%s, %s, %s)",
+                        (username, g["id"], g["name"]),
+                    )
             db.commit()
     except Exception as e:
         log.warning(f"[repo.users] create_user failed: {e}")
@@ -186,7 +206,7 @@ def update_user(
     active=None,
     email=None,
     phone=None,
-    territories=None,
+    garages=None,
 ):
     try:
         row = _get_raw(username)
@@ -219,20 +239,18 @@ def update_user(
             params.append(h)
             sets.append("salt = %s")
             params.append(salt)
-        if territories is not None:
-            sets.append("territories = %s")
-            params.append(json.dumps(territories if isinstance(territories, list) else []))
 
-        if not sets:
-            return _row_to_full(row)
+        if sets:
+            params.append(username)
+            with db_adapter.writer() as db:
+                db.execute(
+                    f"UPDATE users SET {', '.join(sets)} WHERE username = %s",
+                    params,
+                )
+                db.commit()
 
-        params.append(username)
-        with db_adapter.writer() as db:
-            db.execute(
-                f"UPDATE users SET {', '.join(sets)} WHERE username = %s",
-                params,
-            )
-            db.commit()
+        if garages is not None:
+            set_user_garages(username, garages)
 
         updated = _get_raw(username)
         return _row_to_full(updated)

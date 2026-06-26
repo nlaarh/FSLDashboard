@@ -174,7 +174,7 @@ export default function ContractorAccountingPayments() {
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const params = new URLSearchParams({ start_date: startDate, end_date: endDate, page: 1, page_size: 2000 })
+      const params = new URLSearchParams({ start_date: startDate, end_date: endDate, page: 1, page_size: 50000 })
       const res = await fetch(`/api/contractor/wo-payments?${params}`)
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       setData(await res.json())

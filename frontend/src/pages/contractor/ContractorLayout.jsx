@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext, useRef } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import {
-  Star, LayoutDashboard, CloudSun, Clock, DollarSign,
+  Star, LayoutDashboard, Clock, DollarSign,
   LogOut, Search, Loader2, Sun, Moon, X as XIcon, Building2,
 } from 'lucide-react'
 import FloatingChat from '../../components/FloatingChat'
@@ -208,7 +208,6 @@ export default function ContractorLayout() {
   const navLinks = [
     { to: '/contractor/watchlist', icon: <Star className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Watchlist' },
     { to: '/contractor/garages',   icon: <LayoutDashboard className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Garages' },
-    { to: '/contractor/forecast',  icon: <CloudSun className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Forecast' },
     { to: '/contractor/pta',       icon: <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'PTA Advisor' },
     { to: '/contractor/accounting', icon: <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Accounting' },
   ]

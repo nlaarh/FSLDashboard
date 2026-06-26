@@ -121,8 +121,8 @@ export default function AdminUserEditor({
             <div className="mt-4">
               <AdminGaragePicker
                 pin={pin}
-                selected={userForm.territories || []}
-                onChange={ids => setUserForm(f => ({ ...f, territories: ids }))}
+                selected={userForm.garages || []}
+                onChange={garages => setUserForm(f => ({ ...f, garages }))}
               />
             </div>
           )}

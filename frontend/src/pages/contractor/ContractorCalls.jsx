@@ -13,11 +13,10 @@ function fmt(v) {
 }
 
 function defaultDates() {
-  const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - 30)
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
   const iso = d => d.toISOString().slice(0, 10)
-  return { start: iso(start), end: iso(end) }
+  return { start: iso(start), end: iso(now) }
 }
 
 function exportCSV(rows) {
@@ -94,7 +93,7 @@ export default function ContractorCalls() {
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const params = new URLSearchParams({ start_date: startDate, end_date: endDate, page: 1, page_size: 2000 })
+      const params = new URLSearchParams({ start_date: startDate, end_date: endDate })
       const res = await fetch(`/api/contractor/calls?${params}`)
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const json = await res.json()
@@ -161,12 +160,12 @@ export default function ContractorCalls() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
         </div>
         <button onClick={fetchData} disabled={loading}
@@ -290,7 +289,7 @@ export default function ContractorCalls() {
                 ))}
                 {!loading && filteredSortedCalls.map(c => (
                   <tr key={c.wo_id}
-                    onClick={() => navigate(`/contractor/accounting/calls/${c.wo_id}`)}
+                    onClick={() => navigate(`/contractor/accounting/calls/${c.wo_id}`, { state: { from: 'calls' } })}
                     className="hover:bg-slate-800/40 cursor-pointer transition-colors border-b border-slate-800/40">
                     <td className="px-2 py-2.5 font-mono">
                       <div className="flex items-center gap-1.5">

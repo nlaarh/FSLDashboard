@@ -9,7 +9,7 @@
 import { useState } from 'react'
 import {
   ArrowUp, ArrowDown, Check, Minus, Truck, Zap, Wrench,
-  ChevronDown, ChevronUp, Anchor, HelpCircle, X,
+  ChevronDown, ChevronUp, Anchor, HelpCircle, X, ExternalLink,
 } from 'lucide-react'
 
 const TIER_ICONS = {
@@ -150,10 +150,17 @@ export function GarageRow({ garage: g, expanded, onToggle }) {
                         {p.projected_min != null ? `${p.projected_min} min` : 'No coverage'}
                       </span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-center">
                       <span className="text-slate-500">Current Setting</span>
-                      <span className="text-slate-300">
+                      <span className="flex items-center gap-1.5 text-slate-300">
                         {p.current_setting_min != null ? `${p.current_setting_min} min` : 'Not set'}
+                        {p.sf_url && (
+                          <a href={p.sf_url} target="_blank" rel="noopener noreferrer"
+                            title="Edit in Salesforce"
+                            className="text-slate-600 hover:text-indigo-400 transition-colors">
+                            <ExternalLink size={10} />
+                          </a>
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between">

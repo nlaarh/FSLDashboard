@@ -78,12 +78,42 @@ def _fetch_wolis_for_wo_ids(wo_ids: list[str]) -> dict[str, list[dict]]:
 
 
 def _has_code(woli_list: list[dict], code: str) -> bool:
-    """Return True if any WOLI has the given ProductCode with qty > 0."""
+    """Return True if any active (non-cancelled) WOLI has the given ProductCode with qty > 0."""
     return any(
         (r.get("PricebookEntry") or {}).get("ProductCode") == code
         and (r.get("Quantity") or 0) > 0
+        and (r.get("Status") or "").lower() not in ("cancelled", "canceled")
         for r in woli_list
     )
+
+
+def _fetch_woa_product_codes(wo_ids: list[str]) -> dict[str, set[str]]:
+    """Return {wo_id: set of product codes} for any WOA already submitted for that WO.
+
+    Uses Product__r.Name (e.g. 'ER - Enroute Miles') matched by 2-char prefix.
+    If any WOA exists for a product on a WO, the recommendation is suppressed.
+    """
+    if not wo_ids:
+        return {}
+    result: dict[str, set[str]] = defaultdict(set)
+    for i in range(0, len(wo_ids), 200):
+        batch = wo_ids[i: i + 200]
+        id_csv = "','".join(sanitize_soql(x) for x in batch)
+        try:
+            rows = sf_query_all(f"""
+                SELECT Work_Order__c, Product__r.Name
+                FROM ERS_Work_Order_Adjustment__c
+                WHERE Work_Order__c IN ('{id_csv}')
+                  AND Status__c NOT IN ('Rejected', 'Cancelled', 'Canceled')
+            """)
+            for r in rows:
+                wo_id = r.get("Work_Order__c") or ""
+                prod = ((r.get("Product__r") or {}).get("Name") or "")
+                if wo_id and prod:
+                    result[wo_id].add(prod[:2].upper())
+        except Exception as e:
+            log.warning(f"WOA product code fetch failed: {e}")
+    return dict(result)
 
 
 # ── GET /api/contractor/recommendations/mh ───────────────────────────────────
@@ -107,7 +137,7 @@ def contractor_recs_mh(
 
     approved_set = {(_norm_vehicle(v["make"]), _norm_vehicle(v["model"])) for v in hdv_list}
 
-    # Fetch all completed WOs (any call type — heavy vehicles aren't only tows)
+    # Fetch completed tow calls with a vehicle make — only tow calls are eligible for MH charge
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                Vehicle_Make__c, Vehicle_Model__c, Status,
@@ -115,30 +145,23 @@ def contractor_recs_mh(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status IN ('Completed', 'Closed')
+          AND Status = 'Completed'
+          AND Tow_Call__c = true
           AND Vehicle_Make__c != null
         ORDER BY CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """)
 
     if not wo_rows:
         return {"items": []}
 
-    # Keep WOs whose vehicle (make+model) is in the approved HD list
+    # Keep WOs whose vehicle (make+model) exactly matches the approved HD list
     hd_wo_ids = []
     hd_wo_map = {}
     for wo in wo_rows:
         nm = _norm_vehicle(wo.get("Vehicle_Make__c") or "")
         nmod = _norm_vehicle(wo.get("Vehicle_Model__c") or "")
-        match = (nm, nmod) in approved_set
-        if not match:
-            for am, amod in approved_set:
-                make_ok = not nm or not am or nm == am or nm.startswith(am) or am.startswith(nm)
-                model_ok = nmod == amod or nmod.startswith(amod) or amod.startswith(nmod)
-                if make_ok and model_ok:
-                    match = True
-                    break
-        if match:
+        if (nm, nmod) in approved_set:
             hd_wo_ids.append(wo["Id"])
             hd_wo_map[wo["Id"]] = wo
 
@@ -146,10 +169,13 @@ def contractor_recs_mh(
         return {"items": []}
 
     woli_by_wo = _fetch_wolis_for_wo_ids(hd_wo_ids)
+    woa_codes = _fetch_woa_product_codes(hd_wo_ids)
 
     items = []
     for wo_id in hd_wo_ids:
         if _has_code(woli_by_wo.get(wo_id, []), "MH"):
+            continue
+        if "MH" in woa_codes.get(wo_id, set()):
             continue
         wo = hd_wo_map[wo_id]
         items.append({
@@ -193,16 +219,16 @@ def contractor_recs_pg_fuel(
 
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               Dispatch_Code__c, Coverage__c, Status,
+               Dispatch_Code__c, Coverage__c, Entitlement_Master__r.Name, Status,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status IN ('Completed', 'Closed')
+          AND Status = 'Completed'
           AND Dispatch_Code__c IN ({code_clause})
           AND Coverage__c IN ({cov_clause})
         ORDER BY CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """)
 
     if not wo_rows:
@@ -210,15 +236,19 @@ def contractor_recs_pg_fuel(
 
     wo_ids = [wo["Id"] for wo in wo_rows]
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
+    woa_codes = _fetch_woa_product_codes(wo_ids)
 
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
         if _has_code(woli_by_wo.get(wo_id, []), "PG"):
             continue
+        if "PG" in woa_codes.get(wo_id, set()):
+            continue
         dispatch_code = wo.get("Dispatch_Code__c") or ""
         fuel_type = "Gas" if dispatch_code == "L402" else "Diesel"
         max_amount = fuel_limits.get(dispatch_code)
+        entitlement_master_rec = wo.get("Entitlement_Master__r") or {}
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
@@ -226,6 +256,7 @@ def contractor_recs_pg_fuel(
             "created_date": wo.get("CreatedDate") or "",
             "dispatch_code": dispatch_code,
             "coverage": wo.get("Coverage__c") or "",
+            "entitlement_master": entitlement_master_rec.get("Name") or "",
             "fuel_type": fuel_type,
             "max_reimbursement": max_amount,
             "wo_status": wo.get("Status") or "",
@@ -263,9 +294,9 @@ def contractor_recs_er_miles(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status IN ('Completed', 'Closed')
+          AND Status = 'Completed'
         ORDER BY CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """)
 
     if not wo_rows:
@@ -273,12 +304,14 @@ def contractor_recs_er_miles(
 
     wo_ids = [wo["Id"] for wo in wo_rows]
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
+    woa_codes = _fetch_woa_product_codes(wo_ids)
 
-    # Keep only WOs that have at least one WOLI but no ER WOLI
+    # Keep only WOs that have at least one WOLI but no ER WOLI and no pending ER WOA
     candidates = [
         wo for wo in wo_rows
         if woli_by_wo.get(wo["Id"])
         and not _has_code(woli_by_wo.get(wo["Id"], []), "ER")
+        and "ER" not in woa_codes.get(wo["Id"], set())
     ]
 
     if not candidates:
@@ -299,7 +332,7 @@ def contractor_recs_er_miles(
               AND Field = 'Status'
               AND NewValue IN ('En Route', 'On Location')
             ORDER BY ServiceAppointmentId, CreatedDate ASC
-            LIMIT 2000
+            LIMIT 50000
         """)
     except Exception as e:
         log.warning(f"contractor_recs_er_miles: SA history query failed (skipping): {e}")
@@ -376,11 +409,11 @@ def contractor_recs_tow_miles(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status IN ('Completed', 'Closed')
+          AND Status = 'Completed'
           AND Tow_Call__c = true
           AND Resolution_Code__c IN ('G', 'NSR')
         ORDER BY CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """)
 
     if not wo_rows:
@@ -388,11 +421,14 @@ def contractor_recs_tow_miles(
 
     wo_ids = [wo["Id"] for wo in wo_rows]
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
+    woa_codes = _fetch_woa_product_codes(wo_ids)
 
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
         if _has_code(woli_by_wo.get(wo_id, []), "TW"):
+            continue
+        if "TW" in woa_codes.get(wo_id, set()):
             continue
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
@@ -432,11 +468,11 @@ def contractor_recs_tl_tolls(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status IN ('Completed', 'Closed')
+          AND Status = 'Completed'
           AND Tow_Call__c = true
           AND ERS_Estimated_Tow_Miles__c > 30
         ORDER BY CreatedDate DESC
-        LIMIT 2000
+        LIMIT 50000
     """)
 
     if not wo_rows:
@@ -444,11 +480,14 @@ def contractor_recs_tl_tolls(
 
     wo_ids = [wo["Id"] for wo in wo_rows]
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
+    woa_codes = _fetch_woa_product_codes(wo_ids)
 
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
         if _has_code(woli_by_wo.get(wo_id, []), "TL"):
+            continue
+        if "TL" in woa_codes.get(wo_id, set()):
             continue
         est_miles = wo.get("ERS_Estimated_Tow_Miles__c") or 0
         items.append({

@@ -136,11 +136,12 @@ def admin_create_user(request: Request, body: dict):
     valid_depts = ("", "ers", "finance", "executive")
     if department not in valid_depts:
         raise HTTPException(status_code=400, detail=f"department must be one of: ers, finance, executive (or empty)")
-    territories = body.get("territories", [])
-    if not isinstance(territories, list):
-        territories = []
+    raw_garages = body.get("garages", [])
+    if not isinstance(raw_garages, list):
+        raw_garages = []
+    garages = [g for g in raw_garages if isinstance(g, dict) and "id" in g and "name" in g]
     try:
-        result = users.create_user(username, password, name, role, email=email, phone=phone, department=department, territories=territories)
+        result = users.create_user(username, password, name, role, email=email, phone=phone, department=department, garages=garages)
         email = welcome_email_url(
             username=username,
             name=name,
@@ -167,9 +168,9 @@ def admin_update_user(request: Request, username: str, body: dict):
         password_error = password_policy_error(password)
         if password_error:
             raise HTTPException(status_code=400, detail=password_error)
-    territories = body.get("territories")  # None means "don't change"; [] means "clear"
-    if territories is not None and not isinstance(territories, list):
-        territories = None
+    garages = body.get("garages")  # None means "don't change"; [] means "clear all"; list means "replace"
+    if garages is not None and not isinstance(garages, list):
+        garages = None
     try:
         result = users.update_user(
             username,
@@ -180,7 +181,7 @@ def admin_update_user(request: Request, username: str, body: dict):
             active=body.get("active"),
             email=body.get("email"),
             phone=body.get("phone"),
-            territories=territories,
+            garages=garages,
         )
         if password:
             email = password_changed_email_url(

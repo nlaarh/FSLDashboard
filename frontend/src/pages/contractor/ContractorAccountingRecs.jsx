@@ -23,23 +23,11 @@ function defaultDates() {
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
-function StatusBadge({ status }) {
-  if (!status) return <span className="text-slate-600">—</span>
-  const cls = status === 'Completed'
-    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-700/30'
-    : 'bg-sky-500/15 text-sky-400 border-sky-700/30'
-  return (
-    <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium border ${cls}`}>
-      {status}
-    </span>
-  )
-}
-
 function WoCell({ r, navigate }) {
   return (
     <div className="flex items-center gap-1.5">
       <button
-        onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`)}
+        onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`, { state: { from: 'recs' } })}
         className="font-mono text-indigo-400 hover:text-indigo-300 hover:underline text-left"
       >
         WO-{r.wo_number || '—'}
@@ -59,14 +47,6 @@ function WoCell({ r, navigate }) {
   )
 }
 
-// Status column injected into every tab
-const STATUS_COLUMN = {
-  key: 'wo_status',
-  label: 'Status',
-  sortable: true,
-  render: r => <StatusBadge status={r.wo_status} />,
-}
-
 // Columns per tab — wo_number column injected dynamically
 const EXTRA_COLUMNS = {
   'mh': [
@@ -74,46 +54,42 @@ const EXTRA_COLUMNS = {
     { key: 'created_date', label: 'Date',           sortable: true,  render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'vehicle_make', label: 'Vehicle Make',   sortable: true,  render: r => <span className="text-slate-300">{r.vehicle_make || '—'}</span> },
     { key: 'vehicle_model',label: 'Vehicle Model',  sortable: true,  render: r => <span className="text-slate-300">{r.vehicle_model || '—'}</span> },
-    STATUS_COLUMN,
   ],
   'pg-fuel': [
     { key: 'facility',     label: 'Facility',      sortable: true,  render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
     { key: 'created_date', label: 'Date',           sortable: true,  render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'dispatch_code',label: 'Dispatch Code',  sortable: true,  render: r => <span className="font-mono text-slate-300">{r.dispatch_code || '—'}</span> },
     { key: 'fuel_type',    label: 'Fuel Type',      sortable: true,  render: r => <span className="text-slate-300">{r.fuel_type || '—'}</span> },
+    { key: 'entitlement_master', label: 'Entitlement', sortable: true, render: r => <span className="text-slate-300 text-[10px]">{r.entitlement_master || '—'}</span> },
     { key: 'max_reimbursement', label: 'Max Reimb.', sortable: true, render: r => <span className="font-mono text-slate-300">{r.max_reimbursement != null ? `$${Number(r.max_reimbursement).toFixed(2)}` : '—'}</span> },
-    STATUS_COLUMN,
   ],
   'er-miles': [
     { key: 'facility',     label: 'Facility',     sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
     { key: 'created_date', label: 'Date',         sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'estimated_er_miles', label: 'Est. ER Miles', sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_er_miles != null ? `${r.estimated_er_miles} mi` : '—'}</span> },
     { key: 'ai_summary',   label: 'Reason',       sortable: false, render: r => <span className="text-slate-300 max-w-[220px] block text-[10px]">{r.ai_summary || '—'}</span> },
-    STATUS_COLUMN,
   ],
   'tow-miles': [
     { key: 'facility',       label: 'Facility',      sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
     { key: 'created_date',   label: 'Date',          sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'resolution_code',label: 'Resolution Code', sortable: true, render: r => <span className="font-mono text-slate-300">{r.resolution_code || '—'}</span> },
     { key: 'estimated_tow_miles', label: 'Est. Tow Miles', sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_tow_miles != null ? `${r.estimated_tow_miles} mi` : '—'}</span> },
-    STATUS_COLUMN,
   ],
   'tl-tolls': [
     { key: 'facility',           label: 'Facility',      sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
     { key: 'created_date',       label: 'Date',          sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'estimated_tow_miles',label: 'Est. Tow Miles',sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_tow_miles != null ? `${r.estimated_tow_miles} mi` : '—'}</span> },
     { key: 'actual_tow_miles',   label: 'Actual Miles',  sortable: true, render: r => <span className="font-mono text-slate-300">{r.actual_tow_miles != null ? `${r.actual_tow_miles} mi` : '—'}</span> },
-    STATUS_COLUMN,
   ],
 }
 
 // Plain-text values for CSV export
 const CSV_COLUMNS = {
-  'mh':        ['wo_number','facility','created_date','vehicle_make','vehicle_model','wo_status'],
-  'pg-fuel':   ['wo_number','facility','created_date','dispatch_code','fuel_type','max_reimbursement','wo_status'],
-  'er-miles':  ['wo_number','facility','created_date','estimated_er_miles','ai_summary','wo_status'],
-  'tow-miles': ['wo_number','facility','created_date','resolution_code','estimated_tow_miles','wo_status'],
-  'tl-tolls':  ['wo_number','facility','created_date','estimated_tow_miles','actual_tow_miles','wo_status'],
+  'mh':        ['wo_number','facility','created_date','vehicle_make','vehicle_model'],
+  'pg-fuel':   ['wo_number','facility','created_date','dispatch_code','fuel_type','entitlement_master','max_reimbursement'],
+  'er-miles':  ['wo_number','facility','created_date','estimated_er_miles','ai_summary'],
+  'tow-miles': ['wo_number','facility','created_date','resolution_code','estimated_tow_miles'],
+  'tl-tolls':  ['wo_number','facility','created_date','estimated_tow_miles','actual_tow_miles'],
 }
 
 function exportCSV(tabKey, items) {
@@ -162,7 +138,7 @@ function sortItems(items, sortKey, sortDir) {
   })
 }
 
-function RecTable({ items, columns, loading, error, filter, statusFilter, navigate }) {
+function RecTable({ items, columns, loading, error, filter, navigate }) {
   const [sortKey, setSortKey] = useState('created_date')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -178,7 +154,6 @@ function RecTable({ items, columns, loading, error, filter, statusFilter, naviga
   const filtered = useMemo(() => {
     if (!items) return []
     let result = items
-    if (statusFilter) result = result.filter(r => r.wo_status === statusFilter)
     if (filter) {
       const q = filter.toLowerCase()
       result = result.filter(r =>
@@ -191,7 +166,7 @@ function RecTable({ items, columns, loading, error, filter, statusFilter, naviga
       )
     }
     return sortItems(result, sortKey, sortDir)
-  }, [items, filter, statusFilter, sortKey, sortDir])
+  }, [items, filter, sortKey, sortDir])
 
   if (loading) return (
     <div className="flex items-center justify-center py-16 gap-2 text-slate-500">
@@ -212,7 +187,7 @@ function RecTable({ items, columns, loading, error, filter, statusFilter, naviga
     <div className="py-16 text-center">
       <div className="text-2xl mb-2">✓</div>
       <div className="text-slate-400 text-sm font-medium">
-        {filter || statusFilter ? 'No matches for your filter.' : 'No recommendations for this period.'}
+        {filter ? 'No matches for your filter.' : 'No recommendations for this period.'}
       </div>
     </div>
   )
@@ -248,7 +223,7 @@ function RecTable({ items, columns, loading, error, filter, statusFilter, naviga
           {filtered.map((r, idx) => (
             <tr
               key={r.wo_id || r.wo_number || idx}
-              onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`)}
+              onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`, { state: { from: 'recs' } })}
               className={`hover:bg-slate-800/30 transition-colors ${r.wo_id ? 'cursor-pointer' : ''}`}
             >
               <td className="px-2 py-2.5">
@@ -275,7 +250,7 @@ function RecTable({ items, columns, loading, error, filter, statusFilter, naviga
       </table>
       <div className="px-4 py-2 border-t border-slate-800/60 text-[10px] text-slate-600">
         {filtered.length} recommendation{filtered.length !== 1 ? 's' : ''}
-        {(filter || statusFilter) && items.length !== filtered.length && ` (filtered from ${items.length})`}
+        {filter && items.length !== filtered.length && ` (filtered from ${items.length})`}
       </div>
     </div>
   )
@@ -291,11 +266,9 @@ export default function ContractorAccountingRecs() {
   const [recLoading, setRecLoading] = useState({})
   const [recError, setRecError] = useState({})
   const [filter, setFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
 
   const loadAll = useCallback((start, end) => {
     setFilter('')
-    setStatusFilter('')
     const s = start ?? startDate
     const e = end ?? endDate
     REC_TABS.forEach(({ key }) => {
@@ -318,14 +291,11 @@ export default function ContractorAccountingRecs() {
   const activeItems = recData[activeRec]
   const anyLoading = Object.values(recLoading).some(Boolean)
 
-  // Export uses the filtered set (respects both text filter and status filter)
-  const activeFiltered = useMemo(() => {
-    if (!activeItems) return []
-    let result = activeItems
-    if (statusFilter) result = result.filter(r => r.wo_status === statusFilter)
-    if (!filter) return result
+  const applyFilter = (items) => {
+    if (!items) return []
+    if (!filter) return items
     const q = filter.toLowerCase()
-    return result.filter(r =>
+    return items.filter(r =>
       (r.wo_number || '').toLowerCase().includes(q) ||
       (r.facility || '').toLowerCase().includes(q) ||
       (r.vehicle_make || '').toLowerCase().includes(q) ||
@@ -333,7 +303,17 @@ export default function ContractorAccountingRecs() {
       (r.ai_summary || '').toLowerCase().includes(q) ||
       (r.resolution_code || '').toLowerCase().includes(q)
     )
-  }, [activeItems, filter, statusFilter])
+  }
+
+  // Badge counts update when filter changes
+  const filteredCounts = useMemo(() => {
+    const counts = {}
+    REC_TABS.forEach(({ key }) => { counts[key] = applyFilter(recData[key]).length })
+    return counts
+  }, [recData, filter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Export uses filtered set
+  const activeFiltered = useMemo(() => applyFilter(activeItems), [activeItems, filter]) // eslint-disable-line react-hooks/exhaustive-deps
   const canExport = activeFiltered.length > 0 && !recLoading[activeRec]
 
   return (
@@ -342,12 +322,12 @@ export default function ContractorAccountingRecs() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
         </div>
         <button onClick={() => loadAll()}
@@ -356,15 +336,6 @@ export default function ContractorAccountingRecs() {
           {anyLoading ? 'Loading…' : 'Load Recommendations'}
         </button>
         <div className="relative ml-auto flex items-center gap-2 flex-wrap">
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50"
-          >
-            <option value="">All Statuses</option>
-            <option value="Completed">Completed</option>
-            <option value="Closed">Closed</option>
-          </select>
           <div className="relative flex items-center">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
             <input
@@ -389,8 +360,10 @@ export default function ContractorAccountingRecs() {
       {/* Sub-tab bar */}
       <div className="flex gap-1 mb-4 flex-wrap">
         {REC_TABS.map(({ key, label, icon: Icon }) => {
-          const count = recData[key]?.length
+          const totalCount = recData[key]?.length
+          const filteredCount = filteredCounts[key]
           const isLoading = recLoading[key]
+          const badgeCount = filter ? filteredCount : totalCount
           return (
             <button key={key} onClick={() => setActiveRec(key)}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
@@ -402,9 +375,9 @@ export default function ContractorAccountingRecs() {
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : <Icon className="w-3.5 h-3.5" />}
               {label}
-              {count != null && count > 0 && (
+              {badgeCount != null && badgeCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/30 text-indigo-300">
-                  {count}
+                  {badgeCount}
                 </span>
               )}
             </button>
@@ -420,7 +393,6 @@ export default function ContractorAccountingRecs() {
           loading={!!recLoading[activeRec]}
           error={recError[activeRec]}
           filter={filter}
-          statusFilter={statusFilter}
           navigate={navigate}
           tabKey={activeRec}
         />
