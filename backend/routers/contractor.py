@@ -610,7 +610,7 @@ def contractor_driver_collection(
                Entitlement_Master__r.Name, Coverage__c, CreatedDate
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
           AND (
                 Resolution_Code__c IN ('G306','G307','G308','G103','G401','G402')
                 OR (Tow_Call__c = true AND ERS_Est_Tow_Over_Mileage_Cost__c > 0)
