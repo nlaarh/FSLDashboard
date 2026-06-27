@@ -15,15 +15,17 @@ export function GradeRing({ grade, composite }) {
   )
 }
 
-export function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, target, met, border, definition, defId, activeDef, setActiveDef }) {
+export function MetricCard({ label, value, sub, color = 'text-white', icon: Icon, target, met, border, definition, defId, activeDef, setActiveDef, onClick }) {
   const showDef = activeDef === defId
   return (
-    <div className={clsx('rounded-xl p-4 bg-slate-800/50 border relative', border || 'border-slate-700/30')}>
+    <div onClick={onClick}
+      className={clsx('rounded-xl p-4 bg-slate-800/50 border relative', border || 'border-slate-700/30',
+        onClick && 'cursor-pointer hover:bg-slate-800/80 hover:border-brand-600/40 transition-colors')}>
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
         <div className="flex items-center gap-1">
           {definition && (
-            <button onClick={() => setActiveDef?.(showDef ? null : defId)}
+            <button onClick={(e) => { e.stopPropagation(); setActiveDef?.(showDef ? null : defId) }}
               className="w-4 h-4 rounded-full bg-slate-700/60 hover:bg-slate-600 text-slate-400 hover:text-white text-[9px] font-bold flex items-center justify-center transition-colors"
               title="How this is calculated">?</button>
           )}
@@ -34,7 +36,7 @@ export function MetricCard({ label, value, sub, color = 'text-white', icon: Icon
         <div className="absolute top-0 left-0 right-0 z-10 bg-slate-800 border border-slate-600/50 rounded-xl p-3 shadow-xl whitespace-normal break-words overflow-hidden">
           <div className="flex items-center justify-between mb-1 gap-2">
             <span className="text-[10px] font-bold text-brand-400 uppercase truncate">{label}</span>
-            <button onClick={() => setActiveDef?.(null)} className="text-slate-400 hover:text-white text-xs shrink-0">&#x2715;</button>
+            <button onClick={(e) => { e.stopPropagation(); setActiveDef?.(null) }} className="text-slate-400 hover:text-white text-xs shrink-0">&#x2715;</button>
           </div>
           <div className="text-[11px] text-slate-300 leading-relaxed break-words">{definition}</div>
         </div>

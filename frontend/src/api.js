@@ -42,6 +42,8 @@ export const fetchSAReport = (number) => api.get(`/sa/${number}/report`).then(r 
 export const searchQuery = (q) => api.get(`/search?q=${encodeURIComponent(q)}`).then(r => r.data)
 export const fetchPerformance = (id, start, end) =>
   api.get(`/garages/${id}/performance?period_start=${start}&period_end=${end}`).then(r => r.data)
+export const fetchAcceptanceDetail = (id, bucket, start, end) =>
+  api.get(`/garages/${id}/acceptance-detail?bucket=${bucket}&period_start=${start}&period_end=${end}`).then(r => r.data)
 export const fetchMapGrids = () => api.get('/map/grids').then(r => r.data)
 export const fetchMapDrivers = () => api.get('/map/drivers').then(r => r.data)
 export const fetchMapWeather = () => api.get('/map/weather').then(r => r.data)

@@ -11,14 +11,17 @@ import {
 import { pct } from '../utils/formatting'
 import { TT_STYLE } from '../constants/chartStyles'
 import { GradeRing, MetricCard, ProgressBar, BucketGrid, ReasonBars, buildInsights } from './GarageOperationsUtils'
+import AcceptanceDetailModal from './AcceptanceDetailModal'
 
 // ── Main Operations Tab ──────────────────────────────────────────────────────
 
 export default function GarageOperations({
+  garageId,
   perf, score, scorecard, decomp, loading,
   error, decompError, scorecardError, scoreError,
   startDate, endDate, activeDef, setActiveDef,
 }) {
+  const [drillView, setDrillView] = useState(null)  // 'first_call' | 'second_call' | 'completion_accepted'
   const { insights, actions } = perf ? buildInsights(perf) : { insights: [], actions: [] }
   const rd = decomp?.response_decomposition
   const leaderboard = decomp?.driver_leaderboard || []
@@ -95,17 +98,20 @@ export default function GarageOperations({
             sub={perf.first_call?.first_call_total > 0 ? `${perf.first_call.first_call_accepted} / ${perf.first_call.first_call_total} 1st calls` : 'No data'}
             color={perf.first_call?.first_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.first_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.first_call_pct != null ? 'text-red-400' : 'text-slate-500'}
             border={perf.first_call?.first_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            onClick={() => setDrillView('first_call')}
             definition={perf.definitions?.first_call_acceptance} defId="first_call" activeDef={activeDef} setActiveDef={setActiveDef} />
           <MetricCard label="2nd+ Call Acceptance"
             value={perf.first_call?.second_call_pct != null ? `${perf.first_call.second_call_pct}%` : 'N/A'} icon={Zap}
             sub={perf.first_call?.second_call_total > 0 ? `${perf.first_call.second_call_accepted} / ${perf.first_call.second_call_total} reassigned` : 'No reassigned calls'}
             color={perf.first_call?.second_call_pct >= 90 ? 'text-emerald-400' : perf.first_call?.second_call_pct >= 75 ? 'text-amber-400' : perf.first_call?.second_call_pct != null ? 'text-red-400' : 'text-slate-500'}
             border={perf.first_call?.second_call_pct >= 90 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            onClick={() => setDrillView('second_call')}
             definition="When this garage was NOT the first territory assigned (SA was reassigned from another garage), what % did they accept? Lower numbers here are expected since these are overflow/backup calls." defId="second_call" activeDef={activeDef} setActiveDef={setActiveDef} />
           <MetricCard label="Completion of Accepted" value={perf.first_call?.accepted_completion_pct != null ? `${perf.first_call.accepted_completion_pct}%` : 'N/A'} icon={CheckCircle2}
             sub={perf.first_call?.accepted_total > 0 ? `${perf.first_call.accepted_completed} / ${perf.first_call.accepted_total} accepted` : ''}
             color={perf.first_call?.accepted_completion_pct >= 95 ? 'text-emerald-400' : perf.first_call?.accepted_completion_pct >= 80 ? 'text-amber-400' : perf.first_call?.accepted_completion_pct != null ? 'text-red-400' : 'text-slate-500'}
             border={perf.first_call?.accepted_completion_pct >= 95 ? 'border-emerald-800/30' : 'border-amber-800/30'}
+            onClick={() => setDrillView('completion_accepted')}
             definition={perf.definitions?.completion_of_accepted} defId="completion_accepted" activeDef={activeDef} setActiveDef={setActiveDef} />
         </div>
 
@@ -549,6 +555,16 @@ export default function GarageOperations({
           </div>
         )}
       </>
+    )}
+
+    {drillView && (
+      <AcceptanceDetailModal
+        view={drillView}
+        territoryId={garageId}
+        startDate={startDate}
+        endDate={endDate}
+        onClose={() => setDrillView(null)}
+      />
     )}
   </>)
 }

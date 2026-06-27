@@ -1,12 +1,14 @@
 """Live Dispatch Board -- real-time driver progress for active Service Appointments."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 from sf_client import sf_query_all, sf_parallel
 from utils import _ET, parse_dt as _parse_dt
 from sf_batch import batch_soql_parallel
+import users as _users
+from routers.auth import get_request_username
 import cache
 import logging
 
@@ -48,38 +50,60 @@ _FLAG_PRIORITY = {'stuck': 0, 'aging': 1, 'no_ack': 2, 'late': 3}
 # ── Endpoint ────────────────────────────────────────────────────────────────
 
 @router.get("/api/live-dispatch")
-def api_live_dispatch():
-    """Live dispatch board: active SAs with driver progress and phase timeline."""
-    cached = cache.get(CACHE_KEY)
-    if cached:
-        return cached
-    # L2 disk
-    cached = cache.disk_get(CACHE_KEY, CACHE_TTL)
-    if cached:
-        cache.put(CACHE_KEY, cached, CACHE_TTL)
-        return cached
+def api_live_dispatch(request: Request):
+    """Live dispatch board: active SAs with driver progress and phase timeline.
+
+    Contractors are scoped to their assigned territories only; their slice is
+    user-specific so it bypasses the shared org-wide cache.
+    """
+    username = get_request_username(request)
+    user = _users.get_user(username) if username else None
+    territories: list[str] = (user.get("territories") or []) if user and user.get("role") == "contractor" else []
+
+    # Only non-contractor (org-wide) requests use the shared cache.
+    if not territories:
+        cached = cache.get(CACHE_KEY)
+        if cached:
+            return cached
+        # L2 disk
+        cached = cache.disk_get(CACHE_KEY, CACHE_TTL)
+        if cached:
+            cache.put(CACHE_KEY, cached, CACHE_TTL)
+            return cached
     try:
-        result = _build_live_dispatch()
+        result = _build_live_dispatch(territories=territories)
     except Exception as e:
-        # Graceful degradation — serve stale cache if SF fails
-        stale = cache.get_stale(CACHE_KEY) or cache.disk_get_stale(CACHE_KEY)
-        if stale:
-            log.warning(f"SF error: {e}. Serving stale live-dispatch cache.")
-            return stale
+        # Graceful degradation — serve stale cache if SF fails (org-wide only)
+        if not territories:
+            stale = cache.get_stale(CACHE_KEY) or cache.disk_get_stale(CACHE_KEY)
+            if stale:
+                log.warning(f"SF error: {e}. Serving stale live-dispatch cache.")
+                return stale
         log.error(f"SF error: {e}. No cached data available for live-dispatch.")
         raise
-    cache.put(CACHE_KEY, result, CACHE_TTL)
-    cache.disk_put(CACHE_KEY, result, CACHE_TTL)
+    if not territories:
+        cache.put(CACHE_KEY, result, CACHE_TTL)
+        cache.disk_put(CACHE_KEY, result, CACHE_TTL)
     return result
 
 
 # ── Builder ─────────────────────────────────────────────────────────────────
 
-def _build_live_dispatch() -> dict:
-    """Fetch active SAs, drivers, history, and assemble the board payload."""
+def _build_live_dispatch(territories: list[str] | None = None) -> dict:
+    """Fetch active SAs, drivers, history, and assemble the board payload.
+
+    territories: when provided (contractor scope), restricts the board to those
+    ServiceTerritoryIds. Empty/None = org-wide (internal users).
+    """
     now_utc = datetime.now(timezone.utc)
     cutoff_24h = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
     cutoff_1h = (now_utc - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Territory filter clause for contractor scoping
+    territory_clause = ""
+    if territories:
+        ids = ", ".join(f"'{t}'" for t in territories)
+        territory_clause = f"AND ServiceTerritoryId IN ({ids})"
 
     # ── Query 1: Active SAs ─────────────────────────────────────────────────
     def _get_active_sas():
@@ -95,6 +119,7 @@ def _build_live_dispatch() -> dict:
               AND RecordType.Name = 'ERS Service Appointment'
               AND ServiceTerritoryId != null
               AND CreatedDate >= {cutoff_24h}
+              {territory_clause}
             ORDER BY CreatedDate ASC
         """)
 
@@ -106,6 +131,7 @@ def _build_live_dispatch() -> dict:
             WHERE StatusCategory IN ('Completed')
               AND RecordType.Name = 'ERS Service Appointment'
               AND ActualEndTime >= {cutoff_1h}
+              {territory_clause}
         """)
 
     # Phase 1: fetch SAs + completed count in parallel

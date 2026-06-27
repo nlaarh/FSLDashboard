@@ -16,6 +16,21 @@ import cache
 # ── Constants (forecast-specific) ────────────────────────────────────────────
 BLOCK_MIN = 120  # 2-hour shift blocks
 
+# Decline-reason display relabels. "Towbook Decline" is a system/integration-
+# stamped value (96.5% of all declines org-wide), not a deliberate facility
+# decline — surface it as a system/cascade decline so contractors aren't
+# misled into thinking their garage declined the call.
+_DECLINE_RELABEL = {
+    'Towbook Decline': 'System/Cascade Decline',
+}
+
+
+def _decline_label(reason: str | None) -> str | None:
+    """Map a raw SF ERS_Facility_Decline_Reason__c value to its display label."""
+    if reason is None:
+        return None
+    return _DECLINE_RELABEL.get(reason, reason)
+
 DOW_WEATHER_MULTIPLIERS = {
     'Clear': 1.0, 'Mild': 1.05, 'Moderate': 1.10, 'Severe': 1.25, 'Extreme': 1.40,
 }
@@ -248,11 +263,11 @@ def get_response_decomposition(territory_id: str, period_start: str, period_end:
             'total_declines': total_declines,
             'decline_rate': round(100 * total_declines / max(total_sas_for_decline + total_declines, 1), 1),
             'by_reason': [
-                {'reason': r.get('reason', 'Unknown'), 'count': r.get('cnt', 0),
+                {'reason': _decline_label(r.get('reason', 'Unknown')), 'count': r.get('cnt', 0),
                  'pct': round(100 * r.get('cnt', 0) / max(total_declines, 1), 1)}
                 for r in decline_rows
             ],
-            'top_reason': decline_rows[0].get('reason') if decline_rows else None,
+            'top_reason': _decline_label(decline_rows[0].get('reason')) if decline_rows else None,
         }
 
         # Cancellation analysis

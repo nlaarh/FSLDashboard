@@ -56,6 +56,20 @@ def _woa_new_url(wo_id: str) -> str:
     )
 
 
+def _actioned_status(woli_list: list[dict], woa_set: set[str], code: str) -> str | None:
+    """Return why a recommendation is already actioned, or None if it still needs action.
+
+    Reuses the same suppression detection used when include_actioned is False:
+    a WOA already submitted ('woa_submitted') takes precedence over a paid/active
+    WOLI ('paid'). Returns None when neither applies (rec still actionable).
+    """
+    if code in woa_set:
+        return "woa_submitted"
+    if _has_code(woli_list, code):
+        return "paid"
+    return None
+
+
 # ── Shared WOLI fetcher for a set of WO IDs ──────────────────────────────────
 
 def _fetch_wolis_for_wo_ids(wo_ids: list[str]) -> dict[str, list[dict]]:
@@ -123,6 +137,7 @@ def contractor_recs_mh(
     request: Request,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
+    include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
     """Completed WOs serviced on a vehicle in ref_heavy_duty_vehicles (Postgres)
     that have no MH WOLI — possible missed medium/heavy-vehicle charge."""
@@ -173,9 +188,8 @@ def contractor_recs_mh(
 
     items = []
     for wo_id in hd_wo_ids:
-        if _has_code(woli_by_wo.get(wo_id, []), "MH"):
-            continue
-        if "MH" in woa_codes.get(wo_id, set()):
+        actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "MH")
+        if actioned and not include_actioned:
             continue
         wo = hd_wo_map[wo_id]
         items.append({
@@ -187,6 +201,7 @@ def contractor_recs_mh(
             "vehicle_model": wo.get("Vehicle_Model__c") or "",
             "wo_status": wo.get("Status") or "",
             "wo_id": wo_id,
+            "already_actioned": actioned,
             "sf_new_woa_url": _woa_new_url(wo_id),
         })
         if len(items) >= _MAX_RECS:
@@ -202,6 +217,7 @@ def contractor_recs_pg_fuel(
     request: Request,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
+    include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
     """WOs eligible for PG fuel reimbursement (L402/L403, Plus/Premier coverage) but no PG WOLI."""
     facility_ids = _require_contractor_facilities(request)
@@ -241,9 +257,8 @@ def contractor_recs_pg_fuel(
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
-        if _has_code(woli_by_wo.get(wo_id, []), "PG"):
-            continue
-        if "PG" in woa_codes.get(wo_id, set()):
+        actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "PG")
+        if actioned and not include_actioned:
             continue
         dispatch_code = wo.get("Dispatch_Code__c") or ""
         fuel_type = "Gas" if dispatch_code == "L402" else "Diesel"
@@ -261,6 +276,7 @@ def contractor_recs_pg_fuel(
             "max_reimbursement": max_amount,
             "wo_status": wo.get("Status") or "",
             "wo_id": wo_id,
+            "already_actioned": actioned,
             "sf_new_woa_url": _woa_new_url(wo_id),
         })
         if len(items) >= _MAX_RECS:
@@ -276,6 +292,7 @@ def contractor_recs_er_miles(
     request: Request,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
+    include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
     """WOs with at least one WOLI but no ER (enroute miles) WOLI.
 
@@ -306,12 +323,16 @@ def contractor_recs_er_miles(
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
     woa_codes = _fetch_woa_product_codes(wo_ids)
 
-    # Keep only WOs that have at least one WOLI but no ER WOLI and no pending ER WOA
+    # Keep only WOs that have at least one WOLI. When include_actioned is False we
+    # also drop those already actioned (ER WOLI present or pending ER WOA); when True
+    # we keep them and tag each below via _actioned_status.
     candidates = [
         wo for wo in wo_rows
         if woli_by_wo.get(wo["Id"])
-        and not _has_code(woli_by_wo.get(wo["Id"], []), "ER")
-        and "ER" not in woa_codes.get(wo["Id"], set())
+        and (
+            include_actioned
+            or _actioned_status(woli_by_wo.get(wo["Id"], []), woa_codes.get(wo["Id"], set()), "ER") is None
+        )
     ]
 
     if not candidates:
@@ -381,6 +402,7 @@ def contractor_recs_er_miles(
             "ai_summary": ai_summary,
             "wo_status": wo.get("Status") or "",
             "wo_id": wo_id,
+            "already_actioned": _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "ER"),
             "sf_new_woa_url": _woa_new_url(wo_id),
         })
         if len(items) >= _MAX_RECS:
@@ -396,6 +418,7 @@ def contractor_recs_tow_miles(
     request: Request,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
+    include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
     """Tow WOs with resolution code G or NSR and no TW (tow miles) WOLI."""
     facility_ids = _require_contractor_facilities(request)
@@ -426,9 +449,8 @@ def contractor_recs_tow_miles(
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
-        if _has_code(woli_by_wo.get(wo_id, []), "TW"):
-            continue
-        if "TW" in woa_codes.get(wo_id, set()):
+        actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TW")
+        if actioned and not include_actioned:
             continue
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
@@ -440,6 +462,7 @@ def contractor_recs_tow_miles(
             "estimated_tow_miles": wo.get("ERS_Estimated_Tow_Miles__c"),
             "wo_status": wo.get("Status") or "",
             "wo_id": wo_id,
+            "already_actioned": actioned,
             "sf_new_woa_url": _woa_new_url(wo_id),
         })
         if len(items) >= _MAX_RECS:
@@ -455,6 +478,7 @@ def contractor_recs_tl_tolls(
     request: Request,
     start_date: str = Query(None, description="YYYY-MM-DD"),
     end_date: str = Query(None, description="YYYY-MM-DD"),
+    include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
     """WOs with estimated tow miles > 30 and no TL (tolls/parking) WOLI."""
     facility_ids = _require_contractor_facilities(request)
@@ -485,9 +509,8 @@ def contractor_recs_tl_tolls(
     items = []
     for wo in wo_rows:
         wo_id = wo["Id"]
-        if _has_code(woli_by_wo.get(wo_id, []), "TL"):
-            continue
-        if "TL" in woa_codes.get(wo_id, set()):
+        actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TL")
+        if actioned and not include_actioned:
             continue
         est_miles = wo.get("ERS_Estimated_Tow_Miles__c") or 0
         items.append({
@@ -499,6 +522,7 @@ def contractor_recs_tl_tolls(
             "actual_tow_miles": wo.get("Tow_Miles__c"),
             "wo_status": wo.get("Status") or "",
             "wo_id": wo_id,
+            "already_actioned": actioned,
             "sf_new_woa_url": _woa_new_url(wo_id),
         })
         if len(items) >= _MAX_RECS:

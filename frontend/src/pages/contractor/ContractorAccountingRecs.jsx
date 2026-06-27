@@ -32,6 +32,16 @@ function WoCell({ r, navigate }) {
       >
         WO-{r.wo_number || '—'}
       </button>
+      {r.already_actioned === 'paid' && (
+        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 border border-amber-500/40 text-amber-300 whitespace-nowrap shrink-0" title="A paid/active line item already exists for this product">
+          Paid
+        </span>
+      )}
+      {r.already_actioned === 'woa_submitted' && (
+        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-slate-600/40 border border-slate-500/50 text-slate-300 whitespace-nowrap shrink-0" title="A WOA has already been submitted for this product">
+          WOA submitted
+        </span>
+      )}
       {r.has_photos && (
         <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />
       )}
@@ -266,14 +276,16 @@ export default function ContractorAccountingRecs() {
   const [recLoading, setRecLoading] = useState({})
   const [recError, setRecError] = useState({})
   const [filter, setFilter] = useState('')
+  const [showActioned, setShowActioned] = useState(false)
 
-  const loadAll = useCallback((start, end) => {
+  const loadAll = useCallback((start, end, actioned) => {
     setFilter('')
     const s = start ?? startDate
     const e = end ?? endDate
+    const inclActioned = actioned ?? showActioned
     REC_TABS.forEach(({ key }) => {
       setRecLoading(prev => ({ ...prev, [key]: true }))
-      const params = new URLSearchParams({ start_date: s, end_date: e })
+      const params = new URLSearchParams({ start_date: s, end_date: e, include_actioned: inclActioned })
       fetch(`/api/contractor/recommendations/${key}?${params}`)
         .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json() })
         .then(json => {
@@ -283,7 +295,7 @@ export default function ContractorAccountingRecs() {
         .catch(err => setRecError(prev => ({ ...prev, [key]: err.message || 'Failed to load' })))
         .finally(() => setRecLoading(prev => ({ ...prev, [key]: false })))
     })
-  }, [startDate, endDate])
+  }, [startDate, endDate, showActioned])
 
   // Auto-load on mount
   useEffect(() => { loadAll() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -335,6 +347,15 @@ export default function ContractorAccountingRecs() {
           {anyLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {anyLoading ? 'Loading…' : 'Load Recommendations'}
         </button>
+        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-300">
+          <input
+            type="checkbox"
+            checked={showActioned}
+            onChange={e => { const v = e.target.checked; setShowActioned(v); loadAll(undefined, undefined, v) }}
+            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-0"
+          />
+          Show already-actioned
+        </label>
         <div className="relative ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative flex items-center">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />

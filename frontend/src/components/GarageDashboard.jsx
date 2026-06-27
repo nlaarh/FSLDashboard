@@ -183,6 +183,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       {/* OPERATIONS TAB */}
       {activeTab === 'operations' && (
         <GarageOperations
+          garageId={garageId}
           perf={perf} score={score} scorecard={scorecard} decomp={decomp}
           loading={loading} error={error} decompError={decompError}
           scorecardError={scorecardError} scoreError={scoreError}

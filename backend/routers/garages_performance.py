@@ -16,6 +16,142 @@ import cache
 router = APIRouter()
 
 
+# ── Shared SA query + partition logic (one source of truth) ───────────────────
+# The individual-SA SELECT is used by BOTH the performance computation and the
+# acceptance drill-down endpoint, so keep it in one place.
+# ParentRecord is polymorphic: for ERS calls it is a WorkOrderLineItem (1WL...),
+# whose parent WorkOrder carries the human-readable WorkOrderNumber. Some SAs may
+# parent directly to a WorkOrder. TYPEOF handles both and gives us the real
+# WorkOrder Id (for the Salesforce link) + WorkOrderNumber. Verified accepted by
+# the org (v59.0).
+_SA_FIELDS = """Id, Status, CreatedDate, ActualStartTime,
+                   ERS_Auto_Assign__c, ERS_PTA__c,
+                   ERS_Facility_Decline_Reason__c,
+                   ERS_Dispatch_Method__c, WorkType.Name,
+                   AppointmentNumber, ParentRecordId,
+                   TYPEOF ParentRecord
+                     WHEN WorkOrderLineItem THEN WorkOrderId, WorkOrder.WorkOrderNumber
+                     WHEN WorkOrder THEN Id, WorkOrderNumber
+                   END"""
+
+
+def _sa_query(territory_id: str, since: str, until: str) -> str:
+    """Individual-SA SOQL — single source of truth for the SELECT shape."""
+    return f"""
+            SELECT {_SA_FIELDS}
+            FROM ServiceAppointment
+            WHERE ServiceTerritoryId = '{territory_id}'
+              AND CreatedDate >= {since}
+              AND CreatedDate < {until}
+              AND Status IN ('Dispatched','Completed','Canceled','Assigned',
+                             'Cancel Call - Service Not En Route',
+                             'Cancel Call - Service En Route',
+                             'Unable to Complete','No-Show')
+            ORDER BY CreatedDate ASC
+        """
+
+
+def _sa_history_query(territory_id: str, since: str, until: str) -> str:
+    """Territory-assignment history SOQL — used for 1st/2nd-call partitioning."""
+    return f"""
+            SELECT ServiceAppointmentId, NewValue, CreatedDate
+            FROM ServiceAppointmentHistory
+            WHERE Field = 'ServiceTerritory'
+              AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
+              AND ServiceAppointment.CreatedDate >= {since}
+              AND ServiceAppointment.CreatedDate < {until}
+            ORDER BY ServiceAppointmentId, CreatedDate ASC
+        """
+
+
+def _extract_wo(sa: dict) -> tuple:
+    """Pull (wo_id, wo_number) out of the polymorphic ParentRecord, if present.
+
+    Returns (None, None) when the parent is not a WorkOrder/WorkOrderLineItem
+    (e.g. some legacy SAs parent to an Account)."""
+    pr = sa.get('ParentRecord') or {}
+    # WorkOrderLineItem parent: WorkOrderId + nested WorkOrder.WorkOrderNumber
+    wo_id = pr.get('WorkOrderId')
+    wo = pr.get('WorkOrder') or {}
+    wo_number = wo.get('WorkOrderNumber') if isinstance(wo, dict) else None
+    # WorkOrder parent: Id + WorkOrderNumber directly on ParentRecord
+    if not wo_id and pr.get('Id'):
+        wo_id = pr.get('Id')
+    if not wo_number and pr.get('WorkOrderNumber'):
+        wo_number = pr.get('WorkOrderNumber')
+    return wo_id, wo_number
+
+
+def _partition_sas(all_sas: list, sa_history: list, territory_id: str) -> dict:
+    """Partition SAs into the acceptance/completion buckets used by the dashboard.
+
+    ONE source of truth for the 1st/2nd-call + accepted/completed logic shared by
+    `_compute_performance` and the acceptance drill-down endpoint. `all_sas` is the
+    raw SA list (Tow Drop-Off rows are filtered out here, matching the dashboard)."""
+    # Exclude Tow Drop-Off from all counts (paired SAs, not real calls)
+    sas = [s for s in all_sas
+           if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
+
+    # Build assignment order per SA: list of territory IDs in chronological order
+    sa_territory_order = defaultdict(list)  # sa_id -> [territory_id_1, territory_id_2, ...]
+    for h in sa_history:
+        sa_id = h.get('ServiceAppointmentId')
+        new_val = h.get('NewValue', '') or ''
+        if sa_id and new_val.startswith('0Hh'):
+            order = sa_territory_order[sa_id]
+            if not order or order[-1] != new_val:
+                order.append(new_val)
+
+    first_call_sas = []
+    second_call_sas = []
+    for s in sas:
+        order = sa_territory_order.get(s['Id'], [])
+        if not order or order[0] == territory_id:
+            # No history => initial assignment, no reassignment => 1st call
+            first_call_sas.append(s)
+        else:
+            second_call_sas.append(s)
+
+    def _accepted(lst):
+        return [s for s in lst if not s.get('ERS_Facility_Decline_Reason__c')]
+
+    def _declined(lst):
+        return [s for s in lst if s.get('ERS_Facility_Decline_Reason__c')]
+
+    first_call_accepted = _accepted(first_call_sas)
+    first_call_declined = _declined(first_call_sas)
+    second_call_accepted = _accepted(second_call_sas)
+    second_call_declined = _declined(second_call_sas)
+
+    accepted_sas = _accepted(sas)
+    accepted_completed = [s for s in accepted_sas if s.get('Status') == 'Completed']
+    accepted_not_completed = [s for s in accepted_sas if s.get('Status') != 'Completed']
+
+    return {
+        'sas': sas,
+        'first_call_sas': first_call_sas,
+        'second_call_sas': second_call_sas,
+        'first_call_accepted': first_call_accepted,
+        'first_call_declined': first_call_declined,
+        'second_call_accepted': second_call_accepted,
+        'second_call_declined': second_call_declined,
+        'accepted_sas': accepted_sas,
+        'accepted_completed': accepted_completed,
+        'accepted_not_completed': accepted_not_completed,
+    }
+
+
+# Maps a drill-down bucket key -> the partition list it returns.
+_ACCEPTANCE_BUCKETS = {
+    'first_call_accepted': 'first_call_accepted',
+    'first_call_declined': 'first_call_declined',
+    'second_call_accepted': 'second_call_accepted',
+    'second_call_declined': 'second_call_declined',
+    'completion_completed': 'accepted_completed',
+    'completion_not_completed': 'accepted_not_completed',
+}
+
+
 # ── Performance Dashboard ─────────────────────────────────────────────────────
 
 @router.get("/api/garages/{territory_id}/performance")
@@ -42,21 +178,7 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
 
     # Parallel: individual SAs + WO IDs for surveys + trend aggregate
     data = sf_parallel(
-        sas=lambda: sf_query_all(f"""
-            SELECT Id, Status, CreatedDate, ActualStartTime,
-                   ERS_Auto_Assign__c, ERS_PTA__c,
-                   ERS_Facility_Decline_Reason__c,
-                   ERS_Dispatch_Method__c, WorkType.Name
-            FROM ServiceAppointment
-            WHERE ServiceTerritoryId = '{territory_id}'
-              AND CreatedDate >= {since}
-              AND CreatedDate < {until}
-              AND Status IN ('Dispatched','Completed','Canceled','Assigned',
-                             'Cancel Call - Service Not En Route',
-                             'Cancel Call - Service En Route',
-                             'Unable to Complete','No-Show')
-            ORDER BY CreatedDate ASC
-        """),
+        sas=lambda: sf_query_all(_sa_query(territory_id, since, until)),
         trend=lambda: sf_query_all(f"""
             SELECT DAY_IN_MONTH(CreatedDate) d,
                    HOUR_IN_DAY(CreatedDate) hr,
@@ -78,24 +200,17 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         """),
         # SA history: territory assignment sequence (which garage was assigned 1st, 2nd, etc.)
         # Note: NewValue can't be filtered on History objects -- filter in Python
-        sa_history=lambda: sf_query_all(f"""
-            SELECT ServiceAppointmentId, NewValue, CreatedDate
-            FROM ServiceAppointmentHistory
-            WHERE Field = 'ServiceTerritory'
-              AND ServiceAppointment.ServiceTerritoryId = '{territory_id}'
-              AND ServiceAppointment.CreatedDate >= {since}
-              AND ServiceAppointment.CreatedDate < {until}
-            ORDER BY ServiceAppointmentId, CreatedDate ASC
-        """),
+        sa_history=lambda: sf_query_all(_sa_history_query(territory_id, since, until)),
     )
 
     all_sas = data['sas']
     if not all_sas:
         raise HTTPException(status_code=404, detail="No SAs found for this period")
 
-    # Exclude Tow Drop-Off from all counts (paired SAs, not real calls)
-    sas = [s for s in all_sas
-           if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
+    # Partition into 1st/2nd-call + accepted/completed buckets (shared helper —
+    # one source of truth, also used by the acceptance drill-down endpoint).
+    parts = _partition_sas(all_sas, data.get('sa_history', []), territory_id)
+    sas = parts['sas']  # Tow Drop-Off already excluded
     total = len(sas)
     completed = [s for s in sas if s.get('Status') == 'Completed']
 
@@ -146,39 +261,13 @@ def _compute_performance(territory_id: str, period_start: str, period_end: str) 
         'pct': round(100 * len(completed) / max(total, 1), 1),
     }
 
-    # 1st Call vs 2nd+ Call -- from SA history (territory assignment sequence)
-    sa_history = data.get('sa_history', [])
-
-    # Build assignment order per SA: list of territory IDs in chronological order
-    sa_territory_order = defaultdict(list)  # sa_id -> [territory_id_1, territory_id_2, ...]
-    for h in sa_history:
-        sa_id = h.get('ServiceAppointmentId')
-        new_val = h.get('NewValue', '') or ''
-        if sa_id and new_val.startswith('0Hh'):
-            # Only add if different from last (avoid duplicates from same assignment)
-            order = sa_territory_order[sa_id]
-            if not order or order[-1] != new_val:
-                order.append(new_val)
-
-    first_call_sas = []
-    second_call_sas = []
-    for s in sas:
-        sa_id = s['Id']
-        order = sa_territory_order.get(sa_id, [])
-        if not order:
-            # No history found -- treat as 1st call (initial assignment, no reassignment)
-            first_call_sas.append(s)
-        elif order[0] == territory_id:
-            first_call_sas.append(s)
-        else:
-            second_call_sas.append(s)
-
-    first_call_accepted = [s for s in first_call_sas if not s.get('ERS_Facility_Decline_Reason__c')]
-    second_call_accepted = [s for s in second_call_sas if not s.get('ERS_Facility_Decline_Reason__c')]
-
-    # Completion of accepted -- of SAs they didn't decline, how many completed?
-    accepted_sas = [s for s in sas if not s.get('ERS_Facility_Decline_Reason__c')]
-    accepted_completed = [s for s in accepted_sas if s.get('Status') == 'Completed']
+    # 1st Call vs 2nd+ Call + completion-of-accepted (from shared partition helper)
+    first_call_sas = parts['first_call_sas']
+    second_call_sas = parts['second_call_sas']
+    first_call_accepted = parts['first_call_accepted']
+    second_call_accepted = parts['second_call_accepted']
+    accepted_sas = parts['accepted_sas']
+    accepted_completed = parts['accepted_completed']
 
     first_call = {
         'first_call_total': len(first_call_sas),
@@ -344,3 +433,68 @@ def api_response_decomposition(
     period_start = sanitize_soql(period_start)
     period_end = sanitize_soql(period_end)
     return get_response_decomposition(territory_id, period_start, period_end)
+
+
+# ── Acceptance / Completion drill-down ────────────────────────────────────────
+
+@router.get("/api/garages/{territory_id}/acceptance-detail")
+def get_acceptance_detail(
+    request: Request,
+    territory_id: str,
+    bucket: str = Query(..., description="one of: first_call_accepted, first_call_declined, "
+                                         "second_call_accepted, second_call_declined, "
+                                         "completion_completed, completion_not_completed"),
+    period_start: str = Query(...),
+    period_end: str = Query(...),
+):
+    """Lazy drill-down: list the underlying SAs for one acceptance/completion bucket.
+
+    Kept out of /performance so that endpoint stays lean. Reuses the SAME territory
+    access check + SA query + partition logic as the dashboard (one source of truth)."""
+    # Same scoping enforcement as the performance endpoint — do NOT skip.
+    _check_territory_access(request, territory_id)
+    if bucket not in _ACCEPTANCE_BUCKETS:
+        raise HTTPException(status_code=400, detail=f"Invalid bucket '{bucket}'")
+    territory_id = sanitize_soql(territory_id)
+    period_start = sanitize_soql(period_start)
+    period_end = sanitize_soql(period_end)
+    cache_key = f"acceptdetail_{territory_id}_{bucket}_{period_start}_{period_end}"
+    return cache.cached_query_persistent(
+        cache_key,
+        lambda: _compute_acceptance_detail(territory_id, bucket, period_start, period_end),
+        max_stale_hours=26,
+    )
+
+
+def _compute_acceptance_detail(territory_id: str, bucket: str, period_start: str, period_end: str) -> dict:
+    next_day = (date.fromisoformat(period_end) + timedelta(days=1)).isoformat()
+    since = f"{period_start}T00:00:00Z"
+    until = f"{next_day}T00:00:00Z"
+
+    data = sf_parallel(
+        sas=lambda: sf_query_all(_sa_query(territory_id, since, until)),
+        sa_history=lambda: sf_query_all(_sa_history_query(territory_id, since, until)),
+    )
+
+    parts = _partition_sas(data.get('sas', []), data.get('sa_history', []), territory_id)
+    selected = parts[_ACCEPTANCE_BUCKETS[bucket]]
+
+    rows = []
+    for s in selected:
+        wo_id, wo_number = _extract_wo(s)
+        rows.append({
+            'sa_number': s.get('AppointmentNumber'),
+            'sa_id': s.get('Id'),
+            'wo_id': wo_id or s.get('ParentRecordId'),
+            'wo_number': wo_number,
+            'work_type': (s.get('WorkType') or {}).get('Name'),
+            'status': s.get('Status'),
+            'decline_reason': s.get('ERS_Facility_Decline_Reason__c'),
+        })
+
+    return {
+        'bucket': bucket,
+        'count': len(rows),
+        'rows': rows,
+        'period': {'start': period_start, 'end': period_end},
+    }
