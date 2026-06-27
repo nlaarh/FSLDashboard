@@ -414,6 +414,7 @@ def _build_scorecard(territory_id: str, start_date: str, end_date: str) -> dict:
 
 @router.get("/api/garages/{territory_id}/performance-scorecard/ai-summary")
 def api_garage_ai_summary(
+    request: Request,
     territory_id: str,
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -431,8 +432,9 @@ def api_garage_ai_summary(
     if cached:
         return cached
 
-    # Get the scorecard data first
-    scorecard = api_garage_performance_scorecard(territory_id, start_date, end_date)
+    # Get the scorecard data first (pass request through so the inner
+    # _check_territory_access runs — also enforces contractor scoping here)
+    scorecard = api_garage_performance_scorecard(request, territory_id, start_date, end_date)
     gs = scorecard['garage_summary']
     drivers = scorecard['drivers']
     ps_p = scorecard['primary_vs_secondary']['primary']

@@ -331,6 +331,7 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
                         'date':       sa_to_date.get(sa_id, ''),
                         'aaa_billed': round(aaa_for_wo, 2),
                         'amount':     round(mc_amt, 2),
+                        'reason':     'Est. Tow Over-Mileage Cost to Member',
                         'sf_url':     f'{_SF_BASE}/{wo_id}',
                     })
 

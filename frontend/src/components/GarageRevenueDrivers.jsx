@@ -423,6 +423,7 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
                                 <col className="w-24" />
                                 <col className="w-24" />
                                 <col className="w-24" />
+                                <col className="w-56" />
                                 <col className="w-14" />
                               </colgroup>
                               <thead>
@@ -431,6 +432,7 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
                                   <th className="text-left py-1 px-2 text-slate-500">Date</th>
                                   <th className="text-right py-1 px-2 text-emerald-600/70">AAA Billed</th>
                                   <th className="text-right py-1 px-2 text-sky-500/70">Member Collected</th>
+                                  <th className="text-left py-1 px-2 text-slate-500">Reason</th>
                                   <th className="py-1 px-2" />
                                 </tr>
                               </thead>
@@ -448,6 +450,7 @@ export default function GarageRevenueDrivers({ garageId, startDate, endDate, gar
                                     <td className="py-1 px-2 text-slate-400 whitespace-nowrap">{w.date}</td>
                                     <td className="py-1 px-2 text-right text-emerald-400 whitespace-nowrap">{fmtRevFull(w.aaa_billed ?? 0)}</td>
                                     <td className="py-1 px-2 text-right text-sky-400 font-medium whitespace-nowrap">{fmtRevFull(w.amount)}</td>
+                                    <td className="py-1 px-2 text-slate-400">{w.reason || 'Est. Tow Over-Mileage Cost to Member'}</td>
                                     <td className="py-1 px-2" />
                                   </tr>
                                 ))}
