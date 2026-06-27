@@ -160,7 +160,7 @@ def contractor_recs_mh(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
           AND Tow_Call__c = true
           AND Vehicle_Make__c != null
         ORDER BY CreatedDate DESC
@@ -240,7 +240,7 @@ def contractor_recs_pg_fuel(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
           AND Dispatch_Code__c IN ({code_clause})
           AND Coverage__c IN ({cov_clause})
         ORDER BY CreatedDate DESC
@@ -311,7 +311,7 @@ def contractor_recs_er_miles(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
         ORDER BY CreatedDate DESC
         LIMIT 50000
     """)
@@ -432,7 +432,7 @@ def contractor_recs_tow_miles(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
           AND Tow_Call__c = true
           AND Resolution_Code__c IN ('G', 'NSR')
         ORDER BY CreatedDate DESC
@@ -492,7 +492,7 @@ def contractor_recs_tl_tolls(
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
-          AND Status = 'Completed'
+          AND Status IN ('Completed', 'Closed')
           AND Tow_Call__c = true
           AND ERS_Estimated_Tow_Miles__c > 30
         ORDER BY CreatedDate DESC
