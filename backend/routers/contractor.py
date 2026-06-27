@@ -15,6 +15,7 @@ from sf_client import sf_query_all, sanitize_soql
 from routers.accounting_photos import fetch_photos
 from routers.accounting_list import _fetch_photo_wo_ids
 from routers.accounting_calc import _fmt_et, _safe_float
+from repositories import driver_collection as _dc_repo
 from utils import parse_dt as _parse_dt
 
 log = logging.getLogger("contractor")
@@ -528,3 +529,140 @@ def contractor_pending_woas(
     ]
 
     return {"items": items, "total": len(items)}
+
+
+# ── Driver Collection ─────────────────────────────────────────────────────────
+#
+# Completed calls where the tech should have collected payment from the member.
+# A WorkOrder may match more than one reason → one emitted row per matched reason.
+# Reasons are discriminated by Resolution_Code__c (NOT Trouble_Code__c).
+
+_DC_BATTERY_CODES = ("G306", "G307", "G308")
+_DC_TIREJECT_CODE = "G103"
+_DC_FUEL_CODES = ("G401", "G402")
+
+_DC_REASON_TOW = "Tow Overmiles"
+_DC_REASON_BATTERY = "Battery Sold"
+_DC_REASON_TIREJECT = "TireJECT Install"
+_DC_REASON_FUEL = "Fuel Delivery – Basic Member"
+
+# Valid (wo_id, reason) audit reasons the POST endpoint will accept.
+_DC_VALID_REASONS = {
+    _DC_REASON_TOW, _DC_REASON_BATTERY, _DC_REASON_TIREJECT, _DC_REASON_FUEL,
+}
+
+
+def _dc_is_basic(wo: dict) -> bool:
+    """Basic coverage if Entitlement_Master__r.Name='Basic Coverage' OR Coverage__c='B'."""
+    em_name = ((wo.get("Entitlement_Master__r") or {}).get("Name") or "").strip()
+    coverage = (wo.get("Coverage__c") or "").strip()
+    return em_name == "Basic Coverage" or coverage == "B"
+
+
+def _dc_matched_reasons(wo: dict) -> list[tuple[str, str]]:
+    """Return list of (reason, amount) the WO matches. Amounts are literal strings."""
+    out = []
+    res = (wo.get("Resolution_Code__c") or "").strip()
+    over_mileage = _safe_float(wo.get("ERS_Est_Tow_Over_Mileage_Cost__c")) or 0
+
+    if wo.get("Tow_Call__c") and over_mileage > 0:
+        out.append((_DC_REASON_TOW, f"${over_mileage:,.2f}"))
+    if res in _DC_BATTERY_CODES:
+        out.append((_DC_REASON_BATTERY, "Verify Battery Sold"))
+    if res == _DC_TIREJECT_CODE:
+        out.append((_DC_REASON_TIREJECT, "$34.99"))
+    if res in _DC_FUEL_CODES and _dc_is_basic(wo):
+        out.append((_DC_REASON_FUEL, "2-3 Gallons of Gas"))
+    return out
+
+
+@router.get("/api/contractor/driver-collection")
+def contractor_driver_collection(
+    request: Request,
+    start_date: str = Query(default=None, description="YYYY-MM-DD (default: month start)"),
+    end_date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+):
+    """Completed calls where the tech should have collected payment from the member.
+
+    Scoped to the contractor's facilities. Emits one row per matched collection
+    reason; the audit-verified flag is merged in per logged-in contractor.
+    """
+    facility_ids = _require_contractor_facilities(request)
+    f_clause = _facility_in_clause(facility_ids)
+    username = get_request_username(request)
+
+    now = datetime.now(timezone.utc)
+    if not start_date:
+        start_date = now.strftime("%Y-%m-01")
+    if not end_date:
+        end_date = now.strftime("%Y-%m-%d")
+
+    try:
+        datetime.strptime(start_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+
+    soql = f"""
+        SELECT Id, WorkOrderNumber, Service_Resource__r.Name,
+               Type__c, Dispatch_Code__c, Resolution_Code__c,
+               Tow_Call__c, ERS_Est_Tow_Over_Mileage_Cost__c,
+               Entitlement_Master__r.Name, Coverage__c, CreatedDate
+        FROM WorkOrder
+        WHERE Facility_ID__c IN ({f_clause})
+          AND Status = 'Completed'
+          AND (
+                Resolution_Code__c IN ('G306','G307','G308','G103','G401','G402')
+                OR (Tow_Call__c = true AND ERS_Est_Tow_Over_Mileage_Cost__c > 0)
+              )
+          AND CreatedDate >= {start_date}T00:00:00Z
+          AND CreatedDate <= {end_date}T23:59:59Z
+        ORDER BY CreatedDate DESC
+        LIMIT 5000
+    """
+    rows = sf_query_all(soql)
+
+    verified = _dc_repo.get_verified_keys(username) if username else set()
+
+    items = []
+    for r in rows:
+        coverage_label = (
+            (r.get("Entitlement_Master__r") or {}).get("Name")
+            or r.get("Coverage__c") or ""
+        )
+        wo_id = r.get("Id") or ""
+        for reason, amount in _dc_matched_reasons(r):
+            items.append({
+                "wo_id": wo_id,
+                "wo_number": r.get("WorkOrderNumber") or "",
+                "service_resource_name": (r.get("Service_Resource__r") or {}).get("Name") or "",
+                "reason": reason,
+                "amount": amount,
+                "call_type": r.get("Type__c") or "",
+                "dispatch_code": r.get("Dispatch_Code__c") or "",
+                "resolution_code": r.get("Resolution_Code__c") or "",
+                "coverage": coverage_label,
+                "created_date": r.get("CreatedDate") or "",
+                "audit_verified": (wo_id, reason) in verified,
+            })
+
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/api/contractor/driver-collection/audit")
+def contractor_driver_collection_audit(request: Request, body: dict):
+    """Persist the contractor's verification of a (wo_id, reason) collection row."""
+    facility_ids = _require_contractor_facilities(request)  # auth + role gate
+    username = get_request_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    wo_id = (body.get("wo_id") or "").strip()
+    reason = (body.get("reason") or "").strip()
+    verified = bool(body.get("verified"))
+
+    if not wo_id or reason not in _DC_VALID_REASONS:
+        raise HTTPException(status_code=400, detail="wo_id and a valid reason are required")
+
+    _dc_repo.set_verified(username, wo_id, reason, verified)
+    return {"ok": True}

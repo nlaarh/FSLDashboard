@@ -203,6 +203,15 @@ CREATE TABLE IF NOT EXISTS user_garages (
   PRIMARY KEY (username, garage_id)
 );
 
+CREATE TABLE IF NOT EXISTS driver_collection_audit (
+  username    TEXT NOT NULL,
+  wo_id       TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  verified    BOOLEAN DEFAULT true,
+  verified_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (username, wo_id, reason)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,

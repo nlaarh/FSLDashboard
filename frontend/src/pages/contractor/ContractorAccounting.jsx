@@ -3,11 +3,13 @@ import { useLocation } from 'react-router-dom'
 import ContractorCalls from './ContractorCalls'
 import ContractorAccountingRecs from './ContractorAccountingRecs'
 import ContractorPendingWoas from './ContractorPendingWoas'
+import ContractorDriverCollection from './ContractorDriverCollection'
 
 const TABS = [
-  { key: 'calls',   label: 'Work Orders' },
-  { key: 'recs',    label: 'Recommendations' },
-  { key: 'pending', label: 'Work Order Adjs' },
+  { key: 'calls',             label: 'Work Orders' },
+  { key: 'recs',              label: 'Recommendations' },
+  { key: 'pending',           label: 'Work Order Adjs' },
+  { key: 'driver-collection', label: 'Driver Collection' },
 ]
 
 export default function ContractorAccounting() {
@@ -39,6 +41,7 @@ export default function ContractorAccounting() {
       {activeTab === 'calls'   && <ContractorCalls />}
       {activeTab === 'recs'    && <ContractorAccountingRecs />}
       {activeTab === 'pending' && <ContractorPendingWoas />}
+      {activeTab === 'driver-collection' && <ContractorDriverCollection />}
     </div>
   )
 }
