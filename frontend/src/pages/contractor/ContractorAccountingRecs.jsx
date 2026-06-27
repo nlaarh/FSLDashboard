@@ -5,6 +5,7 @@ import {
   Truck, MapPin, DollarSign, Droplets, Link2, Camera,
   ChevronUp, ChevronDown, ChevronsUpDown,
 } from 'lucide-react'
+import { InfoTip } from '../../components/CommandCenterUtils'
 
 const REC_TABS = [
   { key: 'mh',        label: 'MH (Medium Duty)', icon: Truck },
@@ -347,6 +348,9 @@ export default function ContractorAccountingRecs() {
           {anyLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {anyLoading ? 'Loading…' : 'Load Recommendations'}
         </button>
+        <div className="self-center">
+          <InfoTip text={"RECOMMENDATIONS\n\nCompleted/closed calls where your facility may be owed a Work Order Adjustment (WOA) you haven't claimed yet.\n\nFIVE TYPES (sub-tabs):\n  • MH — Medium Duty on approved-vehicle tows\n  • PG Fuel — fuel delivery\n  • ER Miles — enroute mileage\n  • Tow Miles — tow mileage\n  • TL Tolls — tolls\n\nRULES:\n  • Only completed/closed calls — never cancelled\n  • Hidden if a WOLI was already PAID for that product\n  • Hidden if a WOA already exists with status New or Approved. Rejected WOAs reappear so you can resubmit.\n  • MH: only tows of vehicles on the Approved List\n  • PG Fuel: shows coverage level (excludes Basic members)\n\nTurn on 'Show already-actioned' to also see paid/submitted ones, marked Paid / WOA submitted."} />
+        </div>
         <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-300">
           <input
             type="checkbox"

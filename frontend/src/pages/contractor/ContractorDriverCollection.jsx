@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react'
+import { InfoTip } from '../../components/CommandCenterUtils'
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
@@ -151,6 +152,10 @@ export default function ContractorDriverCollection() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {loading ? 'Loading…' : 'Load'}
         </button>
+
+        <div className="self-center">
+          <InfoTip text={"DRIVER COLLECTION\n\nCompleted/closed calls where the technician should have collected payment from the member.\n\nFOUR REASONS (by Resolution Code):\n  • Tow Overmiles — tow with Est. Tow Over-Mileage Cost to Member > $0 (actual amount shown)\n  • Battery Sold — resolution G306/G307/G308 (amount: verify manually — Salesforce has no battery $ field)\n  • TireJECT Install — resolution G103 (fixed $34.99)\n  • Fuel Delivery – Basic Member — resolution G401/G402 + Basic coverage (2-3 gallons of gas)\n\nTick Audit Verification after confirming the tech collected — it saves per facility."} />
+        </div>
 
         {fetched && items && items.length > 0 && (
           <>

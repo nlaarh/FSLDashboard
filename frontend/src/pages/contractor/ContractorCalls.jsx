@@ -4,6 +4,7 @@ import {
   Loader2, AlertTriangle, ChevronUp, ChevronDown,
   Download, ExternalLink, ArrowUpDown, Camera
 } from 'lucide-react'
+import { InfoTip } from '../../components/CommandCenterUtils'
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
@@ -173,6 +174,10 @@ export default function ContractorCalls() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {loading ? 'Loading…' : 'Load Calls'}
         </button>
+
+        <div className="self-center">
+          <InfoTip text={"WORK ORDERS\n\nEvery work order for your assigned garages in the selected date range.\n\nFILTERS:\n  • Your facilities only (Facility_ID__c)\n  • CreatedDate within the date range\n\nShows the full call log across all statuses (completed, closed, cancelled, etc.)."} />
+        </div>
 
         {fetched && allCalls && allCalls.length > 0 && (
           <>

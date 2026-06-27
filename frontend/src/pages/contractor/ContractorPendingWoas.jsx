@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react'
+import { InfoTip } from '../../components/CommandCenterUtils'
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
@@ -120,6 +121,10 @@ export default function ContractorPendingWoas() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {loading ? 'Loading…' : 'Load'}
         </button>
+
+        <div className="self-center">
+          <InfoTip text={"WORK ORDER ADJS\n\nYour PENDING Work Order Adjustments — WOAs you've submitted that are awaiting a decision.\n\nFILTER: Status = 'New'\n\nNot shown here: Approved WOAs (already done) and Rejected WOAs (those reappear in Recommendations so you can resubmit)."} />
+        </div>
 
         {fetched && items && items.length > 0 && (
           <>
