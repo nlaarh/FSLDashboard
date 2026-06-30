@@ -5,6 +5,9 @@ import {
   Download, ExternalLink, ArrowUpDown, Camera
 } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
+import Paginator from '../../components/Paginator'
+
+const PAGE_SIZE = 100
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
@@ -90,6 +93,7 @@ export default function ContractorCalls() {
   // Sorting
   const [sortCol, setSortCol] = useState('created_date')
   const [sortDir, setSortDir] = useState('desc')
+  const [page, setPage] = useState(0)
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
@@ -154,6 +158,10 @@ export default function ContractorCalls() {
     }
     return rows
   }, [allCalls, filterCallType, filterCoverage, filterStatus, sortCol, sortDir])
+
+  // Display one page only; export uses the full filteredSortedCalls set.
+  const pageRows = filteredSortedCalls.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  useEffect(() => { setPage(0) }, [allCalls, filterCallType, filterCoverage, filterStatus, filterResolution, startDate, endDate])
 
   return (
     <div>
@@ -292,7 +300,7 @@ export default function ContractorCalls() {
                     ))}
                   </tr>
                 ))}
-                {!loading && filteredSortedCalls.map(c => (
+                {!loading && pageRows.map(c => (
                   <tr key={c.wo_id}
                     onClick={() => navigate(`/contractor/accounting/calls/${c.wo_id}`, { state: { from: 'calls' } })}
                     className="hover:bg-slate-800/40 cursor-pointer transition-colors border-b border-slate-800/40">
@@ -338,11 +346,15 @@ export default function ContractorCalls() {
           )}
 
           {!loading && filteredSortedCalls.length > 0 && (
-            <div className="px-4 py-2.5 border-t border-slate-800/60 text-[10px] text-slate-600">
-              {filteredSortedCalls.length} calls
-              {allCalls && allCalls.length !== filteredSortedCalls.length && ` (filtered from ${allCalls.length})`}
-              {' · '}sorted by {COLUMNS.find(c => c.key === sortCol)?.label} ({sortDir})
-            </div>
+            <>
+              <Paginator page={page} setPage={setPage} total={filteredSortedCalls.length} pageSize={PAGE_SIZE} />
+              <div className="px-4 py-2.5 border-t border-slate-800/60 text-[10px] text-slate-600">
+                {filteredSortedCalls.length} calls
+                {allCalls && allCalls.length !== filteredSortedCalls.length && ` (filtered from ${allCalls.length})`}
+                {' · '}sorted by {COLUMNS.find(c => c.key === sortCol)?.label} ({sortDir})
+                {' · '}Export includes all {filteredSortedCalls.length} filtered rows
+              </div>
+            </>
           )}
         </div>
       )}

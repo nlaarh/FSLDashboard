@@ -216,11 +216,17 @@ def api_woa_ai_analysis(woa_id: str):
 
     ctx = data.get('_ai_context') or {}
     gh = data.get('_garage_history')
-    ai = call_audit_ai(ctx, gh)
+    # Never let an AI hiccup (missing key, network, parse, missing field) 500 the audit panel.
+    try:
+        ai = call_audit_ai(ctx, gh) or {}
+    except Exception as e:
+        log.warning(f"AI analysis failed for {woa_id}: {e}")
+        ai = {}
 
     ai_fields = {
-        'ai_recommendation': ai['recommendation'], 'confidence': ai['confidence'],
-        'ai_summary': ai['ai_summary'], 'ai_headline': ai.get('headline'),
+        'ai_recommendation': ai.get('recommendation'), 'confidence': ai.get('confidence'),
+        'ai_summary': ai.get('ai_summary') or 'AI analysis unavailable.',
+        'ai_headline': ai.get('headline'),
         'ai_story': ai.get('story'), 'ai_fraud_signals': ai.get('fraud_signals') or [],
         'ai_anomalies': ai.get('anomalies') or [], 'ai_what_to_do': ai.get('what_to_do') or [],
         'ask_garage': ai.get('ask_garage') or [],

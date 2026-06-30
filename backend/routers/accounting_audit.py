@@ -31,7 +31,7 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order_Line_Item__c,
                CreatedDate, CreatedById, LastModifiedById,
                CreatedBy.Name, LastModifiedBy.Name,
-               Work_Order__c, Work_Order__r.WorkOrderNumber,
+               Work_Order__c, Work_Order__r.WorkOrderNumber, Work_Order__r.Subject,
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
                Work_Order__r.ServiceTerritory.ParentTerritory.Name,
@@ -557,6 +557,30 @@ def _build_woa_data(woa_id: str) -> dict:
         already_paid_mh=_already_paid_mh,
         dispatch_code=wo.get('Dispatch_Code__c') or None,
         coverage_level=wo.get('Coverage__c') or None)
+
+    # Gone on Arrival / cancelled (X-prefix resolution code) = no service rendered.
+    # Never recommend paying ANY charge on these — mirrors the contractor side, where
+    # X-codes are excluded from every recommendation type. Overrides the product math.
+    # Cancelled calls (X-prefix): no service completed, so charges aren't payable —
+    # EXCEPT enroute miles on X002 (Cancel En Route), where the driver actually drove
+    # out (verified: ~99% went en route) and earns those miles.
+    _res_code = (wo.get('Resolution_Code__c') or '').upper()
+    if _res_code.startswith('X') and not (_res_code == 'X002' and woli_code == 'ER'):
+        rule_rec = 'reject'
+        rec_reason = (rec_reason or '') + (
+            f'\n→ REJECT: Resolution code {_res_code} = call cancelled, no service completed — '
+            'this charge should not be paid.'
+        )
+
+    # Enroute miles on a duplicated call: the driver was already on location when the
+    # call was created, so there are NO enroute miles to pay. Mirrors the contractor
+    # ER exclusion. Applies to ER only.
+    if woli_code == 'ER' and 'duplicated call' in (wo.get('Subject') or '').lower():
+        rule_rec = 'reject'
+        rec_reason = (rec_reason or '') + (
+            '\n→ REJECT: Work Order is a duplicated call (driver already on location) — '
+            'no enroute miles to pay.'
+        )
 
     # Reject E1 claims > 14 min on tow calls with no drop-off photos (on-platform only)
     _has_woli_02 = any(w.get('LineItemNumber') == '00000002' for w in woli_rows)

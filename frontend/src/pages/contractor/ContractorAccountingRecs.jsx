@@ -6,6 +6,9 @@ import {
   ChevronUp, ChevronDown, ChevronsUpDown,
 } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
+import Paginator from '../../components/Paginator'
+
+const PAGE_SIZE = 100
 
 const REC_TABS = [
   { key: 'mh',        label: 'MH (Medium Duty)', icon: Truck },
@@ -30,15 +33,33 @@ function defaultDates() {
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
-function WoCell({ r, navigate }) {
+// Persist the recs view (sub-tab, dates, filter, show-actioned) so that drilling
+// into a Work Order and clicking "Back to Recommendations" restores the exact view.
+const VIEW_KEY = 'contractorRecsView'
+function loadSavedView() {
+  try { return JSON.parse(sessionStorage.getItem(VIEW_KEY)) || {} } catch { return {} }
+}
+
+function WoCell({ r }) {
   return (
     <div className="flex items-center gap-1.5">
-      <button
-        onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`, { state: { from: 'recs' } })}
-        className="font-mono text-indigo-400 hover:text-indigo-300 hover:underline text-left"
-      >
-        WO-{r.wo_number || '—'}
-      </button>
+      {/* WO Number links straight to the Work Order in Salesforce (new tab).
+          stopPropagation so it doesn't trigger the row's in-app drill-down. */}
+      {r.wo_id ? (
+        <a
+          href={`${SF_BASE}/${r.wo_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="font-mono text-indigo-400 hover:text-indigo-300 hover:underline text-left inline-flex items-center gap-1"
+          title="Open Work Order in Salesforce"
+        >
+          WO-{r.wo_number || '—'}
+          <ExternalLink size={9} className="shrink-0 text-slate-500" />
+        </a>
+      ) : (
+        <span className="font-mono text-slate-400">WO-{r.wo_number || '—'}</span>
+      )}
       {r.already_actioned === 'paid' && (
         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 border border-amber-500/40 text-amber-300 whitespace-nowrap shrink-0" title="A paid/active line item already exists for this product">
           Paid
@@ -52,28 +73,25 @@ function WoCell({ r, navigate }) {
       {r.has_photos && (
         <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />
       )}
-      {r.wo_id && (
-        <a href={`${SF_BASE}/${r.wo_id}`} target="_blank" rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          className="text-slate-600 hover:text-slate-400 transition-colors"
-          title="Open in Salesforce">
-          <ExternalLink size={9} className="shrink-0" />
-        </a>
-      )}
     </div>
   )
 }
+
+// Shared Service Resource column — placed after Facility, before Date on every tab
+const SR_COL = { key: 'service_resource', label: 'Service Resource', sortable: true, render: r => <span className="text-slate-300">{r.service_resource || '—'}</span> }
 
 // Columns per tab — wo_number column injected dynamically
 const EXTRA_COLUMNS = {
   'mh': [
     { key: 'facility',     label: 'Facility',      sortable: true,  render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
+    SR_COL,
     { key: 'created_date', label: 'Date',           sortable: true,  render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'vehicle_make', label: 'Vehicle Make',   sortable: true,  render: r => <span className="text-slate-300">{r.vehicle_make || '—'}</span> },
     { key: 'vehicle_model',label: 'Vehicle Model',  sortable: true,  render: r => <span className="text-slate-300">{r.vehicle_model || '—'}</span> },
   ],
   'pg-fuel': [
     { key: 'facility',     label: 'Facility',      sortable: true,  render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
+    SR_COL,
     { key: 'created_date', label: 'Date',           sortable: true,  render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'dispatch_code',label: 'Dispatch Code',  sortable: true,  render: r => <span className="font-mono text-slate-300">{r.dispatch_code || '—'}</span> },
     { key: 'fuel_type',    label: 'Fuel Type',      sortable: true,  render: r => <span className="text-slate-300">{r.fuel_type || '—'}</span> },
@@ -82,18 +100,21 @@ const EXTRA_COLUMNS = {
   ],
   'er-miles': [
     { key: 'facility',     label: 'Facility',     sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
+    SR_COL,
     { key: 'created_date', label: 'Date',         sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'estimated_er_miles', label: 'Est. ER Miles', sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_er_miles != null ? `${r.estimated_er_miles} mi` : '—'}</span> },
     { key: 'ai_summary',   label: 'Reason',       sortable: false, render: r => <span className="text-slate-300 max-w-[220px] block text-[10px]">{r.ai_summary || '—'}</span> },
   ],
   'tow-miles': [
     { key: 'facility',       label: 'Facility',      sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
+    SR_COL,
     { key: 'created_date',   label: 'Date',          sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'resolution_code',label: 'Resolution Code', sortable: true, render: r => <span className="font-mono text-slate-300">{r.resolution_code || '—'}</span> },
     { key: 'estimated_tow_miles', label: 'Est. Tow Miles', sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_tow_miles != null ? `${r.estimated_tow_miles} mi` : '—'}</span> },
   ],
   'tl-tolls': [
     { key: 'facility',           label: 'Facility',      sortable: true, render: r => <span className="text-slate-300">{r.facility || '—'}</span> },
+    SR_COL,
     { key: 'created_date',       label: 'Date',          sortable: true, render: r => <span className="text-slate-400 whitespace-nowrap">{r.created_date?.slice(0,10) || '—'}</span> },
     { key: 'estimated_tow_miles',label: 'Est. Tow Miles',sortable: true, render: r => <span className="font-mono text-slate-300">{r.estimated_tow_miles != null ? `${r.estimated_tow_miles} mi` : '—'}</span> },
     { key: 'actual_tow_miles',   label: 'Actual Miles',  sortable: true, render: r => <span className="font-mono text-slate-300">{r.actual_tow_miles != null ? `${r.actual_tow_miles} mi` : '—'}</span> },
@@ -102,11 +123,11 @@ const EXTRA_COLUMNS = {
 
 // Plain-text values for CSV export
 const CSV_COLUMNS = {
-  'mh':        ['wo_number','facility','created_date','vehicle_make','vehicle_model'],
-  'pg-fuel':   ['wo_number','facility','created_date','dispatch_code','fuel_type','entitlement_master','max_reimbursement'],
-  'er-miles':  ['wo_number','facility','created_date','estimated_er_miles','ai_summary'],
-  'tow-miles': ['wo_number','facility','created_date','resolution_code','estimated_tow_miles'],
-  'tl-tolls':  ['wo_number','facility','created_date','estimated_tow_miles','actual_tow_miles'],
+  'mh':        ['wo_number','facility','service_resource','created_date','vehicle_make','vehicle_model'],
+  'pg-fuel':   ['wo_number','facility','service_resource','created_date','dispatch_code','fuel_type','entitlement_master','max_reimbursement'],
+  'er-miles':  ['wo_number','facility','service_resource','created_date','estimated_er_miles','ai_summary'],
+  'tow-miles': ['wo_number','facility','service_resource','created_date','resolution_code','estimated_tow_miles'],
+  'tl-tolls':  ['wo_number','facility','service_resource','created_date','estimated_tow_miles','actual_tow_miles'],
 }
 
 function exportCSV(tabKey, items) {
@@ -158,6 +179,7 @@ function sortItems(items, sortKey, sortDir) {
 function RecTable({ items, columns, loading, error, filter, navigate }) {
   const [sortKey, setSortKey] = useState('created_date')
   const [sortDir, setSortDir] = useState('desc')
+  const [page, setPage] = useState(0)
 
   const handleSort = colKey => {
     if (sortKey === colKey) {
@@ -184,6 +206,10 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
     }
     return sortItems(result, sortKey, sortDir)
   }, [items, filter, sortKey, sortDir])
+
+  // Display one page only; CSV export (page-level) uses the full filtered set.
+  useEffect(() => { setPage(0) }, [items, filter, sortKey, sortDir])
+  const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   if (loading) return (
     <div className="flex items-center justify-center py-16 gap-2 text-slate-500">
@@ -237,14 +263,14 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/40">
-          {filtered.map((r, idx) => (
+          {pageRows.map((r, idx) => (
             <tr
               key={r.wo_id || r.wo_number || idx}
               onClick={() => r.wo_id && navigate(`/contractor/accounting/calls/${r.wo_id}`, { state: { from: 'recs' } })}
               className={`hover:bg-slate-800/30 transition-colors ${r.wo_id ? 'cursor-pointer' : ''}`}
             >
               <td className="px-2 py-2.5">
-                <WoCell r={r} navigate={navigate} />
+                <WoCell r={r} />
               </td>
               {columns.map(c => (
                 <td key={c.key} className="px-2 py-2.5">
@@ -265,9 +291,11 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
           ))}
         </tbody>
       </table>
+      <Paginator page={page} setPage={setPage} total={filtered.length} pageSize={PAGE_SIZE} />
       <div className="px-4 py-2 border-t border-slate-800/60 text-[10px] text-slate-600">
         {filtered.length} recommendation{filtered.length !== 1 ? 's' : ''}
         {filter && items.length !== filtered.length && ` (filtered from ${items.length})`}
+        {' · '}Export includes all {filtered.length} filtered rows
       </div>
     </div>
   )
@@ -276,14 +304,15 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
 export default function ContractorAccountingRecs() {
   const navigate = useNavigate()
   const { start: defStart, end: defEnd, min: minDate } = defaultDates()
-  const [startDate, setStartDate] = useState(defStart)
-  const [endDate, setEndDate] = useState(defEnd)
-  const [activeRec, setActiveRec] = useState('mh')
+  const saved = loadSavedView()
+  const [startDate, setStartDate] = useState(saved.startDate || defStart)
+  const [endDate, setEndDate] = useState(saved.endDate || defEnd)
+  const [activeRec, setActiveRec] = useState(saved.activeRec || 'mh')
   const [recData, setRecData] = useState({})
   const [recLoading, setRecLoading] = useState({})
   const [recError, setRecError] = useState({})
-  const [filter, setFilter] = useState('')
-  const [showActioned, setShowActioned] = useState(false)
+  const [filter, setFilter] = useState(saved.filter || '')
+  const [showActioned, setShowActioned] = useState(saved.showActioned || false)
 
   const loadAll = useCallback((start, end, actioned) => {
     setFilter('')
@@ -306,6 +335,13 @@ export default function ContractorAccountingRecs() {
 
   // Auto-load on mount
   useEffect(() => { loadAll() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the current view so "Back to Recommendations" restores it after a drill-down
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(VIEW_KEY, JSON.stringify({ startDate, endDate, activeRec, filter, showActioned }))
+    } catch { /* ignore quota/availability errors */ }
+  }, [startDate, endDate, activeRec, filter, showActioned])
 
   const activeItems = recData[activeRec]
   const anyLoading = Object.values(recLoading).some(Boolean)
@@ -355,7 +391,7 @@ export default function ContractorAccountingRecs() {
           {anyLoading ? 'Loading…' : 'Load Recommendations'}
         </button>
         <div className="self-center">
-          <InfoTip text={"RECOMMENDATIONS\n\nCompleted/closed calls where your facility may be owed a Work Order Adjustment (WOA) you haven't claimed yet.\n\nFIVE TYPES (sub-tabs):\n  • MH — Medium Duty on approved-vehicle tows\n  • PG Fuel — fuel delivery\n  • ER Miles — enroute mileage\n  • Tow Miles — tow mileage\n  • TL Tolls — tolls\n\nRULES:\n  • Only completed/closed calls — never cancelled\n  • Hidden if a WOLI was already PAID for that product\n  • Hidden if a WOA already exists with status New or Approved. Rejected WOAs reappear so you can resubmit.\n  • MH: only tows of vehicles on the Approved List\n  • PG Fuel: shows coverage level (excludes Basic members)\n\nTurn on 'Show already-actioned' to also see paid/submitted ones, marked Paid / WOA submitted."} />
+          <InfoTip text={"RECOMMENDATIONS\n\nCompleted/closed calls where your facility may be owed a Work Order Adjustment (WOA) you haven't claimed yet.\n\nFIVE TYPES (sub-tabs):\n  • MH — Medium Duty on approved-vehicle tows\n  • PG Fuel — fuel delivery\n  • ER Miles — enroute mileage\n  • Tow Miles — tow mileage\n  • TL Tolls — tolls\n\nINCLUDED:\n  • Only completed/closed calls — never cancelled\n  • MH: only tows of vehicles on the Approved List\n  • PG Fuel: Plus/Premier coverage only (excludes Basic members)\n\nHIDDEN (already handled):\n  • A line item was already PAID for that product\n  • A WOA already exists with status New or Approved. Rejected WOAs reappear so you can resubmit.\n\nEXCLUDED — TOW NOT COMPLETED (applies to MH, Tow Miles & Tolls only):\n  These three charges require an actual tow, so a call is NOT recommended for them when it was closed with:\n  • a 'Go' code (starts with G) — driver fixed the vehicle on the spot, no tow\n  • an 'Unable to Complete / No Service Rendered' code (starts with R — e.g. R002 = NSR, R199 = not completed)\n  • a cancelled code (starts with X)\n\nER MILES — eligible whenever the driver actually drove. NOT recommended only when:\n  • X001 — cancelled before the driver moved\n  • R199 — not completed\n  • the call is a duplicated call (driver already on location)\n  X002 (Cancel En Route) IS eligible — the driver drove out, so enroute miles count.\n\nPG Fuel is not affected by any of these.\n\nTurn on 'Show already-actioned' to also see paid/submitted ones, marked Paid / WOA submitted."} />
         </div>
         <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-300">
           <input

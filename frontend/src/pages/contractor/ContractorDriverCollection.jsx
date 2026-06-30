@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react'
+import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown, Camera } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
+import Paginator from '../../components/Paginator'
+
+const PAGE_SIZE = 100
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
@@ -69,6 +72,7 @@ export default function ContractorDriverCollection() {
   // Sorting
   const [sortCol, setSortCol] = useState('reason')
   const [sortDir, setSortDir] = useState('asc')
+  const [page, setPage] = useState(0)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -131,7 +135,11 @@ export default function ContractorDriverCollection() {
     return rows
   }, [items, filterReason, filterCallType, sortCol, sortDir])
 
-  const selectCls = "bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50"
+  // Display one page only (keeps the table fast on large sets). Export uses full `filtered`.
+  const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  useEffect(() => { setPage(0) }, [filterReason, filterCallType, startDate, endDate, items])
+
+  const selectCls ="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50"
 
   return (
     <div>
@@ -226,13 +234,16 @@ export default function ContractorDriverCollection() {
                     ))}
                   </tr>
                 ))}
-                {!loading && filtered.map((row, idx) => {
+                {!loading && pageRows.map((row, idx) => {
                   const key = rowKey(row)
                   const saving = savingKeys.has(key)
                   return (
                     <tr key={key || idx} className="hover:bg-slate-800/30 transition-colors border-b border-slate-800/40">
                       <td className="px-2 py-2.5 font-mono text-indigo-400">
-                        {row.wo_number ? `WO-${row.wo_number}` : <span className="text-slate-600">—</span>}
+                        <span className="inline-flex items-center gap-1.5">
+                          {row.wo_number ? `WO-${row.wo_number}` : <span className="text-slate-600">—</span>}
+                          {row.has_photos && <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />}
+                        </span>
                       </td>
                       <td className="px-2 py-2.5 text-slate-300">{row.service_resource_name || <span className="text-slate-600">—</span>}</td>
                       <td className="px-2 py-2.5 text-slate-200 whitespace-nowrap">{row.reason || <span className="text-slate-600">—</span>}</td>
@@ -271,11 +282,14 @@ export default function ContractorDriverCollection() {
           )}
 
           {!loading && filtered.length > 0 && (
-            <div className="px-4 py-2.5 border-t border-slate-800/60 text-[10px] text-slate-600">
-              {filtered.length} row{filtered.length !== 1 ? 's' : ''}
-              {items && items.length !== filtered.length && ` (filtered from ${items.length})`}
-              {' · '}{startDate} – {endDate}
-            </div>
+            <>
+              <Paginator page={page} setPage={setPage} total={filtered.length} pageSize={PAGE_SIZE} />
+              <div className="px-4 py-2.5 border-t border-slate-800/60 text-[10px] text-slate-600">
+                {filtered.length} row{filtered.length !== 1 ? 's' : ''}
+                {items && items.length !== filtered.length && ` (filtered from ${items.length})`}
+                {' · '}{startDate} – {endDate} · Export includes all {filtered.length} filtered rows
+              </div>
+            </>
           )}
         </div>
       )}

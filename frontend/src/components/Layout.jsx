@@ -378,7 +378,7 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      <FloatingChat />
+      {/* Chatbot disabled for all users (per request). Re-add <FloatingChat /> to re-enable. */}
     </div>
   )
 }

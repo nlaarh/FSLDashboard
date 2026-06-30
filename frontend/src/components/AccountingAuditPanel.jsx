@@ -7,6 +7,7 @@ import {
 import { fetchWOAAudit, recalculateWOAAudit, fetchAccountingRates, fetchWOAAiAnalysis } from '../api'
 import { productCode } from '../utils/formatting'
 import { PRODUCT_NAMES, TOW_CODES, TIME_CODES, FLAT_CODES, UNITS, headerSummary, buildLocalSummary } from '../utils/accountingAudit'
+import { InfoTip } from './CommandCenterUtils'
 import WODiagnosticStrip from './WODiagnosticStrip'
 import AuditVerificationCard from './AuditVerificationCard'
 import WOAAuditMap from './WOAAuditMap'
@@ -19,6 +20,25 @@ const REC_BADGE = {
   DENY:   'bg-red-500/15 text-red-400 border border-red-500/30',
   REJECT: 'bg-red-500/15 text-red-400 border border-red-500/30',
 }
+
+// In-depth rules shown in the "?" beside the verdict (no AI — pure rules on SF data).
+const REC_RULES = (
+  'HOW THIS RECOMMENDATION IS DECIDED (no AI — rules on Salesforce data):\n\n' +
+  'PAY = the data supports the garage\'s request.\n' +
+  'REVIEW = data is missing or doesn\'t match — a human must verify.\n' +
+  'REJECT = a rule says this should not be paid.\n\n' +
+  'BY PRODUCT:\n' +
+  '• ER / TW (miles): requested vs SF Google distance — ≤130% = Pay, ≤150% = Review, >150% = flag.\n' +
+  '• E1 / MI (time): requested minutes vs actual on-scene time (SA timestamps) — ≤120% = Pay.\n' +
+  '• MH (medium/heavy): vehicle on the approved HD list = Pay; not on list / unverifiable = Review.\n' +
+  '• TL (tolls): always Review — receipts required.\n' +
+  '• PG (fuel): L402/L403 + Plus/Premier coverage within limit = Pay.\n' +
+  '• BA / BC / PC (rates): Review — policy-based.\n\n' +
+  'ALWAYS REJECT (overrides the above):\n' +
+  '• Resolution code X* (call cancelled, no service completed) — EXCEPT enroute miles on X002 (Cancel En Route), since the driver drove out.\n' +
+  '• ER on a duplicated call — driver was already on location, so no enroute miles.\n' +
+  '• E1 > 14 min on a tow with no drop-off photos (on-platform).'
+)
 
 const Skeleton = ({ className = '' }) => (
   <div className={`animate-pulse bg-slate-700/30 rounded ${className}`} />
@@ -59,8 +79,9 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
       const effRec = (isLowMateriality && rawRec === 'review') ? 'approve' : rawRec
       onComplete?.(woaId, { recommendation: effRec, confidence: data.confidence, summary: data.ai_summary || '' })
     }
-    // If AI not yet loaded (data-only response), fetch it separately
-    if (!data?.ai_headline && !data?.ai_story) {
+    // If AI not yet loaded (data-only response), fetch it separately.
+    // Skip entirely in contractorMode — contractors don't use AI (no fetch, no cost).
+    if (!contractorMode && !data?.ai_headline && !data?.ai_story) {
       setAiLoading(true)
       fetchWOAAiAnalysis(woaId)
         .then(ai => setAudit(prev => {
@@ -268,6 +289,12 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           <span className={clsx('px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide', REC_BADGE[rec] || REC_BADGE.REVIEW)}>
             {rec || 'UNKNOWN'}
           </span>
+          {/* "?" — in-depth: this WOA's step-by-step reasoning + the general rules */}
+          <InfoTip text={
+            `WHY THIS IS "${rec}"\n\n` +
+            `${audit?.rec_reason || 'No detailed reasoning available for this work order.'}\n\n` +
+            `────────────────────\n${REC_RULES}`
+          } />
           {ev.program && (
             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/60 text-slate-300 border border-slate-600/40 shrink-0">
               {ev.program}
@@ -287,7 +314,14 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
           </a>
         </div>
       )}
-      {!contractorMode && audit?.rec_reason && <div className="text-[10px] text-slate-500 px-1">{(audit.rec_reason.split('\n').filter(l=>l.startsWith('→')).pop()||'').slice(2).trim()}</div>}
+      {/* Short inline "why" — the conclusion line; full details/rules live in the "?" above */}
+      {!contractorMode && audit?.rec_reason && (() => {
+        const lines = audit.rec_reason.split('\n').map(l => l.trim()).filter(l => l.startsWith('→'))
+        const why = (lines.pop() || '').replace(/^→\s*/, '')
+        return why
+          ? <div className="text-[11px] text-slate-400 px-1"><span className="font-semibold text-slate-500">Why: </span>{why}</div>
+          : null
+      })()}
 
       {!contractorMode && isLowMateriality && recRaw === 'REVIEW' && (
         <div className="text-[9px] text-slate-500 px-1">Auto-approved: below materiality threshold</div>

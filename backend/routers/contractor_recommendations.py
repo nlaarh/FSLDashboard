@@ -50,6 +50,50 @@ def _was_serviced(wo: dict) -> bool:
     return not (res.startswith("X") or res == "R199")
 
 
+def _tow_was_completed(wo: dict) -> bool:
+    """Return False when the tow portion did NOT happen, so MH (medium duty),
+    Tow Miles, and Tolls charges must not be recommended. Two cases, matched on
+    the resolution-code prefix:
+      • G* — driver fixed the vehicle on the spot ('go'), no tow   (e.g. WO-04806885 = G411)
+      • R* — unable to complete / no service rendered              (e.g. WO-04815339 = R002 'NSR')
+    ER Miles and PG Fuel are NOT affected (the driver still drove to the scene).
+
+    IMPORTANT: filter in PYTHON, not SOQL. The Resolution_Code__c picklist's
+    stored value differs from its displayed code, so SOQL LIKE/prefix filters
+    are unreliable (LIKE 'R%' matches WOs that display as 'G306'). The value the
+    REST API returns here is the clean displayed code, so startswith() is safe.
+    """
+    res = (wo.get("Resolution_Code__c") or "").upper()
+    return not (res.startswith("G") or res.startswith("R"))
+
+
+def _is_duplicated_call(wo: dict) -> bool:
+    """Return True for duplicated calls (WO Subject = 'This is a duplicated call').
+
+    Duplicated calls have NO enroute miles — the driver is already on location when
+    the call is created — so they must not be recommended for ER (Enroute) WOAs.
+    """
+    return "duplicated call" in (wo.get("Subject") or "").lower()
+
+
+def _enroute_eligible(wo: dict) -> bool:
+    """ER (Enroute Miles) eligibility — ER-SPECIFIC, looser than _was_serviced.
+
+    A driver earns enroute miles whenever they actually drove toward the call, even
+    if it was cancelled while EN ROUTE. Verified against the org:
+      • X002 = 'Cancel En Route' → driver went en route ~99% of the time → KEEP (payable).
+      • X001 = cancelled, driver never moved (~92% never went en route) → EXCLUDE.
+      • R199 = not completed → EXCLUDE.
+    G* and other R* are kept (the driver still drove to the scene). Duplicated calls
+    are excluded separately via _is_duplicated_call().
+
+    NOTE: this is ER-only. MH / Tow Miles / Tolls still exclude ALL X codes (via
+    _was_serviced + _tow_was_completed) because no tow was completed.
+    """
+    res = (wo.get("Resolution_Code__c") or "").upper()
+    return res not in ("X001", "R199")
+
+
 def _date_clause(start_date: str | None, end_date: str | None) -> str:
     """Build SOQL date filter. If neither provided, defaults to last 90 days.
     Clamps start_date to no more than 60 days ago — WOA requests must be timely."""
@@ -173,6 +217,7 @@ def contractor_recs_mh(
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                Vehicle_Make__c, Vehicle_Model__c, Resolution_Code__c, Status,
+               Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -192,7 +237,7 @@ def contractor_recs_mh(
     hd_wo_ids = []
     hd_wo_map = {}
     for wo in wo_rows:
-        if not _was_serviced(wo):
+        if not _was_serviced(wo) or not _tow_was_completed(wo):
             continue
         nm = _norm_vehicle(wo.get("Vehicle_Make__c") or "")
         nmod = _norm_vehicle(wo.get("Vehicle_Model__c") or "")
@@ -215,6 +260,7 @@ def contractor_recs_mh(
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
+            "service_resource": (wo.get("Service_Resource__r") or {}).get("Name") or "",
             "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
             "created_date": wo.get("CreatedDate") or "",
             "vehicle_make": wo.get("Vehicle_Make__c") or "",
@@ -256,6 +302,7 @@ def contractor_recs_pg_fuel(
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                Dispatch_Code__c, Coverage__c, Entitlement_Master__r.Name, Status,
+               Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -287,6 +334,7 @@ def contractor_recs_pg_fuel(
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
+            "service_resource": (wo.get("Service_Resource__r") or {}).get("Name") or "",
             "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
             "created_date": wo.get("CreatedDate") or "",
             "dispatch_code": dispatch_code,
@@ -326,7 +374,8 @@ def contractor_recs_er_miles(
 
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               ERS_Estimated_En_Route_Miles__c, Resolution_Code__c, Status,
+               ERS_Estimated_En_Route_Miles__c, Resolution_Code__c, Status, Subject,
+               Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -346,7 +395,8 @@ def contractor_recs_er_miles(
     # Keep only WOs that had service rendered, have at least one WOLI, and aren't actioned.
     candidates = [
         wo for wo in wo_rows
-        if _was_serviced(wo)
+        if _enroute_eligible(wo)  # driver drove (keeps X002 Cancel En Route; drops X001/R199)
+        and not _is_duplicated_call(wo)  # duplicated calls have no enroute miles
         and woli_by_wo.get(wo["Id"])
         and (
             include_actioned
@@ -413,6 +463,7 @@ def contractor_recs_er_miles(
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
+            "service_resource": (wo.get("Service_Resource__r") or {}).get("Name") or "",
             "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
             "created_date": wo.get("CreatedDate") or "",
             "estimated_er_miles": wo.get("ERS_Estimated_En_Route_Miles__c"),
@@ -439,7 +490,14 @@ def contractor_recs_tow_miles(
     end_date: str = Query(None, description="YYYY-MM-DD"),
     include_actioned: bool = Query(False, description="Include already-actioned recs, tagged"),
 ):
-    """Tow WOs with resolution code G or NSR and no TW (tow miles) WOLI."""
+    """Completed tow WOs with no TW (tow miles) WOLI — a tow happened but tow
+    miles may not have been billed.
+
+    Resolution-code exclusions are applied in PYTHON via _tow_was_completed()
+    (G* fixed-on-spot and R* unable-to-complete are skipped). We do NOT filter
+    resolution codes in SOQL: the picklist's stored value differs from its
+    displayed code, so LIKE/IN prefix filters are unreliable.
+    """
     facility_ids = _require_contractor_facilities(request)
     f_clause = _facility_in_clause(facility_ids)
     date_filter = _date_clause(start_date, end_date)
@@ -448,13 +506,13 @@ def contractor_recs_tow_miles(
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                Resolution_Code__c, Tow_Miles__c, ERS_Estimated_Tow_Miles__c,
                Dispatch_Code__c, Status,
+               Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
           AND Tow_Call__c = true
-          AND Resolution_Code__c IN ('G', 'NSR')
         ORDER BY CreatedDate DESC
         LIMIT 50000
     """)
@@ -468,7 +526,7 @@ def contractor_recs_tow_miles(
 
     items = []
     for wo in wo_rows:
-        if not _was_serviced(wo):
+        if not _was_serviced(wo) or not _tow_was_completed(wo):
             continue
         wo_id = wo["Id"]
         actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TW")
@@ -477,6 +535,7 @@ def contractor_recs_tow_miles(
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
+            "service_resource": (wo.get("Service_Resource__r") or {}).get("Name") or "",
             "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
             "created_date": wo.get("CreatedDate") or "",
             "resolution_code": wo.get("Resolution_Code__c") or "",
@@ -510,6 +569,7 @@ def contractor_recs_tl_tolls(
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                ERS_Estimated_Tow_Miles__c, Tow_Miles__c, Resolution_Code__c, Status,
+               Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -530,7 +590,7 @@ def contractor_recs_tl_tolls(
 
     items = []
     for wo in wo_rows:
-        if not _was_serviced(wo):
+        if not _was_serviced(wo) or not _tow_was_completed(wo):
             continue
         wo_id = wo["Id"]
         actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TL")
@@ -540,6 +600,7 @@ def contractor_recs_tl_tolls(
         items.append({
             "wo_number": wo.get("WorkOrderNumber") or "",
             "facility": wo.get("Facility_ID__c") or "",
+            "service_resource": (wo.get("Service_Resource__r") or {}).get("Name") or "",
             "territory_name": (wo.get("ServiceTerritory") or {}).get("Name") or "",
             "created_date": wo.get("CreatedDate") or "",
             "estimated_tow_miles": est_miles,

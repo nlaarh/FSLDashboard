@@ -163,6 +163,7 @@ from routers import (
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
     contractor, contractor_recommendations,
+    garage_acceptance,
 )
 
 app.include_router(auth.router)
@@ -190,6 +191,7 @@ app.include_router(sa_report.router)
 app.include_router(garages_scorecard.router)
 app.include_router(garages_export.router)
 app.include_router(garages_performance.router)
+app.include_router(garage_acceptance.router)
 app.include_router(garages_revenue.router)
 app.include_router(garages_revenue_export.router)
 app.include_router(insights.router)

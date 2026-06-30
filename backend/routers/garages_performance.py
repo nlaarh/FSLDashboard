@@ -141,15 +141,6 @@ def _partition_sas(all_sas: list, sa_history: list, territory_id: str) -> dict:
     }
 
 
-# Maps a drill-down bucket key -> the partition list it returns.
-_ACCEPTANCE_BUCKETS = {
-    'first_call_accepted': 'first_call_accepted',
-    'first_call_declined': 'first_call_declined',
-    'second_call_accepted': 'second_call_accepted',
-    'second_call_declined': 'second_call_declined',
-    'completion_completed': 'accepted_completed',
-    'completion_not_completed': 'accepted_not_completed',
-}
 
 
 # ── Performance Dashboard ─────────────────────────────────────────────────────
@@ -435,66 +426,5 @@ def api_response_decomposition(
     return get_response_decomposition(territory_id, period_start, period_end)
 
 
-# ── Acceptance / Completion drill-down ────────────────────────────────────────
-
-@router.get("/api/garages/{territory_id}/acceptance-detail")
-def get_acceptance_detail(
-    request: Request,
-    territory_id: str,
-    bucket: str = Query(..., description="one of: first_call_accepted, first_call_declined, "
-                                         "second_call_accepted, second_call_declined, "
-                                         "completion_completed, completion_not_completed"),
-    period_start: str = Query(...),
-    period_end: str = Query(...),
-):
-    """Lazy drill-down: list the underlying SAs for one acceptance/completion bucket.
-
-    Kept out of /performance so that endpoint stays lean. Reuses the SAME territory
-    access check + SA query + partition logic as the dashboard (one source of truth)."""
-    # Same scoping enforcement as the performance endpoint — do NOT skip.
-    _check_territory_access(request, territory_id)
-    if bucket not in _ACCEPTANCE_BUCKETS:
-        raise HTTPException(status_code=400, detail=f"Invalid bucket '{bucket}'")
-    territory_id = sanitize_soql(territory_id)
-    period_start = sanitize_soql(period_start)
-    period_end = sanitize_soql(period_end)
-    cache_key = f"acceptdetail_{territory_id}_{bucket}_{period_start}_{period_end}"
-    return cache.cached_query_persistent(
-        cache_key,
-        lambda: _compute_acceptance_detail(territory_id, bucket, period_start, period_end),
-        max_stale_hours=26,
-    )
-
-
-def _compute_acceptance_detail(territory_id: str, bucket: str, period_start: str, period_end: str) -> dict:
-    next_day = (date.fromisoformat(period_end) + timedelta(days=1)).isoformat()
-    since = f"{period_start}T00:00:00Z"
-    until = f"{next_day}T00:00:00Z"
-
-    data = sf_parallel(
-        sas=lambda: sf_query_all(_sa_query(territory_id, since, until)),
-        sa_history=lambda: sf_query_all(_sa_history_query(territory_id, since, until)),
-    )
-
-    parts = _partition_sas(data.get('sas', []), data.get('sa_history', []), territory_id)
-    selected = parts[_ACCEPTANCE_BUCKETS[bucket]]
-
-    rows = []
-    for s in selected:
-        wo_id, wo_number = _extract_wo(s)
-        rows.append({
-            'sa_number': s.get('AppointmentNumber'),
-            'sa_id': s.get('Id'),
-            'wo_id': wo_id or s.get('ParentRecordId'),
-            'wo_number': wo_number,
-            'work_type': (s.get('WorkType') or {}).get('Name'),
-            'status': s.get('Status'),
-            'decline_reason': s.get('ERS_Facility_Decline_Reason__c'),
-        })
-
-    return {
-        'bucket': bucket,
-        'count': len(rows),
-        'rows': rows,
-        'period': {'start': period_start, 'end': period_end},
-    }
+# NOTE: the /acceptance-detail drill-down moved to routers/garage_acceptance.py,
+# which now owns the completion-based 1st/2nd-call acceptance metric end-to-end.

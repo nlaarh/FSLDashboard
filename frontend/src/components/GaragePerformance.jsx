@@ -11,6 +11,7 @@ import { clsx } from 'clsx'
 import { fetchGarageScorecard, fetchGarageAiSummary, exportGarageScorecard, emailGarageReport, fetchDriverSAs } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
 import SALink from './SALink'
+import GarageAcceptanceCards from './GarageAcceptanceCards'
 
 // Score card colors
 const scoreColor = (pct) =>
@@ -186,6 +187,9 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
   const [emailSending, setEmailSending] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
 
+  // Contractors don't use AI — the contractor portal always serves /contractor/* routes.
+  const isContractorView = typeof window !== 'undefined' && window.location.pathname.startsWith('/contractor')
+
   useEffect(() => {
     if (!startDate || !endDate) return
     setLoading(true)
@@ -194,6 +198,8 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
     fetchGarageScorecard(garageId, startDate, endDate)
       .then(d => {
         setData(d)
+        // Skip the AI executive summary entirely for contractor accounts.
+        if (isContractorView) return
         setAiLoading(true)
         fetchGarageAiSummary(garageId, startDate, endDate)
           .then(r => setAiSummary(r.summary))
@@ -310,6 +316,9 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
 
   return (
     <div className="space-y-4">
+      {/* Completion-based 1st / 2nd-call acceptance (same cards as Operations tab) */}
+      <GarageAcceptanceCards garageId={garageId} startDate={startDate} endDate={endDate} refreshKey={refreshKey} />
+
       {/* Date range info + Export */}
       <div className="flex items-center justify-between">
         <div className="text-[10px] text-slate-500">
@@ -407,7 +416,8 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
       )}
 
       {data && !loading && (<>
-        {/* AI Executive Summary — first, async loaded */}
+        {/* AI Executive Summary — first, async loaded. Hidden for contractor accounts. */}
+        {!isContractorView && (
         <div className="glass rounded-xl p-4 border border-purple-800/20">
           <div className="flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-purple-400" />
@@ -426,6 +436,7 @@ export default function GaragePerformance({ garageId, garageName, startDate, end
             <div className="text-xs text-slate-600 py-2">No AI summary available. Configure AI in Admin → AI Assistant.</div>
           )}
         </div>
+        )}
 
         {/* ══ Overall Garage Stats ══ */}
         {(() => {

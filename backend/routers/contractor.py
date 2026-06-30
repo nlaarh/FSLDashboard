@@ -528,6 +528,11 @@ def contractor_pending_woas(
         for r in rows
     ]
 
+    # Stamp has_photos so the WOA tab shows the camera icon like Work Orders / Recommendations
+    photo_ids = _fetch_photo_wo_ids([i["wo_id"] for i in items if i.get("wo_id")])
+    for i in items:
+        i["has_photos"] = i.get("wo_id", "") in photo_ids
+
     return {"items": items, "total": len(items)}
 
 
@@ -652,6 +657,11 @@ def contractor_driver_collection(
                 "created_date": r.get("CreatedDate") or "",
                 "audit_verified": (wo_id, reason) in verified,
             })
+
+    # Stamp has_photos so the Driver Collection tab shows the camera icon too
+    photo_ids = _fetch_photo_wo_ids(list({i["wo_id"] for i in items if i.get("wo_id")}))
+    for i in items:
+        i["has_photos"] = i.get("wo_id", "") in photo_ids
 
     return {"items": items, "total": len(items)}
 

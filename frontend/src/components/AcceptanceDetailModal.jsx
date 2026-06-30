@@ -17,27 +17,24 @@ import { fetchAcceptanceDetail } from '../api'
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
 
-// Each metric box -> its two buckets + tab labels.
+// Each metric card -> its two buckets + tab labels.
+// Completion-based: "Accepted" = this garage completed the WO; "Not Accepted" =
+// a different garage (or none) completed it.
 export const ACCEPTANCE_VIEWS = {
   first_call: {
     title: '1st Call Acceptance',
+    subtitle: 'Calls where this garage was the FIRST garage spotted to',
     tabs: [
-      { key: 'first_call_accepted', label: 'Accepted', accent: '#10b981' },
-      { key: 'first_call_declined', label: 'Not Accepted', accent: '#ef4444', showDecline: true },
+      { key: 'first_accepted', label: 'Accepted (completed here)', accent: '#10b981' },
+      { key: 'first_not', label: 'Not Accepted (completed elsewhere / not completed)', accent: '#ef4444' },
     ],
   },
   second_call: {
     title: '2nd+ Call Acceptance',
+    subtitle: 'Calls moved to this garage after it was NOT first',
     tabs: [
-      { key: 'second_call_accepted', label: 'Accepted', accent: '#10b981' },
-      { key: 'second_call_declined', label: 'Not Accepted', accent: '#ef4444', showDecline: true },
-    ],
-  },
-  completion_accepted: {
-    title: 'Completion of Accepted',
-    tabs: [
-      { key: 'completion_completed', label: 'Completed', accent: '#10b981' },
-      { key: 'completion_not_completed', label: 'Not Completed', accent: '#f59e0b' },
+      { key: 'second_accepted', label: 'Accepted (completed here)', accent: '#10b981' },
+      { key: 'second_not', label: 'Not Accepted (completed elsewhere / not completed)', accent: '#ef4444' },
     ],
   },
 }

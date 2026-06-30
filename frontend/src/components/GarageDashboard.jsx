@@ -34,6 +34,29 @@ export default function GarageDashboard({ garageId, garageName }) {
   const start = startDate
   const end = endDate
 
+  // Acceptance is capped at one quarter (92 days). Clamp the pickers so a user
+  // can't select a wider range than the backend will compute.
+  const MAX_SPAN_DAYS = 92
+  const addDays = (iso, n) => {
+    const d = new Date(iso + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() + n)
+    return d.toISOString().slice(0, 10)
+  }
+  const daysBetween = (a, b) =>
+    Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000)
+  const handleStartChange = (v) => {
+    setStartDate(v)
+    if (endDate && (daysBetween(v, endDate) > MAX_SPAN_DAYS || daysBetween(v, endDate) < 0)) {
+      setEndDate(addDays(v, Math.min(MAX_SPAN_DAYS, 30)))
+    }
+  }
+  const handleEndChange = (v) => {
+    setEndDate(v)
+    if (startDate && daysBetween(startDate, v) > MAX_SPAN_DAYS) {
+      setStartDate(addDays(v, -MAX_SPAN_DAYS))
+    }
+  }
+
   // ── Data state
   const [perf, setPerf]           = useState(null)
   const [scorecard, setScorecard] = useState(null)
@@ -162,10 +185,12 @@ export default function GarageDashboard({ garageId, garageName }) {
               })()}
             </div>
             <div className="flex items-center gap-2">
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+              <input type="date" value={startDate} max={endDate} onChange={e => handleStartChange(e.target.value)}
+                title="Acceptance window is capped at 3 months"
                 className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
               <span className="text-slate-600 text-xs">to</span>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+              <input type="date" value={endDate} min={startDate} max={addDays(startDate, MAX_SPAN_DAYS)} onChange={e => handleEndChange(e.target.value)}
+                title="Acceptance window is capped at 3 months"
                 className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
               <button onClick={handleRefresh}
                 title={`Refresh ${activeTab} tab`}
