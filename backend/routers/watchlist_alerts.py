@@ -295,6 +295,10 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
             if sa_id in alert_by_sa:
                 alert_by_sa[sa_id]['duplicate_of'] = related
                 alert_by_sa[sa_id]['member_name'] = acct_name
+            elif sa_id not in sa_map:
+                # SA is outside the current scope (different territory) — skip it.
+                # The in-scope sibling will already carry the duplicate_of list.
+                continue
             else:
                 territory_name = (sa.get('ServiceTerritory') or {}).get('Name', '')
                 created = _parse_dt(sa.get('CreatedDate'))

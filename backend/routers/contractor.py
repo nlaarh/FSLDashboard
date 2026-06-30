@@ -546,6 +546,13 @@ _DC_REASON_BATTERY = "Battery Sold"
 _DC_REASON_TIREJECT = "TireJECT Install"
 _DC_REASON_FUEL = "Fuel Delivery – Basic Member"
 
+_DC_REASON_TO_CALL_TYPE = {
+    _DC_REASON_TOW:      "Tow Pick-Up",
+    _DC_REASON_BATTERY:  "Battery",
+    _DC_REASON_TIREJECT: "Tire",
+    _DC_REASON_FUEL:     "Fuel Delivery",
+}
+
 # Valid (wo_id, reason) audit reasons the POST endpoint will accept.
 _DC_VALID_REASONS = {
     _DC_REASON_TOW, _DC_REASON_BATTERY, _DC_REASON_TIREJECT, _DC_REASON_FUEL,
@@ -638,7 +645,7 @@ def contractor_driver_collection(
                 "service_resource_name": (r.get("Service_Resource__r") or {}).get("Name") or "",
                 "reason": reason,
                 "amount": amount,
-                "call_type": r.get("Type__c") or "",
+                "call_type": _DC_REASON_TO_CALL_TYPE.get(reason, r.get("Type__c") or ""),
                 "dispatch_code": r.get("Dispatch_Code__c") or "",
                 "resolution_code": r.get("Resolution_Code__c") or "",
                 "coverage": coverage_label,

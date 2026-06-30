@@ -131,7 +131,7 @@ function DriverRow({ driver, onToggle, expanded, garageId, startDate, endDate })
           <div className="grid grid-cols-[100px_70px_60px_60px_60px_60px_1fr] gap-2 text-[8px] text-slate-600 uppercase tracking-wider pb-1 border-b border-slate-800/40">
             <span>SA #</span><span>Date</span><span>Overall</span><span>Resp</span><span>Tech</span><span>Informed</span><span>Comment</span>
           </div>
-          {driver.surveys.map((sv, i) => {
+          {driver.surveys.filter(sv => sv.sa_number).map((sv, i) => {
             const satBadge = (val) => {
               if (!val) return <span className="text-slate-700">—</span>
               const v = val.toLowerCase()

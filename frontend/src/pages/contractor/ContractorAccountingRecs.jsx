@@ -15,11 +15,17 @@ const REC_TABS = [
   { key: 'tl-tolls',  label: 'TL Tolls',           icon: DollarSign },
 ]
 
+const MAX_LOOKBACK_DAYS = 60
+
 function defaultDates() {
   const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
   const iso = d => d.toISOString().slice(0, 10)
-  return { start: iso(start), end: iso(now) }
+  const minDate = new Date(now)
+  minDate.setDate(minDate.getDate() - MAX_LOOKBACK_DAYS)
+  // Start defaults to the later of: first of current month OR the 60-day cutoff
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const start = firstOfMonth < minDate ? minDate : firstOfMonth
+  return { start: iso(start), end: iso(now), min: iso(minDate) }
 }
 
 const SF_BASE = 'https://aaawcny.lightning.force.com'
@@ -269,7 +275,7 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
 
 export default function ContractorAccountingRecs() {
   const navigate = useNavigate()
-  const { start: defStart, end: defEnd } = defaultDates()
+  const { start: defStart, end: defEnd, min: minDate } = defaultDates()
   const [startDate, setStartDate] = useState(defStart)
   const [endDate, setEndDate] = useState(defEnd)
   const [activeRec, setActiveRec] = useState('mh')
@@ -335,7 +341,7 @@ export default function ContractorAccountingRecs() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
+          <input type="date" value={startDate} min={minDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
         </div>
         <div className="flex flex-col gap-1">

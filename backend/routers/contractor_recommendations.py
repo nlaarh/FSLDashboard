@@ -37,10 +37,27 @@ def _stamp_photos(items: list) -> list:
 router = APIRouter()
 
 
+_RECS_MAX_DAYS_BACK = 60  # Contractors may not request WOAs older than 60 days
+
+
+def _was_serviced(wo: dict) -> bool:
+    """Return False for calls where no service was rendered.
+
+    X-prefix resolution codes (e.g. X001 = Gone on Arrival) and R199
+    (not completed) indicate the truck arrived but no service was delivered.
+    """
+    res = (wo.get("Resolution_Code__c") or "").upper()
+    return not (res.startswith("X") or res == "R199")
+
+
 def _date_clause(start_date: str | None, end_date: str | None) -> str:
-    """Build SOQL date filter. If neither provided, defaults to last 90 days."""
+    """Build SOQL date filter. If neither provided, defaults to last 90 days.
+    Clamps start_date to no more than 60 days ago — WOA requests must be timely."""
+    max_start = _cutoff_date(_RECS_MAX_DAYS_BACK)
     if not start_date and not end_date:
-        start_date = _cutoff_date(_DAYS_BACK)
+        start_date = max_start
+    if start_date and start_date < max_start:
+        start_date = max_start
     parts = []
     if start_date:
         parts.append(f"AND CreatedDate >= {start_date}T00:00:00Z")
@@ -155,7 +172,7 @@ def contractor_recs_mh(
     # Fetch completed tow calls with a vehicle make — only tow calls are eligible for MH charge
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               Vehicle_Make__c, Vehicle_Model__c, Status,
+               Vehicle_Make__c, Vehicle_Model__c, Resolution_Code__c, Status,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -171,9 +188,12 @@ def contractor_recs_mh(
         return {"items": []}
 
     # Keep WOs whose vehicle (make+model) exactly matches the approved HD list
+    # and where service was actually rendered (skip X-code calls like Gone on Arrival)
     hd_wo_ids = []
     hd_wo_map = {}
     for wo in wo_rows:
+        if not _was_serviced(wo):
+            continue
         nm = _norm_vehicle(wo.get("Vehicle_Make__c") or "")
         nmod = _norm_vehicle(wo.get("Vehicle_Model__c") or "")
         if (nm, nmod) in approved_set:
@@ -306,7 +326,7 @@ def contractor_recs_er_miles(
 
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               ERS_Estimated_En_Route_Miles__c, Status,
+               ERS_Estimated_En_Route_Miles__c, Resolution_Code__c, Status,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -323,12 +343,11 @@ def contractor_recs_er_miles(
     woli_by_wo = _fetch_wolis_for_wo_ids(wo_ids)
     woa_codes = _fetch_woa_product_codes(wo_ids)
 
-    # Keep only WOs that have at least one WOLI. When include_actioned is False we
-    # also drop those already actioned (ER WOLI present or pending ER WOA); when True
-    # we keep them and tag each below via _actioned_status.
+    # Keep only WOs that had service rendered, have at least one WOLI, and aren't actioned.
     candidates = [
         wo for wo in wo_rows
-        if woli_by_wo.get(wo["Id"])
+        if _was_serviced(wo)
+        and woli_by_wo.get(wo["Id"])
         and (
             include_actioned
             or _actioned_status(woli_by_wo.get(wo["Id"], []), woa_codes.get(wo["Id"], set()), "ER") is None
@@ -427,7 +446,8 @@ def contractor_recs_tow_miles(
 
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               Resolution_Code__c, Tow_Miles__c, ERS_Estimated_Tow_Miles__c, Status,
+               Resolution_Code__c, Tow_Miles__c, ERS_Estimated_Tow_Miles__c,
+               Dispatch_Code__c, Status,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -448,6 +468,8 @@ def contractor_recs_tow_miles(
 
     items = []
     for wo in wo_rows:
+        if not _was_serviced(wo):
+            continue
         wo_id = wo["Id"]
         actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TW")
         if actioned and not include_actioned:
@@ -487,7 +509,7 @@ def contractor_recs_tl_tolls(
 
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
-               ERS_Estimated_Tow_Miles__c, Tow_Miles__c, Status,
+               ERS_Estimated_Tow_Miles__c, Tow_Miles__c, Resolution_Code__c, Status,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
@@ -508,6 +530,8 @@ def contractor_recs_tl_tolls(
 
     items = []
     for wo in wo_rows:
+        if not _was_serviced(wo):
+            continue
         wo_id = wo["Id"]
         actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "TL")
         if actioned and not include_actioned:
