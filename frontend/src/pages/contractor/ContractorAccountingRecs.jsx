@@ -43,22 +43,21 @@ function loadSavedView() {
 function WoCell({ r }) {
   return (
     <div className="flex items-center gap-1.5">
-      {/* WO Number links straight to the Work Order in Salesforce (new tab).
-          stopPropagation so it doesn't trigger the row's in-app drill-down. */}
-      {r.wo_id ? (
+      {/* WO Number triggers in-app detail (row click handles navigation).
+          SF icon opens the community portal in a new tab. */}
+      <span className="font-mono text-indigo-400">
+        WO-{r.wo_number || '—'}
+      </span>
+      {r.wo_id && (
         <a
           href={contractorWoLink(r.wo_id)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
-          className="font-mono text-indigo-400 hover:text-indigo-300 hover:underline text-left inline-flex items-center gap-1"
-          title="Open Work Order in Salesforce"
+          title="Open in Salesforce"
         >
-          WO-{r.wo_number || '—'}
-          <ExternalLink size={9} className="shrink-0 text-slate-500" />
+          <ExternalLink size={9} className="shrink-0 text-slate-500 hover:text-indigo-400" />
         </a>
-      ) : (
-        <span className="font-mono text-slate-400">WO-{r.wo_number || '—'}</span>
       )}
       {r.already_actioned === 'paid' && (
         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 border border-amber-500/40 text-amber-300 whitespace-nowrap shrink-0" title="A paid/active line item already exists for this product">
