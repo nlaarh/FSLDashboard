@@ -67,7 +67,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
   // Filters
   const [filterReason, setFilterReason] = useState('')
   const [filterCallType, setFilterCallType] = useState('')
-  const [showVerified, setShowVerified] = useState(false)
+  const [verifiedFilter, setVerifiedFilter] = useState('all') // 'all' | 'unverified' | 'verified'
 
   // Sorting
   const [sortCol, setSortCol] = useState('reason')
@@ -128,17 +128,18 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
     let rows = items.filter(r => {
       if (filterReason   && r.reason    !== filterReason)   return false
       if (filterCallType && r.call_type !== filterCallType) return false
-      if (!showVerified  && r.audit_verified)               return false
+      if (verifiedFilter === 'verified'   && !r.audit_verified) return false
+      if (verifiedFilter === 'unverified' &&  r.audit_verified) return false
       return true
     })
     const col = COLUMNS.find(c => c.key === sortCol)
     if (col) rows = [...rows].sort((a, b) => sortDir === 'asc' ? col.sortFn(a, b) : col.sortFn(b, a))
     return rows
-  }, [items, filterReason, filterCallType, sortCol, sortDir])
+  }, [items, filterReason, filterCallType, verifiedFilter, sortCol, sortDir])
 
   // Display one page only (keeps the table fast on large sets). Export uses full `filtered`.
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  useEffect(() => { setPage(0) }, [filterReason, filterCallType, showVerified, startDate, endDate, items])
+  useEffect(() => { setPage(0) }, [filterReason, filterCallType, verifiedFilter, startDate, endDate, items])
 
   const selectCls ="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50"
 
@@ -164,11 +165,17 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
           <InfoTip text={"DRIVER COLLECTION\n\nCompleted/closed calls where the technician should have collected payment from the member.\n\nFIVE REASONS:\n  • Tow Overmiles — tow with Est. Tow Over-Mileage Cost > $0 (actual amount shown)\n  • Battery Sold — resolution G306/G307/G308 (verify manually)\n  • TireJECT Install — resolution G103 (fixed $34.99)\n  • Fuel Delivery – Basic Member — resolution G401/G402 + Basic coverage (2-3 gallons)\n  • Private Service — Type = Private Service (Completed/Closed)\n\nTick Audit Verification after confirming the tech collected — it saves per facility."} />
         </div>
 
-        <label className="self-center flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-          <input type="checkbox" checked={showVerified} onChange={e => setShowVerified(e.target.checked)}
-            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer" />
-          Show Already Verified
-        </label>
+        <div className="self-center flex flex-col gap-1">
+          <label className="text-[10px] text-slate-500 uppercase tracking-wider">Audit Status</label>
+          <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium">
+            {[['all','All'],['unverified','Unverified'],['verified','Verified']].map(([val, label]) => (
+              <button key={val} onClick={() => setVerifiedFilter(val)}
+                className={`px-3 py-1.5 transition-colors ${verifiedFilter === val ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {fetched && items && items.length > 0 && (
           <>
