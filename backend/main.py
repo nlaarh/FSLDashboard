@@ -487,12 +487,35 @@ def _ensure_dispatchers_table():
         logging.getLogger('startup').warning("Could not ensure dispatchers table: %s", e)
 
 
+def _ensure_driver_collection_audit_table():
+    """Create driver_collection_audit table if it doesn't exist."""
+    try:
+        import db_adapter
+        with db_adapter.writer() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS driver_collection_audit (
+                    username    TEXT NOT NULL,
+                    wo_id       TEXT NOT NULL,
+                    reason      TEXT NOT NULL,
+                    verified    BOOLEAN DEFAULT TRUE,
+                    verified_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (username, wo_id, reason)
+                )
+            """)
+        import logging
+        logging.getLogger('startup').info("driver_collection_audit table ensured")
+    except Exception as e:
+        import logging
+        logging.getLogger('startup').warning("Could not ensure driver_collection_audit table: %s", e)
+
+
 @app.on_event("startup")
 async def startup():
     _ensure_cache_table()
     _ensure_dispatchers_table()
     _ensure_accounting_rates_rows()
     _ensure_users_territories_column()
+    _ensure_driver_collection_audit_table()
 
     import users
     users.seed_users()
