@@ -286,6 +286,15 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_reset_tokens_email ON password_reset_tokens(email);
             CREATE INDEX IF NOT EXISTS idx_reset_tokens_val ON password_reset_tokens(validation_token);
+
+            CREATE TABLE IF NOT EXISTS driver_collection_audit (
+                username    TEXT NOT NULL,
+                wo_id       TEXT NOT NULL,
+                reason      TEXT NOT NULL,
+                verified    INTEGER DEFAULT 1,
+                verified_at REAL DEFAULT (strftime('%s', 'now')),
+                PRIMARY KEY (username, wo_id, reason)
+            );
         """)
 
         # Seed default bonus tiers if empty
