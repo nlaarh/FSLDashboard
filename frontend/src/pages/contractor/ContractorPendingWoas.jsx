@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown, Camera } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
 import Paginator from '../../components/Paginator'
+import { contractorWoLink } from '../../utils/sfLinks'
+import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PAGE_SIZE = 100
-
-const SF_BASE = 'https://aaawcny.lightning.force.com'
 
 function defaultDates() {
   const now = new Date()
@@ -37,7 +38,7 @@ function exportCSV(rows) {
       r.wo_number ? `WO-${r.wo_number}` : '',
       r.facility, r.territory, r.call_type,
       r.created_date?.slice(0, 10),
-      r.woa_id ? `${SF_BASE}/${r.woa_id}` : ''
+      r.wo_id ? contractorWoLink(r.wo_id) : ''
     ].map(v => `"${(v || '').toString().replace(/"/g, '""')}"`).join(','))
   ]
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
@@ -47,10 +48,8 @@ function exportCSV(rows) {
   a.click()
 }
 
-export default function ContractorPendingWoas() {
-  const { start: defStart, end: defEnd } = defaultDates()
-  const [startDate, setStartDate] = useState(defStart)
-  const [endDate, setEndDate] = useState(defEnd)
+export default function ContractorPendingWoas({ startDate, endDate, setStartDate, setEndDate }) {
+  const navigate = useNavigate()
   const [items, setItems] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -116,13 +115,11 @@ export default function ContractorPendingWoas() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={startDate} onChange={setStartDate} placeholder="Start date" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="End date" />
         </div>
         <button onClick={fetchData} disabled={loading}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-all">
@@ -191,22 +188,30 @@ export default function ContractorPendingWoas() {
                       </span>
                     </th>
                   ))}
-                  <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">SF Link</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && [...Array(6)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-800/40">
-                    {[...Array(7)].map((__, j) => (
+                    {[...Array(6)].map((__, j) => (
                       <td key={j} className="px-2 py-2.5"><div className="skeleton h-3.5 rounded w-20" /></td>
                     ))}
                   </tr>
                 ))}
                 {!loading && pageRows.map((row, idx) => (
-                  <tr key={row.woa_id || row.wo_id || idx} className="hover:bg-slate-800/30 transition-colors border-b border-slate-800/40">
+                  <tr key={row.woa_id || row.wo_id || idx}
+                    onClick={() => row.wo_id && navigate(`/contractor/accounting/calls/${row.wo_id}`, { state: { from: 'pending' } })}
+                    className={`hover:bg-slate-800/30 transition-colors border-b border-slate-800/40 ${row.wo_id ? 'cursor-pointer' : ''}`}>
                     <td className="px-2 py-2.5 font-mono text-indigo-400">
                       <span className="inline-flex items-center gap-1.5">
-                        {row.wo_number ? `WO-${row.wo_number}` : <span className="text-slate-600">—</span>}
+                        WO-{row.wo_number || '—'}
+                        {row.wo_id && (
+                          <a href={contractorWoLink(row.wo_id)} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            title="Open in Salesforce">
+                            <ExternalLink size={9} className="text-slate-500 hover:text-indigo-400 shrink-0" />
+                          </a>
+                        )}
                         {row.has_photos && <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />}
                       </span>
                     </td>
@@ -215,16 +220,6 @@ export default function ContractorPendingWoas() {
                     <td className="px-2 py-2.5 text-slate-300">{row.call_type || <span className="text-slate-600">—</span>}</td>
                     <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">
                       {row.created_date ? row.created_date.slice(0, 10) : <span className="text-slate-600">—</span>}
-                    </td>
-                    <td className="px-2 py-2.5">
-                      {row.woa_id ? (
-                        <a href={`${SF_BASE}/${row.woa_id}`} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
-                          title="Open WOA in Salesforce">
-                          <ExternalLink size={11} />
-                          <span className="text-[10px]">SF</span>
-                        </a>
-                      ) : <span className="text-slate-600">—</span>}
                     </td>
                   </tr>
                 ))}

@@ -7,6 +7,8 @@ import {
 } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
 import Paginator from '../../components/Paginator'
+import { contractorWoLink } from '../../utils/sfLinks'
+import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PAGE_SIZE = 100
 
@@ -31,8 +33,6 @@ function defaultDates() {
   return { start: iso(start), end: iso(now), min: iso(minDate) }
 }
 
-const SF_BASE = 'https://aaawcny.lightning.force.com'
-
 // Persist the recs view (sub-tab, dates, filter, show-actioned) so that drilling
 // into a Work Order and clicking "Back to Recommendations" restores the exact view.
 const VIEW_KEY = 'contractorRecsView'
@@ -47,7 +47,7 @@ function WoCell({ r }) {
           stopPropagation so it doesn't trigger the row's in-app drill-down. */}
       {r.wo_id ? (
         <a
-          href={`${SF_BASE}/${r.wo_id}`}
+          href={contractorWoLink(r.wo_id)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
@@ -301,12 +301,10 @@ function RecTable({ items, columns, loading, error, filter, navigate }) {
   )
 }
 
-export default function ContractorAccountingRecs() {
+export default function ContractorAccountingRecs({ startDate, endDate, setStartDate, setEndDate }) {
   const navigate = useNavigate()
-  const { start: defStart, end: defEnd, min: minDate } = defaultDates()
+  const { min: minDate } = defaultDates()
   const saved = loadSavedView()
-  const [startDate, setStartDate] = useState(saved.startDate || defStart)
-  const [endDate, setEndDate] = useState(saved.endDate || defEnd)
   const [activeRec, setActiveRec] = useState(saved.activeRec || 'mh')
   const [recData, setRecData] = useState({})
   const [recLoading, setRecLoading] = useState({})
@@ -377,13 +375,11 @@ export default function ContractorAccountingRecs() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} min={minDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={startDate} min={minDate} onChange={setStartDate} placeholder="Start date" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="End date" />
         </div>
         <button onClick={() => loadAll()}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-all">

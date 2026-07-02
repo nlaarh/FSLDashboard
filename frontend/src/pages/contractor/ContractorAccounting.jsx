@@ -12,9 +12,20 @@ const TABS = [
   { key: 'driver-collection', label: 'Driver Collection' },
 ]
 
+function defaultDates() {
+  const now = new Date()
+  const iso = d => d.toISOString().slice(0, 10)
+  return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) }
+}
+
 export default function ContractorAccounting() {
   const location = useLocation()
   const [activeTab, setActiveTab] = useState(location.state?.tab || 'calls')
+  const { start, end } = defaultDates()
+  const [startDate, setStartDate] = useState(start)
+  const [endDate, setEndDate]     = useState(end)
+
+  const dateProps = { startDate, endDate, setStartDate, setEndDate }
 
   return (
     <div>
@@ -38,10 +49,10 @@ export default function ContractorAccounting() {
         ))}
       </div>
 
-      {activeTab === 'calls'   && <ContractorCalls />}
-      {activeTab === 'recs'    && <ContractorAccountingRecs />}
-      {activeTab === 'pending' && <ContractorPendingWoas />}
-      {activeTab === 'driver-collection' && <ContractorDriverCollection />}
+      {activeTab === 'calls'             && <ContractorCalls            {...dateProps} />}
+      {activeTab === 'recs'              && <ContractorAccountingRecs   {...dateProps} />}
+      {activeTab === 'pending'           && <ContractorPendingWoas      {...dateProps} />}
+      {activeTab === 'driver-collection' && <ContractorDriverCollection {...dateProps} />}
     </div>
   )
 }

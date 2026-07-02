@@ -22,12 +22,6 @@ log = logging.getLogger("contractor")
 
 router = APIRouter()
 
-_SF_BASE = "https://aaawcny.lightning.force.com"
-_SF_WOA_NEW = (
-    f"{_SF_BASE}/lightning/o/ERS_Work_Order_Adjustment__c/new"
-    "?defaultFieldValues=Work_Order__c={wo_id}"
-)
-
 _DAYS_BACK = 90
 _MAX_RECS = 200
 
@@ -298,7 +292,10 @@ _STATUS_TRANSITIONS = [
     'En Route', 'On Location', 'In Progress', 'Completed', 'Cannot Complete', 'Canceled',
 ]
 
-_SF_BASE_URL = "https://aaawcny.lightning.force.com"
+# Experience Cloud community site — contractors have NO Lightning access, so any
+# record link surfaced to a contractor must point here. Salesforce resolves the
+# record by Id and redirects to the canonical slugged URL.
+_SF_COMMUNITY_BASE = "https://aaawcny.my.site.com/aaawcnyspp/s"
 
 
 @router.get("/api/contractor/calls/{wo_id}/audit")
@@ -454,8 +451,8 @@ def contractor_call_audit(wo_id: str, request: Request):
         'secondary_sa_timelines': [],
         'sf_urls': {
             'woa': None,
-            'wo': f'{_SF_BASE_URL}/{wo_id}',
-            'sa': f'{_SF_BASE_URL}/{sa.get("Id")}' if sa.get('Id') else None,
+            'wo': f'{_SF_COMMUNITY_BASE}/workorder/{wo_id}',
+            'sa': f'{_SF_COMMUNITY_BASE}/serviceappointment/{sa.get("Id")}' if sa.get('Id') else None,
             'facility': None,
         },
         'service_notes': {
@@ -638,6 +635,12 @@ def contractor_driver_collection(
 
     items = []
     for r in rows:
+        # Exclude cancelled (X*) and unable/NSR (R*) calls. Filter on the
+        # returned picklist value in Python — SOQL value≠label makes a
+        # LIKE 'X%' WHERE clause unreliable.
+        res_code = (r.get("Resolution_Code__c") or "").strip().upper()
+        if res_code.startswith("X") or res_code.startswith("R"):
+            continue
         coverage_label = (
             (r.get("Entitlement_Master__r") or {}).get("Name")
             or r.get("Coverage__c") or ""

@@ -2,8 +2,7 @@ import { useState, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 import AccountingAuditPanel from '../../components/AccountingAuditPanel'
-
-const SF_BASE = 'https://aaawcny.lightning.force.com'
+import { contractorWoLink } from '../../utils/sfLinks'
 
 export default function ContractorCallDetail() {
   const { woId } = useParams()
@@ -44,7 +43,7 @@ export default function ContractorCallDetail() {
           WO-{woNumber || woId}
         </span>
         <a
-          href={`${SF_BASE}/${woId}`}
+          href={contractorWoLink(woId)}
           target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1 text-xs text-indigo-400 hover:underline"
         >

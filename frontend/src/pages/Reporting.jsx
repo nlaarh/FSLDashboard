@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { FileText, Download, ChevronUp, ChevronDown, Loader2, BarChart3, Search, CheckSquare, Square } from 'lucide-react'
+import MiniDatePicker from '../components/MiniDatePicker'
 import { fetchGarages, fetchReportSummary, exportReportSummary } from '../api'
 import { getMonth } from '../utils/dateHelpers'
 import UserAdoptionReport from '../components/UserAdoptionReport'
@@ -267,13 +268,11 @@ export default function Reporting() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <p className="text-[10px] text-slate-500 mb-1">From</p>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-brand-500/50 [color-scheme:dark]" />
+              <MiniDatePicker value={startDate} onChange={setStartDate} placeholder="From" />
             </div>
             <div>
               <p className="text-[10px] text-slate-500 mb-1">To</p>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-brand-500/50 [color-scheme:dark]" />
+              <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="To" />
             </div>
           </div>
         </div>

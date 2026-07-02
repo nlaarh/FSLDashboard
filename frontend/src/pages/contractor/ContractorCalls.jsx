@@ -6,10 +6,10 @@ import {
 } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
 import Paginator from '../../components/Paginator'
+import { contractorWoLink } from '../../utils/sfLinks'
+import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PAGE_SIZE = 100
-
-const SF_BASE = 'https://aaawcny.lightning.force.com'
 
 function fmt(v) {
   if (v == null || v === '') return '—'
@@ -74,11 +74,8 @@ const COLUMNS = [
   { key: 'total_cost',     label: 'Total',          sortFn: (a, b) => (a.total_cost || 0) - (b.total_cost || 0) },
 ]
 
-export default function ContractorCalls() {
+export default function ContractorCalls({ startDate, endDate, setStartDate, setEndDate }) {
   const navigate = useNavigate()
-  const { start: defStart, end: defEnd } = defaultDates()
-  const [startDate, setStartDate] = useState(defStart)
-  const [endDate, setEndDate] = useState(defEnd)
   const [allCalls, setAllCalls] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -169,13 +166,11 @@ export default function ContractorCalls() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={startDate} onChange={setStartDate} placeholder="Start date" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="End date" />
         </div>
         <button onClick={fetchData} disabled={loading}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-all">
@@ -311,7 +306,7 @@ export default function ContractorCalls() {
                           <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />
                         )}
                         <a
-                          href={`${SF_BASE}/${c.wo_id}`}
+                          href={contractorWoLink(c.wo_id)}
                           target="_blank" rel="noopener noreferrer"
                           onClick={e => e.stopPropagation()}
                           className="text-slate-600 hover:text-slate-400 transition-colors"

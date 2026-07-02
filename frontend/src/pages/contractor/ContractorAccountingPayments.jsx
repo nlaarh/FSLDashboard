@@ -1,5 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { Loader2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import { contractorWoLink } from '../../utils/sfLinks'
+import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PRODUCT_ORDER = ['BA', 'ER', 'TW', 'TL', 'PG', 'MH']
 
@@ -126,7 +128,7 @@ function WORow({ wo }) {
         </td>
         <td className="px-2 py-2 font-mono">
           {wo.wo_id
-            ? <a href={`https://aaawcny.lightning.force.com/${wo.wo_id}`}
+            ? <a href={contractorWoLink(wo.wo_id)}
                  target="_blank" rel="noopener noreferrer"
                  onClick={e => e.stopPropagation()}
                  className="text-indigo-400 hover:underline">{wo.wo_number || '—'}</a>
@@ -195,13 +197,11 @@ export default function ContractorAccountingPayments() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={startDate} onChange={setStartDate} placeholder="Start date" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="End date" />
         </div>
         <button onClick={fetchData} disabled={loading}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-all">

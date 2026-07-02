@@ -21,9 +21,12 @@ import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
 import { fetchWatchlist } from '../api'
 
-// ── Salesforce URL helper ───────────────────────────────────────────────────
+// ── Salesforce URL helpers ──────────────────────────────────────────────────
 const SF_BASE = 'https://aaawcny.lightning.force.com'
+const SF_COMMUNITY_BASE = 'https://aaawcny.my.site.com/aaawcnyspp/s'
 const sfLink = (id) => id ? `${SF_BASE}/lightning/r/${id}/view` : '#'
+const sfWoLink = (id) => id ? `${SF_COMMUNITY_BASE}/workorder/${id}` : '#'
+const sfSaLink = (id) => id ? `${SF_COMMUNITY_BASE}/serviceappointment/${id}` : '#'
 
 // ── Time helpers ────────────────────────────────────────────────────────────
 
@@ -65,7 +68,7 @@ const KMI_STATUS_COLORS = {
 
 // ── Operational Alerts Table ────────────────────────────────────────────────
 
-function OperationalAlertsTable({ alerts, onShowHelp }) {
+function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) {
   const [assistSaId, setAssistSaId] = useState(null)
   const [assistHints, setAssistHints] = useState(null)
   const [assistAlert, setAssistAlert] = useState(null)
@@ -286,7 +289,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 {/* Work Order */}
                 <td className="px-2 py-1.5">
                   {alert.wo_number ? (
-                    <a href={sfLink(alert.wo_id)} target="_blank" rel="noopener noreferrer"
+                    <a href={contractorMode ? sfWoLink(alert.wo_id) : sfLink(alert.wo_id)} target="_blank" rel="noopener noreferrer"
                       className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
                       {alert.wo_number}
                       <ExternalLink className="w-2.5 h-2.5 opacity-60" />
@@ -297,7 +300,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1">
                     <SAWithTimeline number={alert.sa_number} driver={alert} />
-                    <a href={sfLink(alert.sa_id)} target="_blank" rel="noopener noreferrer"
+                    <a href={contractorMode ? sfSaLink(alert.sa_id) : sfLink(alert.sa_id)} target="_blank" rel="noopener noreferrer"
                       className="text-slate-500 hover:text-blue-400" title="Open in Salesforce">
                       <ExternalLink className="w-2.5 h-2.5" />
                     </a>
@@ -405,12 +408,16 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
                 <td className="px-2 py-1.5">
                   {alert.kmi_case_number ? (
                     <div className="space-y-0.5">
-                      <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
-                        {alert.kmi_case_number}
-                        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                      </a>
+                      {contractorMode ? (
+                        <span className="text-blue-400 font-mono">{alert.kmi_case_number}</span>
+                      ) : (
+                        <a href={`${SF_BASE}/lightning/r/Case/${alert.kmi_case_id}/view`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1">
+                          {alert.kmi_case_number}
+                          <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                        </a>
+                      )}
                       <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded border',
                         KMI_STATUS_COLORS[alert.kmi_case_status] || 'bg-slate-600/20 text-slate-400 border-slate-600/40')}>
                         {alert.kmi_case_status || '—'}
@@ -434,7 +441,7 @@ function OperationalAlertsTable({ alerts, onShowHelp }) {
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-export default function SAWatchlist() {
+export default function SAWatchlist({ contractorMode = false }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -573,7 +580,7 @@ export default function SAWatchlist() {
       {activeTab === 'alerts' && (
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-6 pt-4 pb-8 space-y-4">
-            <OperationalAlertsTable alerts={operationalAlerts} onShowHelp={() => setShowHelp(true)} />
+            <OperationalAlertsTable alerts={operationalAlerts} onShowHelp={() => setShowHelp(true)} contractorMode={contractorMode} />
 
             {operationalAlerts.length === 0 && !loading && (
               <div className="bg-slate-800/30 border border-emerald-800/30 rounded-xl py-12 text-center">

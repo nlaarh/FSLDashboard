@@ -632,7 +632,7 @@ export default function AccountingAuditPanel({ woaId, onComplete, recReason, sib
               </div>
               {audit.woli_items.map((wl, i) => (
                 <div key={i} className="grid grid-cols-[60px_1fr_50px_55px_65px] gap-1 text-[10px] py-0.5 items-center">
-                  {wl.id ? (
+                  {wl.id && !contractorMode ? (
                     <a href={`https://aaawcny.lightning.force.com/${wl.id}`} target="_blank" rel="noopener noreferrer"
                       className="font-mono text-brand-400 hover:text-brand-300 hover:underline">{wl.name || '—'}</a>
                   ) : (

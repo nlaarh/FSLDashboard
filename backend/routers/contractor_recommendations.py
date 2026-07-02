@@ -15,7 +15,6 @@ from routers.contractor import (
     _require_contractor_facilities,
     _facility_in_clause,
     _cutoff_date,
-    _SF_BASE,
     _DAYS_BACK,
     _MAX_RECS,
 )
@@ -110,11 +109,14 @@ def _date_clause(start_date: str | None, end_date: str | None) -> str:
     return " ".join(parts)
 
 
+_SF_COMMUNITY_ROOT = "https://aaawcny.my.site.com/aaawcnyspp"
+
+
 def _woa_new_url(wo_id: str) -> str:
-    return (
-        f"{_SF_BASE}/lightning/o/ERS_Work_Order_Adjustment__c/new"
-        f"?defaultFieldValues=Work_Order__c={wo_id}"
-    )
+    # Opens the parent Work Order in the community portal so the contractor
+    # can click "New Adjustment" — the standard quick-action form shows the
+    # Work Order field clearly, unlike the flow which hides it.
+    return f"{_SF_COMMUNITY_ROOT}/s/workorder/{wo_id}"
 
 
 def _actioned_status(woli_list: list[dict], woa_set: set[str], code: str) -> str | None:

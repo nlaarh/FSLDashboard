@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown, Camera } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
 import Paginator from '../../components/Paginator'
+import { contractorWoLink } from '../../utils/sfLinks'
+import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PAGE_SIZE = 100
 
@@ -55,10 +57,7 @@ function exportCSV(rows) {
   a.click()
 }
 
-export default function ContractorDriverCollection() {
-  const { start: defStart, end: defEnd } = defaultDates()
-  const [startDate, setStartDate] = useState(defStart)
-  const [endDate, setEndDate] = useState(defEnd)
+export default function ContractorDriverCollection({ startDate, endDate, setStartDate, setEndDate }) {
   const [items, setItems] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -147,13 +146,11 @@ export default function ContractorDriverCollection() {
       <div className="glass rounded-xl border border-slate-700/30 p-4 mb-4 flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">Start Date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={startDate} onChange={setStartDate} placeholder="Start date" />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-slate-500 uppercase tracking-wider">End Date</label>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50" />
+          <MiniDatePicker value={endDate} onChange={setEndDate} placeholder="End date" />
         </div>
         <button onClick={fetchData} disabled={loading}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-all">
