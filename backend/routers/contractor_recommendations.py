@@ -37,6 +37,10 @@ router = APIRouter()
 
 
 _RECS_MAX_DAYS_BACK = 60  # Contractors may not request WOAs older than 60 days
+_RECS_MIN_DAYS = 8        # Don't recommend WOAs on calls newer than 8 days (still in accounting audit)
+
+# Only Standard and RAP WOs are eligible for contractor WOA recommendations
+_ALLOWED_TYPE_CLAUSE = "AND Type__c IN ('Standard', 'RAP')"
 
 
 def _was_serviced(wo: dict) -> bool:
@@ -94,13 +98,19 @@ def _enroute_eligible(wo: dict) -> bool:
 
 
 def _date_clause(start_date: str | None, end_date: str | None) -> str:
-    """Build SOQL date filter. If neither provided, defaults to last 90 days.
-    Clamps start_date to no more than 60 days ago — WOA requests must be timely."""
+    """Build SOQL date filter.
+    - start_date clamped to no more than 60 days ago (WOA requests must be timely)
+    - end_date clamped to no more recent than 8 days ago (calls still in accounting audit)
+    """
     max_start = _cutoff_date(_RECS_MAX_DAYS_BACK)
+    min_end   = _cutoff_date(_RECS_MIN_DAYS)
     if not start_date and not end_date:
         start_date = max_start
     if start_date and start_date < max_start:
         start_date = max_start
+    # Never recommend adjustments on calls newer than 8 days
+    if not end_date or end_date > min_end:
+        end_date = min_end
     parts = []
     if start_date:
         parts.append(f"AND CreatedDate >= {start_date}T00:00:00Z")
@@ -225,6 +235,7 @@ def contractor_recs_mh(
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
+          {_ALLOWED_TYPE_CLAUSE}
           AND Tow_Call__c = true
           AND Vehicle_Make__c != null
         ORDER BY CreatedDate DESC
@@ -304,12 +315,14 @@ def contractor_recs_pg_fuel(
     wo_rows = sf_query_all(f"""
         SELECT Id, WorkOrderNumber, Facility_ID__c, CreatedDate,
                Dispatch_Code__c, Coverage__c, Entitlement_Master__r.Name, Status,
+               Resolution_Code__c,
                Service_Resource__r.Name,
                ServiceTerritory.Name
         FROM WorkOrder
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
+          {_ALLOWED_TYPE_CLAUSE}
           AND Dispatch_Code__c IN ({code_clause})
           AND Coverage__c IN ({cov_clause})
         ORDER BY CreatedDate DESC
@@ -325,6 +338,8 @@ def contractor_recs_pg_fuel(
 
     items = []
     for wo in wo_rows:
+        if not _was_serviced(wo):  # exclude cancelled/X*/R* calls
+            continue
         wo_id = wo["Id"]
         actioned = _actioned_status(woli_by_wo.get(wo_id, []), woa_codes.get(wo_id, set()), "PG")
         if actioned and not include_actioned:
@@ -383,6 +398,7 @@ def contractor_recs_er_miles(
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
+          {_ALLOWED_TYPE_CLAUSE}
         ORDER BY CreatedDate DESC
         LIMIT 50000
     """)
@@ -514,6 +530,7 @@ def contractor_recs_tow_miles(
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
+          {_ALLOWED_TYPE_CLAUSE}
           AND Tow_Call__c = true
         ORDER BY CreatedDate DESC
         LIMIT 50000
@@ -577,6 +594,7 @@ def contractor_recs_tl_tolls(
         WHERE Facility_ID__c IN ({f_clause})
           {date_filter}
           AND Status IN ('Completed', 'Closed')
+          {_ALLOWED_TYPE_CLAUSE}
           AND Tow_Call__c = true
           AND ERS_Estimated_Tow_Miles__c > 30
         ORDER BY CreatedDate DESC

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import ContractorCalls from './ContractorCalls'
 import ContractorAccountingRecs from './ContractorAccountingRecs'
@@ -18,12 +18,26 @@ function defaultDates() {
   return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) }
 }
 
+const SS_KEY = 'contractor_accounting_dates'
+
+function loadDates() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SS_KEY) || '{}')
+    const { start, end } = defaultDates()
+    return { start: saved.start || start, end: saved.end || end }
+  } catch { return defaultDates() }
+}
+
 export default function ContractorAccounting() {
   const location = useLocation()
   const [activeTab, setActiveTab] = useState(location.state?.tab || 'calls')
-  const { start, end } = defaultDates()
-  const [startDate, setStartDate] = useState(start)
-  const [endDate, setEndDate]     = useState(end)
+  const initial = loadDates()
+  const [startDate, setStartDate] = useState(initial.start)
+  const [endDate, setEndDate]     = useState(initial.end)
+
+  useEffect(() => {
+    sessionStorage.setItem(SS_KEY, JSON.stringify({ start: startDate, end: endDate }))
+  }, [startDate, endDate])
 
   const dateProps = { startDate, endDate, setStartDate, setEndDate }
 

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2, AlertTriangle, ExternalLink, Download, ChevronUp, ChevronDown, ArrowUpDown, Camera } from 'lucide-react'
 import { InfoTip } from '../../components/CommandCenterUtils'
 import Paginator from '../../components/Paginator'
@@ -6,8 +7,6 @@ import { contractorWoLink } from '../../utils/sfLinks'
 import MiniDatePicker from '../../components/MiniDatePicker'
 
 const PAGE_SIZE = 100
-
-const SF_BASE = 'https://aaawcny.lightning.force.com'
 
 function defaultDates() {
   const now = new Date()
@@ -46,7 +45,7 @@ function exportCSV(rows) {
       r.wo_number ? `WO-${r.wo_number}` : '',
       r.service_resource_name, r.reason, r.amount, r.call_type,
       r.dispatch_code, r.resolution_code, r.coverage,
-      r.wo_id ? `${SF_BASE}/${r.wo_id}` : '',
+      r.wo_id ? contractorWoLink(r.wo_id) : '',
       r.audit_verified ? 'Yes' : 'No',
     ].map(v => `"${(v || '').toString().replace(/"/g, '""')}"`).join(','))
   ]
@@ -58,6 +57,7 @@ function exportCSV(rows) {
 }
 
 export default function ContractorDriverCollection({ startDate, endDate, setStartDate, setEndDate }) {
+  const navigate = useNavigate()
   const [items, setItems] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -67,6 +67,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
   // Filters
   const [filterReason, setFilterReason] = useState('')
   const [filterCallType, setFilterCallType] = useState('')
+  const [showVerified, setShowVerified] = useState(true)
 
   // Sorting
   const [sortCol, setSortCol] = useState('reason')
@@ -127,6 +128,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
     let rows = items.filter(r => {
       if (filterReason   && r.reason    !== filterReason)   return false
       if (filterCallType && r.call_type !== filterCallType) return false
+      if (!showVerified  && r.audit_verified)               return false
       return true
     })
     const col = COLUMNS.find(c => c.key === sortCol)
@@ -136,7 +138,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
 
   // Display one page only (keeps the table fast on large sets). Export uses full `filtered`.
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  useEffect(() => { setPage(0) }, [filterReason, filterCallType, startDate, endDate, items])
+  useEffect(() => { setPage(0) }, [filterReason, filterCallType, showVerified, startDate, endDate, items])
 
   const selectCls ="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500/50"
 
@@ -159,8 +161,14 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
         </button>
 
         <div className="self-center">
-          <InfoTip text={"DRIVER COLLECTION\n\nCompleted/closed calls where the technician should have collected payment from the member.\n\nFOUR REASONS (by Resolution Code):\n  • Tow Overmiles — tow with Est. Tow Over-Mileage Cost to Member > $0 (actual amount shown)\n  • Battery Sold — resolution G306/G307/G308 (amount: verify manually — Salesforce has no battery $ field)\n  • TireJECT Install — resolution G103 (fixed $34.99)\n  • Fuel Delivery – Basic Member — resolution G401/G402 + Basic coverage (2-3 gallons of gas)\n\nTick Audit Verification after confirming the tech collected — it saves per facility."} />
+          <InfoTip text={"DRIVER COLLECTION\n\nCompleted/closed calls where the technician should have collected payment from the member.\n\nFIVE REASONS:\n  • Tow Overmiles — tow with Est. Tow Over-Mileage Cost > $0 (actual amount shown)\n  • Battery Sold — resolution G306/G307/G308 (verify manually)\n  • TireJECT Install — resolution G103 (fixed $34.99)\n  • Fuel Delivery – Basic Member — resolution G401/G402 + Basic coverage (2-3 gallons)\n  • Private Service — Type = Private Service (Completed/Closed)\n\nTick Audit Verification after confirming the tech collected — it saves per facility."} />
         </div>
+
+        <label className="self-center flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input type="checkbox" checked={showVerified} onChange={e => setShowVerified(e.target.checked)}
+            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer" />
+          Show Already Verified
+        </label>
 
         {fetched && items && items.length > 0 && (
           <>
@@ -219,14 +227,13 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
                       </span>
                     </th>
                   ))}
-                  <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-left whitespace-nowrap">SF Link</th>
                   <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center whitespace-nowrap">Audit Verification</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && [...Array(6)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-800/40">
-                    {[...Array(COLUMNS.length + 2)].map((__, j) => (
+                    {[...Array(COLUMNS.length + 1)].map((__, j) => (
                       <td key={j} className="px-2 py-2.5"><div className="skeleton h-3.5 rounded w-20" /></td>
                     ))}
                   </tr>
@@ -235,10 +242,19 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
                   const key = rowKey(row)
                   const saving = savingKeys.has(key)
                   return (
-                    <tr key={key || idx} className="hover:bg-slate-800/30 transition-colors border-b border-slate-800/40">
+                    <tr key={key || idx}
+                      onClick={() => row.wo_id && navigate(`/contractor/accounting/calls/${row.wo_id}`, { state: { from: 'driver-collection' } })}
+                      className={`hover:bg-slate-800/30 transition-colors border-b border-slate-800/40 ${row.wo_id ? 'cursor-pointer' : ''}`}>
                       <td className="px-2 py-2.5 font-mono text-indigo-400">
                         <span className="inline-flex items-center gap-1.5">
                           {row.wo_number ? `WO-${row.wo_number}` : <span className="text-slate-600">—</span>}
+                          {row.wo_id && (
+                            <a href={contractorWoLink(row.wo_id)} target="_blank" rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              title="Open in Salesforce">
+                              <ExternalLink size={9} className="text-slate-500 hover:text-indigo-400 shrink-0" />
+                            </a>
+                          )}
                           {row.has_photos && <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />}
                         </span>
                       </td>
@@ -249,17 +265,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
                       <td className="px-2 py-2.5 text-slate-400 font-mono">{row.dispatch_code || <span className="text-slate-600">—</span>}</td>
                       <td className="px-2 py-2.5 text-slate-400 font-mono">{row.resolution_code || <span className="text-slate-600">—</span>}</td>
                       <td className="px-2 py-2.5 text-slate-400">{row.coverage || <span className="text-slate-600">—</span>}</td>
-                      <td className="px-2 py-2.5">
-                        {row.wo_id ? (
-                          <a href={`${SF_BASE}/${row.wo_id}`} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
-                            title="Open Work Order in Salesforce">
-                            <ExternalLink size={11} />
-                            <span className="text-[10px]">SF</span>
-                          </a>
-                        ) : <span className="text-slate-600">—</span>}
-                      </td>
-                      <td className="px-2 py-2.5 text-center">
+                      <td className="px-2 py-2.5 text-center" onClick={e => e.stopPropagation()}>
                         <input type="checkbox" checked={!!row.audit_verified} disabled={saving}
                           onChange={() => toggleVerified(row)}
                           className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer disabled:opacity-50"

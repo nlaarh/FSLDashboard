@@ -547,17 +547,20 @@ _DC_REASON_TOW = "Tow Overmiles"
 _DC_REASON_BATTERY = "Battery Sold"
 _DC_REASON_TIREJECT = "TireJECT Install"
 _DC_REASON_FUEL = "Fuel Delivery – Basic Member"
+_DC_REASON_PRIVATE = "Private Service"
 
 _DC_REASON_TO_CALL_TYPE = {
     _DC_REASON_TOW:      "Tow Pick-Up",
     _DC_REASON_BATTERY:  "Battery",
     _DC_REASON_TIREJECT: "Tire",
     _DC_REASON_FUEL:     "Fuel Delivery",
+    _DC_REASON_PRIVATE:  "Private Service",
 }
 
 # Valid (wo_id, reason) audit reasons the POST endpoint will accept.
 _DC_VALID_REASONS = {
     _DC_REASON_TOW, _DC_REASON_BATTERY, _DC_REASON_TIREJECT, _DC_REASON_FUEL,
+    _DC_REASON_PRIVATE,
 }
 
 
@@ -574,6 +577,9 @@ def _dc_matched_reasons(wo: dict) -> list[tuple[str, str]]:
     res = (wo.get("Resolution_Code__c") or "").strip()
     over_mileage = _safe_float(wo.get("ERS_Est_Tow_Over_Mileage_Cost__c")) or 0
 
+    if (wo.get("Type__c") or "").strip() == "Private Service":
+        out.append((_DC_REASON_PRIVATE, "Private Service"))
+        return out  # private service: only this reason, skip other checks
     if wo.get("Tow_Call__c") and over_mileage > 0:
         out.append((_DC_REASON_TOW, f"${over_mileage:,.2f}"))
     if res in _DC_BATTERY_CODES:
@@ -623,6 +629,7 @@ def contractor_driver_collection(
           AND (
                 Resolution_Code__c IN ('G306','G307','G308','G103','G401','G402')
                 OR (Tow_Call__c = true AND ERS_Est_Tow_Over_Mileage_Cost__c > 0)
+                OR Type__c = 'Private Service'
               )
           AND CreatedDate >= {start_date}T00:00:00Z
           AND CreatedDate <= {end_date}T23:59:59Z

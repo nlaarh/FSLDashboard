@@ -17,15 +17,17 @@ export default function ContractorCallDetail() {
       .then(data => { setWoNumber(data.wo_number || null); return data })
   }, [woId])
 
-  // Determine back destination — recs tab or calls tab
-  const fromRecs = location.state?.from === 'recs'
-  const handleBack = () => {
-    if (fromRecs) {
-      navigate('/contractor/accounting', { state: { tab: 'recs' } })
-    } else {
-      navigate('/contractor/accounting', { state: { tab: 'calls' } })
-    }
+  // Determine back destination based on where navigation originated
+  const fromStr = location.state?.from || 'calls'
+  const TAB_MAP = { recs: 'recs', pending: 'pending', 'driver-collection': 'driver-collection' }
+  const backTab = TAB_MAP[fromStr] || 'calls'
+  const BACK_LABELS = {
+    recs: 'Back to Recommendations',
+    pending: 'Back to Work Order Adjs',
+    'driver-collection': 'Back to Driver Collection',
   }
+  const backLabel = BACK_LABELS[fromStr] || 'Back to Calls Log'
+  const handleBack = () => navigate('/contractor/accounting', { state: { tab: backTab } })
 
   return (
     <div>
@@ -36,7 +38,7 @@ export default function ContractorCallDetail() {
           className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
         >
           <ArrowLeft size={16} />
-          {fromRecs ? 'Back to Recommendations' : 'Back to Calls Log'}
+          {backLabel}
         </button>
         <div className="w-px h-4 bg-slate-700" />
         <span className="text-sm font-bold text-white font-mono">
