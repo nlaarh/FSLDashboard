@@ -67,7 +67,7 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
   // Filters
   const [filterReason, setFilterReason] = useState('')
   const [filterCallType, setFilterCallType] = useState('')
-  const [showVerified, setShowVerified] = useState(true)
+  const [showVerified, setShowVerified] = useState(false)
 
   // Sorting
   const [sortCol, setSortCol] = useState('reason')
