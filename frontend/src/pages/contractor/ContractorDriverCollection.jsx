@@ -24,6 +24,7 @@ function SortIcon({ col, sortCol, sortDir }) {
 
 const COLUMNS = [
   { key: 'wo_number',             label: 'Work Order #',         sortFn: (a, b) => (a.wo_number || '').localeCompare(b.wo_number || '') },
+  { key: 'created_date',          label: 'Created Date',         sortFn: (a, b) => (a.created_date || '').localeCompare(b.created_date || '') },
   { key: 'service_resource_name', label: 'Service Resource',     sortFn: (a, b) => (a.service_resource_name || '').localeCompare(b.service_resource_name || '') },
   { key: 'reason',                label: 'Collection Reason',    sortFn: (a, b) => (a.reason || '').localeCompare(b.reason || '') },
   { key: 'amount',                label: 'Amount',               sortFn: (a, b) => (a.amount || '').localeCompare(b.amount || '') },
@@ -43,6 +44,7 @@ function exportCSV(rows) {
     headers.join(','),
     ...rows.map(r => [
       r.wo_number ? `WO-${r.wo_number}` : '',
+      r.created_date ? r.created_date.slice(0, 10) : '',
       r.service_resource_name, r.reason, r.amount, r.call_type,
       r.dispatch_code, r.resolution_code, r.coverage,
       r.wo_id ? contractorWoLink(r.wo_id) : '',
@@ -264,6 +266,9 @@ export default function ContractorDriverCollection({ startDate, endDate, setStar
                           )}
                           {row.has_photos && <Camera size={11} className="text-sky-400 shrink-0" title="Has photos" />}
                         </span>
+                      </td>
+                      <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap font-mono text-[10px]">
+                        {row.created_date ? row.created_date.slice(0, 10) : <span className="text-slate-600">—</span>}
                       </td>
                       <td className="px-2 py-2.5 text-slate-300">{row.service_resource_name || <span className="text-slate-600">—</span>}</td>
                       <td className="px-2 py-2.5 text-slate-200 whitespace-nowrap">{row.reason || <span className="text-slate-600">—</span>}</td>

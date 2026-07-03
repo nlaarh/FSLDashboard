@@ -315,7 +315,8 @@ def contractor_call_audit(wo_id: str, request: Request):
                ServiceTerritory.Name, ServiceTerritoryId,
                Basic_Cost__c, Plus_Cost__c, Premier_Cost__c, RV_Cost__c, Other_Cost__c,
                Tax, GrandTotal, Total_Amount_Invoiced__c,
-               Vehicle_Make__c, Vehicle_Model__c, Customer_Name__c, Notes__c
+               Vehicle_Make__c, Vehicle_Model__c, Customer_Name__c, Notes__c,
+               Driver_Directions__c, ERS_System_Notes__c
         FROM WorkOrder
         WHERE Id = '{safe_id}'
         LIMIT 1
@@ -459,8 +460,8 @@ def contractor_call_audit(wo_id: str, request: Request):
             'woa_description': None,
             'woa_internal_notes': None,
             'agent_comments': wo.get('Notes__c') or None,
-            'driver_instructions': None,
-            'system_notes': None,
+            'driver_instructions': wo.get('Driver_Directions__c') or None,
+            'system_notes': wo.get('ERS_System_Notes__c') or None,
             'sa_service_notes': [
                 {'sa_number': s.get('AppointmentNumber', ''), 'note': s.get('ServiceNote')}
                 for s in sa_rows if s.get('ServiceNote')
