@@ -441,23 +441,9 @@ def _lookup_sa_impl(sa_number: str):
 
 # ── Feature Flags ────────────────────────────────────────────────────────────
 
-def _env_flag(name: str) -> bool:
-    """Read a boolean feature flag from the environment. Absent = OFF."""
-    import os
-    return (os.environ.get(name) or '').strip().lower() in ('1', 'true', 'yes', 'on')
-
-
-_DEFAULT_FEATURES = {
-    'pta_advisor': True,
-    'onroute': True,
-    'matrix': True,
-    'chat': False,
-    'accounting': True,
-    # Contractor Dispatch + Map — UNRELEASED. Defaults to OFF so it stays hidden
-    # in production even if this code is deployed. Turn on locally by setting
-    # FEATURE_CONTRACTOR_DISPATCH=true in FSLAPP/.env (never in Azure app settings).
-    'contractor_dispatch': _env_flag('FEATURE_CONTRACTOR_DISPATCH'),
-}
+# Feature defaults now live in feature_flags.DEFAULT_FEATURES (single source of
+# truth) and are overridden from the settings table, toggled on the Admin screen.
+from feature_flags import DEFAULT_FEATURES as _DEFAULT_FEATURES, effective_features
 
 def _load_settings():
     try:
@@ -472,7 +458,6 @@ def get_features():
     """Return feature flags + configurable URLs. Public (no auth) — UI needs this."""
     settings = _load_settings()
     return {
-        **_DEFAULT_FEATURES,
-        **settings.get('features', {}),
+        **effective_features(),
         'help_video_url': settings.get('help_video_url', 'https://youtu.be/WovtITtz7Z0'),
     }

@@ -1,12 +1,12 @@
-"""Contractor Dispatch + Map — UNRELEASED FEATURE.
+"""Contractor Dispatch + Map.
 
 Two endpoints backing the contractor-facing Dispatch list and live Map:
   GET /api/contractor/dispatch  — call list bucketed like a dispatch board
   GET /api/contractor/map       — active calls + driver positions for the map
 
-Both are gated behind the `contractor_dispatch` feature flag, which is OFF
-unless FEATURE_CONTRACTOR_DISPATCH=true is set in the environment. Production
-does not set it, so these return 404 there even if the code ships.
+Both are gated behind the `contractor_dispatch` feature flag — ON by default,
+switchable from the Admin screen (Feature Modules), which persists to the
+settings table. When it is off these return 404. See feature_flags.py.
 
 SECURITY: every query is filtered server-side on
 `ERS_Work_Order__r.Facility_ID__c IN (<the caller's own facilities>)`.
@@ -73,9 +73,14 @@ BUCKETS = {
 
 
 def _require_flag():
-    """404 unless the unreleased feature is switched on for this environment."""
-    from routers.misc import _DEFAULT_FEATURES
-    if not _DEFAULT_FEATURES.get('contractor_dispatch'):
+    """404 unless the feature is switched on.
+
+    Reads the EFFECTIVE value (defaults + admin's saved overrides), not the
+    static default — otherwise switching the module off in Admin would only
+    hide the nav links while leaving these endpoints reachable.
+    """
+    import feature_flags
+    if not feature_flags.is_on('contractor_dispatch'):
         raise HTTPException(status_code=404, detail="Not found")
 
 

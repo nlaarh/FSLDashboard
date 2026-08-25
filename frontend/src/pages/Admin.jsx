@@ -319,6 +319,7 @@ export default function Admin({ role = '' }) {
                   { key: 'matrix',      label: 'Insights',      desc: 'Priority matrix advisor' },
                   { key: 'chat',        label: 'AI Chat',       desc: 'Floating chatbot assistant' },
                   { key: 'accounting',  label: 'Accounting',    desc: 'WO Adjustment audit & recommendations' },
+                  { key: 'contractor_dispatch', label: 'Dispatch & Map', desc: 'Contractor live dispatch board & driver map' },
                 ].map(m => {
                   const on = features[m.key] !== false
                   return (

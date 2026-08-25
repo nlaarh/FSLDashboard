@@ -26,13 +26,9 @@ def _check_pin(request: Request):
 
 # ── Settings persistence ─────────────────────────────────────────────────────
 
-_DEFAULT_FEATURES = {
-    'pta_advisor': True,
-    'onroute': True,
-    'matrix': True,
-    'chat': False,
-    'accounting': True,
-}
+# Shared with routers/misc.py — the save loop below iterates these keys, so a
+# flag missing here is silently dropped when an admin saves. Keep one copy.
+from feature_flags import DEFAULT_FEATURES as _DEFAULT_FEATURES
 
 
 def _load_settings():
