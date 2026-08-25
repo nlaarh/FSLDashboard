@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet'
 import { Loader2, RefreshCw, AlertCircle, Search, MapPinOff } from 'lucide-react'
 import { truckIcon, customerIcon, dropoffIcon } from '../../mapIcons'
 
@@ -8,6 +8,17 @@ import { truckIcon, customerIcon, dropoffIcon } from '../../mapIcons'
 // Customer pins and driver pins use deliberately different marks.
 
 const CENTER = [42.9, -78.8]      // Western/Central NY
+
+// How often the map re-polls for driver positions. Note DRIVER_GPS_MAX_AGE_MIN
+// (30 min, server-side) is what decides whether a truck is drawn at all — this
+// only controls how quickly a moving truck's pin catches up.
+const REFRESH_MS = 60000
+
+// Route colours. Green = the truck's run to the stranded member; blue = the tow
+// onward to the shop, matching the drop-off pin's own tint so the eye pairs the
+// line with the destination it ends at.
+const LEG_TO_BREAKDOWN = '#34d399'
+const LEG_TO_DROPOFF   = '#7dd3fc'
 
 const TRUCK_TONE = {
   'En Route': 'closest', 'On Location': 'assigned_closest', 'In Progress': 'assigned_closest',
@@ -42,8 +53,19 @@ export default function ContractorMap() {
   const [q, setQ] = useState('')
 
   const [unavailable, setUnavailable] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [updatedAt, setUpdatedAt] = useState(null)
+
+  // Driver GPS moves constantly, so the map polls once a minute. Each poll costs
+  // three SOQL queries and nothing here is cached server-side, so the pins are as
+  // fresh as Salesforce itself — but that also means an idle tab would burn API
+  // quota for nothing. Hence: skip while hidden, never stack overlapping requests.
+  const inFlight = useRef(false)
 
   const load = useCallback(() => {
+    if (inFlight.current) return   // a slow poll must not queue another behind it
+    inFlight.current = true
+    setRefreshing(true)
     setErr('')
     fetch('/api/contractor/map')
       .then(async r => {
@@ -57,15 +79,20 @@ export default function ContractorMap() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
-      .then(d => { if (d) { setUnavailable(''); setData(d) } })
+      .then(d => { if (d) { setUnavailable(''); setData(d); setUpdatedAt(new Date()) } })
       .catch(e => setErr(e.message || 'Failed to load'))
-      .finally(() => setLoading(false))
+      .finally(() => { inFlight.current = false; setRefreshing(false); setLoading(false) })
   }, [])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    const t = setInterval(load, 60000)
-    return () => clearInterval(t)
+    const t = setInterval(() => { if (!document.hidden) load() }, REFRESH_MS)
+    // Coming back to a backgrounded tab, the pins on screen are as old as the
+    // time away. Refresh at once rather than showing stale trucks until the
+    // next tick.
+    const onVisible = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible) }
   }, [load])
 
   const calls = data?.calls || []
@@ -97,6 +124,24 @@ export default function ContractorMap() {
     const t = setTimeout(() => markers.current[selected]?.openPopup(), 950)
     return () => clearTimeout(t)
   }, [selected, target])
+
+  // Street route for whichever call is selected. Fetched on demand rather than
+  // with the map payload: it is one routing call per click, and most clicks
+  // never happen. A failed or slow route just leaves the lines undrawn — the
+  // public OSRM server has no SLA, so it must never block the map.
+  const [route, setRoute] = useState(null)
+  useEffect(() => {
+    if (!selected?.startsWith('c:')) { setRoute(null); return }
+    const saId = selected.slice(2)
+    let cancelled = false
+    setRoute(null)
+    fetch(`/api/contractor/route?sa_id=${encodeURIComponent(saId)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) setRoute(d) })
+      .catch(() => { /* no line is better than an error toast */ })
+    // A second click before the first resolves must not paint the old route.
+    return () => { cancelled = true }
+  }, [selected])
 
   if (unavailable) {
     return (
@@ -130,9 +175,14 @@ export default function ContractorMap() {
                 </button>
               ))}
             </div>
-            <button onClick={load} title="Refresh"
-              className="ml-auto p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800">
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            {updatedAt && (
+              <span className="ml-auto text-[10px] text-slate-500 tabular-nums" title="Map refreshes every minute">
+                updated {clock(updatedAt.toISOString())}
+              </span>
+            )}
+            <button onClick={load} title="Refresh now"
+              className={`${updatedAt ? '' : 'ml-auto'} p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800`}>
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             </button>
           </div>
           <div className="relative">
@@ -233,6 +283,33 @@ export default function ContractorMap() {
             attribution='&copy; OpenStreetMap &copy; CARTO'
           />
           <FlyTo target={target} />
+
+          {/* Route for the selected call. Dashed so it reads as a planned path
+              rather than a track the truck has already driven. */}
+          {route?.to_breakdown?.coords?.length > 1 && (
+            <Polyline positions={route.to_breakdown.coords} pathOptions={{
+              color: LEG_TO_BREAKDOWN, weight: 4, opacity: 0.9, dashArray: '6 8',
+            }}>
+              <Tooltip sticky className="cc-tooltip">
+                <div style={{ fontSize: 12 }}>
+                  <b style={{ color: LEG_TO_BREAKDOWN }}>To the breakdown</b><br />
+                  {route.to_breakdown.miles} mi · {route.to_breakdown.minutes} min
+                </div>
+              </Tooltip>
+            </Polyline>
+          )}
+          {route?.to_dropoff?.coords?.length > 1 && (
+            <Polyline positions={route.to_dropoff.coords} pathOptions={{
+              color: LEG_TO_DROPOFF, weight: 4, opacity: 0.9, dashArray: '2 7',
+            }}>
+              <Tooltip sticky className="cc-tooltip">
+                <div style={{ fontSize: 12 }}>
+                  <b style={{ color: LEG_TO_DROPOFF }}>Tow to drop-off</b><br />
+                  {route.to_dropoff.miles} mi · {route.to_dropoff.minutes} min
+                </div>
+              </Tooltip>
+            </Polyline>
+          )}
 
           {calls.map(c => (
             <Marker key={`c-${c.sa_id}`} position={[c.lat, c.lon]}

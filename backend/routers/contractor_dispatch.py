@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
 
+import cache
 from sf_client import sf_query_all, sanitize_soql
 from routers.contractor import _require_contractor_facilities, _facility_in_clause
 
@@ -53,7 +54,11 @@ CANCELLED_STATUSES = (
 # up instead of silently vanishing: only finished and cancelled work is hidden.
 # 'Assigned' pins — those calls already carry a named driver, truck and live
 # GPS, so they are being worked, not merely queued.
-MAP_HIDDEN_STATUSES = CANCELLED_STATUSES + ('Completed', 'Cleared')
+#
+# 'Unable to Complete' is hidden too: the driver has left, so the pin is not
+# somewhere help is on the way. It still appears on the dispatch board under its
+# own bucket, which is where that call needs to be actioned.
+MAP_HIDDEN_STATUSES = CANCELLED_STATUSES + ('Completed', 'Cleared', 'Unable to Complete')
 
 # A driver pin means "this truck is out there right now". A resource that has
 # not reported GPS in this long is off shift or has closed the app: still
@@ -439,4 +444,113 @@ def contractor_map(request: Request):
         'drivers_not_tracking': stale_drivers,
         # assignments skipped because the driver logged out of their truck
         'drivers_logged_out': logged_out_drivers,
+    }
+
+
+# ── GET /api/contractor/route ────────────────────────────────────────────────
+
+# Public OSRM demo server: no key, no signup, no bill. It is a community box
+# with no SLA, so every failure here is soft — the map simply draws no line
+# rather than showing an error. Swapping in a paid router (Google Directions,
+# Mapbox) means changing _osrm_leg() and nothing else.
+OSRM_URL = 'https://router.project-osrm.org/route/v1/driving'
+OSRM_TIMEOUT = 8
+
+# The drop-off leg runs between two fixed addresses, so it is worth caching for
+# the day. The driver leg is not cached: the truck is moving, which is the whole
+# point of drawing it.
+_ROUTE_TTL = 3600
+
+
+def _osrm_leg(a: tuple, b: tuple) -> dict | None:
+    """Street path between two (lat, lon) points, or None if unroutable.
+
+    OSRM takes lon,lat and returns lon,lat; Leaflet wants lat,lon. The flip is
+    the single easiest thing to get wrong here, so it happens in exactly one
+    place.
+    """
+    if not a or not b or a[0] is None or b[0] is None:
+        return None
+    try:
+        import requests
+        r = requests.get(f"{OSRM_URL}/{a[1]},{a[0]};{b[1]},{b[0]}",
+                         params={'overview': 'full', 'geometries': 'geojson'},
+                         timeout=OSRM_TIMEOUT)
+        d = r.json()
+        if d.get('code') != 'Ok' or not d.get('routes'):
+            log.info('osrm: no route (%s)', d.get('code'))
+            return None
+        rt = d['routes'][0]
+        return {
+            'coords': [[c[1], c[0]] for c in rt['geometry']['coordinates']],
+            'miles': round(rt['distance'] / 1609.344, 1),
+            'minutes': round(rt['duration'] / 60),
+        }
+    except Exception as exc:
+        log.info('osrm: leg failed: %s', exc)
+        return None
+
+
+@router.get("/api/contractor/route")
+def contractor_route(request: Request, sa_id: str = Query(..., description='ServiceAppointment Id')):
+    """Street route for one call: driver → breakdown, and for a tow, breakdown → drop-off.
+
+    Scoped to the caller's own facilities exactly like every other endpoint here
+    — the Id alone must never be enough to route somebody else's call.
+    """
+    _require_flag()
+    facility_ids = _require_contractor_facilities(request)
+    f_clause = _facility_in_clause(facility_ids)
+    sa_id = sanitize_soql(sa_id)
+
+    rows = sf_query_all(f"""
+        SELECT {_SA_FIELDS}
+        FROM ServiceAppointment
+        WHERE Id = '{sa_id}'
+          AND ERS_Work_Order__r.Facility_ID__c IN ({f_clause})
+    """)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    call = _shape(rows[0])
+    _attach_drivers([call])
+
+    # The pickup leg starts wherever the truck is now. With no GPS there is no
+    # honest starting point, so that leg is simply omitted.
+    driver = (call.get('driver_lat'), call.get('driver_lon'))
+    breakdown = (call.get('lat'), call.get('lon'))
+
+    # A tow's other half lives on the same work order. Look it up only for tows,
+    # and only when this call is the pick-up — routing onward from a drop-off
+    # would draw a line to itself.
+    dropoff = (None, None)
+    wo = call.get('wo_number')
+    if wo and call.get('work_type') == 'Tow Pick-Up':
+        sibs = sf_query_all(f"""
+            SELECT {_SA_FIELDS}
+            FROM ServiceAppointment
+            WHERE ERS_Work_Order__r.WorkOrderNumber = '{sanitize_soql(wo)}'
+              AND WorkType.Name = 'Tow Drop-Off'
+              AND ERS_Work_Order__r.Facility_ID__c IN ({f_clause})
+        """)
+        if sibs:
+            d = _shape(sibs[0])
+            dropoff = (d.get('lat'), d.get('lon'))
+
+    to_breakdown = _osrm_leg(driver, breakdown)
+
+    to_dropoff = None
+    if dropoff[0] is not None:
+        key = f"route_{round(breakdown[0], 4)}_{round(breakdown[1], 4)}_{round(dropoff[0], 4)}_{round(dropoff[1], 4)}"
+        to_dropoff = cache.cached_query(key, lambda: _osrm_leg(breakdown, dropoff), ttl=_ROUTE_TTL)
+
+    return {
+        'sa_id': sa_id,
+        'sa_number': call.get('sa_number'),
+        'work_type': call.get('work_type'),
+        'to_breakdown': to_breakdown,
+        'to_dropoff': to_dropoff,
+        # so the UI can say WHY a line is missing instead of silently drawing nothing
+        'has_driver_gps': driver[0] is not None,
+        'has_dropoff': dropoff[0] is not None,
     }
