@@ -51,6 +51,12 @@ yarn-error.log*
 
 # Deploy artifacts (built locally)
 backend/deploy.zip
+# Hashed JS/CSS bundles. CI rebuilds backend/static from frontend/dist and zips
+# it from the runner's filesystem, so these never need to be in git -- 296 stale
+# bundles (362MB) had accumulated here. The non-hashed files in backend/static
+# stay tracked: the deploy workflow reads track.html/track_demo.html before it
+# wipes the directory.
+backend/static/assets/
 *.pdf
 backend/migrate_passwords_to_bcrypt.py
 
