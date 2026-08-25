@@ -169,6 +169,25 @@ Auto-grow handles bumps without intervention.
 
 ---
 
+---
+
+## Daily backup pipeline (deployed separately)
+
+`fslapp-pg` now has a daily, dated, immutable backup to Blob Storage —
+built so primary data can never be deleted or modified by the automation.
+See **`.claude/skills/fslapp-pg-backup/SKILL.md`** for the full architecture
+writeup (resource names, why it's shaped this way, safety guarantees, and
+verification history). Relevant files in this directory:
+
+| File | What it does |
+|---|---|
+| `backup-job.bicep` | Provisions the ACR, managed identity, blob container, Container Instance, and Logic App scheduler. |
+| `backup-job/` | The backup container's `Dockerfile` and `run_backup.py` (pg_dump → blob upload → prune). |
+| `backup-role.sql` | Optional upgrade path to a true SELECT-only Postgres role (currently unused — see the skill doc for why). |
+| `deploy-backup-job.sh` | Deploy wrapper for this pipeline. |
+
+---
+
 ## When you're ready
 
 1. Read `main.bicep` end-to-end (~150 lines, declarative — no surprises)

@@ -39,6 +39,20 @@
   border-top-color: #0f172a !important;
 }
 
+/* Selected map pin. NEVER animate transform on the marker root: Leaflet
+   positions markers with transform: translate3d(), so a keyframe touching
+   transform overwrites the position and the pin jumps off its coordinates.
+   The root only gets z-index; the pulse runs on an inner element. */
+.pin-selected { z-index: 10000 !important; }
+.pin-pulse { animation: pin-pulse 1.6s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes pin-pulse {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-4px) scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pin-pulse { animation: none; }
+}
+
 /* Glass card effect */
 .glass {
   background: rgba(30, 41, 59, 0.6);

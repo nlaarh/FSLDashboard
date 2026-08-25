@@ -194,8 +194,8 @@ if __name__ == '__main__':
     import json
     from pathlib import Path
     from dotenv import load_dotenv
-    # Load .env from apidev root (sibling of FSLAPP)
-    load_dotenv(Path(__file__).resolve().parents[2] / '.env')
+    # Load FSLAPP/.env — the single env file for this app
+    load_dotenv(Path(__file__).resolve().parents[1] / '.env')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     print(json.dumps(health_check(), indent=2))
     close_pools()

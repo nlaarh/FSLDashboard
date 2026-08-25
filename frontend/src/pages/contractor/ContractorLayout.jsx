@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import {
   Star, LayoutDashboard, Clock, DollarSign,
   LogOut, Search, Loader2, Sun, Moon, X as XIcon, Building2,
+  Radio, Map as MapIcon,
 } from 'lucide-react'
 import FloatingChat from '../../components/FloatingChat'
 import { searchQuery } from '../../api'
@@ -200,6 +201,24 @@ export default function ContractorLayout() {
     }).catch(() => {})
   }, [])
 
+  // Dispatch + Map are unreleased: shown only where the backend flag is on.
+  const [showDispatch, setShowDispatch] = useState(false)
+  useEffect(() => {
+    fetch('/api/features').then(r => r.json())
+      .then(f => setShowDispatch(!!f.contractor_dispatch))
+      .catch(() => {})
+  }, [])
+
+  // Map is on-platform only. Off-platform (Towbook) vendors have no driver
+  // telemetry, so hide the link rather than let them reach a dead end.
+  const [showMap, setShowMap] = useState(false)
+  useEffect(() => {
+    if (!showDispatch) return
+    fetch('/api/contractor/map/available').then(r => r.json())
+      .then(d => setShowMap(!!d.available))
+      .catch(() => {})
+  }, [showDispatch])
+
   const handleLogout = async () => {
     try { await fetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
     window.location.href = '/'
@@ -210,6 +229,12 @@ export default function ContractorLayout() {
     { to: '/contractor/garages',   icon: <LayoutDashboard className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Garages' },
     { to: '/contractor/pta',       icon: <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'PTA Advisor' },
     { to: '/contractor/accounting', icon: <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Accounting' },
+    ...(showDispatch ? [
+      { to: '/contractor/dispatch', icon: <Radio className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Dispatch' },
+    ] : []),
+    ...(showDispatch && showMap ? [
+      { to: '/contractor/map',      icon: <MapIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />, label: 'Map' },
+    ] : []),
   ]
 
   return (

@@ -441,12 +441,22 @@ def _lookup_sa_impl(sa_number: str):
 
 # ── Feature Flags ────────────────────────────────────────────────────────────
 
+def _env_flag(name: str) -> bool:
+    """Read a boolean feature flag from the environment. Absent = OFF."""
+    import os
+    return (os.environ.get(name) or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 _DEFAULT_FEATURES = {
     'pta_advisor': True,
     'onroute': True,
     'matrix': True,
     'chat': False,
     'accounting': True,
+    # Contractor Dispatch + Map — UNRELEASED. Defaults to OFF so it stays hidden
+    # in production even if this code is deployed. Turn on locally by setting
+    # FEATURE_CONTRACTOR_DISPATCH=true in FSLAPP/.env (never in Azure app settings).
+    'contractor_dispatch': _env_flag('FEATURE_CONTRACTOR_DISPATCH'),
 }
 
 def _load_settings():

@@ -236,7 +236,8 @@ def _refresh_per_garage_data():
         # ── Scorecard (current month, defaults handled by endpoint) ──
         try:
             log.info(f"Refreshing garage scorecard for {name}")
-            api_garage_performance_scorecard(tid)
+            # request=None: background job has no user context (access check no-ops)
+            api_garage_performance_scorecard(None, tid)
             ok += 1
         except Exception as e:
             log.warning(f"Garage scorecard refresh failed for {name}: {e}")

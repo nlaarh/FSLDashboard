@@ -41,7 +41,7 @@ def run_retention(days: int, dry_run: bool = False) -> dict:
     # Lazy import so the module can be imported without psycopg in scope
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).resolve().parents[2] / '.env', override=False)
+    load_dotenv(Path(__file__).resolve().parents[1] / '.env', override=False)  # FSLAPP/.env
 
     import pg_pool
 

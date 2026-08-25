@@ -33,8 +33,8 @@ def sanitize_soql(value: str) -> str:
     return value
 
 
-# Load .env from the apidev directory (one level up from FSLAPP)
-_env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
+# Load FSLAPP/.env — the single env file for this app (see FSLAPP/.env header)
+_env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(os.path.abspath(_env_path))
 
 _lock = threading.Lock()

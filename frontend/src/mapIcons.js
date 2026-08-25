@@ -60,6 +60,46 @@ export const CUSTOMER_ICON = L.divIcon({
   </div>`,
 })
 
+/**
+ * teardropIcon({ rgb, glyph, selected })
+ *   Shared teardrop pin. The selected pin is enlarged, ringed and pulsing so
+ *   it is obvious which marker a list row flew you to.
+ */
+function teardropIcon({ rgb, glyph, selected = false }) {
+  const size = selected ? 46 : 36
+  const box = selected ? 60 : 36
+  const ring = selected
+    ? `box-shadow:0 0 0 6px rgba(${rgb},0.28),0 3px 14px rgba(${rgb},0.65);`
+    : `box-shadow:0 3px 12px rgba(${rgb},0.5);`
+  const h = size + 8
+  return L.divIcon({
+    className: selected ? 'pin-selected' : '',
+    iconSize: [box, h],
+    iconAnchor: [box / 2, h],
+    // Lift the popup clear of the pin graphic — the anchor is the tip, and the
+    // pin body sits above it, so without this the popup covers the marker.
+    popupAnchor: [0, -h],
+    html: `<div class="${selected ? 'pin-pulse' : ''}" style="display:flex;flex-direction:column;align-items:center">
+      <div style="width:${size}px;height:${size}px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);
+                  background:rgb(${rgb});border:3px solid white;${ring}
+                  display:flex;align-items:center;justify-content:center">
+        <span style="color:white;font-size:${selected ? 22 : 18}px;font-weight:bold;transform:rotate(45deg)">${glyph}</span>
+      </div>
+    </div>`,
+  })
+}
+
+/** Customer / pick-up pin — where the member is stranded. Red star. */
+export const customerIcon = selected =>
+  teardropIcon({ rgb: '239,68,68', glyph: '&#9733;', selected })
+
+/**
+ * Tow drop-off pin — the DESTINATION (repair shop), not a stranded member.
+ * Deliberately blue with a shop glyph so it can never be misread as a pick-up.
+ */
+export const dropoffIcon = selected =>
+  teardropIcon({ rgb: '56,142,255', glyph: '&#8962;', selected })
+
 // Garage/facility marker (purple square with home icon)
 export const FACILITY_ICON = L.divIcon({
   className: '',

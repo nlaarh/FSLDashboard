@@ -9,8 +9,7 @@ Scalability: Designed for 1000+ concurrent users.
 import os, sys, time, threading
 sys.path.insert(0, os.path.dirname(__file__))
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'), override=False)  # apidev/.env
-load_dotenv(os.path.join(os.path.dirname(__file__), '.env'), override=False)  # backend/.env
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'), override=False)  # FSLAPP/.env — the single env file
 
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -162,7 +161,7 @@ from routers import (
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
-    contractor, contractor_recommendations,
+    contractor, contractor_recommendations, contractor_dispatch,
     garage_acceptance,
 )
 
@@ -215,6 +214,7 @@ app.include_router(salesforce_diagnostics.router)
 app.include_router(search.router)
 app.include_router(contractor.router)
 app.include_router(contractor_recommendations.router)
+app.include_router(contractor_dispatch.router)  # UNRELEASED: gated by contractor_dispatch flag
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────

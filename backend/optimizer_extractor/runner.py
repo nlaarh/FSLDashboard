@@ -19,9 +19,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env BEFORE importing modules that need it
-_ROOT = Path(__file__).resolve().parents[3]  # apidev/
-load_dotenv(_ROOT / '.env')
-sys.path.insert(0, str(_ROOT / 'FSLAPP' / 'backend'))
+_APP_ROOT = Path(__file__).resolve().parents[2]  # FSLAPP/
+load_dotenv(_APP_ROOT / '.env')  # FSLAPP/.env — the single env file
+sys.path.insert(0, str(_APP_ROOT / 'backend'))
 
 from optimizer_extractor.auth import get_session
 from optimizer_extractor.discover import list_runs

@@ -14,7 +14,7 @@ const TABS = [
   { key: 'satisfaction', label: 'Satisfaction Score', icon: Star },
 ]
 
-import { getWeek as getWeekDates } from '../utils/dateHelpers'
+import { getWeek as getWeekDates, todayEastern } from '../utils/dateHelpers'
 
 export default function GarageDetail() {
   const { id } = useParams()
@@ -29,7 +29,7 @@ export default function GarageDetail() {
   const [loading, setLoading] = useState({})
   const [error, setError] = useState({})
   const [weekOffset, setWeekOffset] = useState(0)
-  const [simDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [simDate] = useState(todayEastern)
   const [garageName, setGarageName] = useState(searchParams.get('name') || '')
 
   const week = getWeekDates(weekOffset)

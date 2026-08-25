@@ -11,10 +11,14 @@ build/
 venv/
 env/
 
-# Environment variables
+# Environment variables — ignore EVERY variant, anywhere in the tree.
+# Bare ".env" only matches a file named exactly .env; copies/backups like
+# ".env copy", ".env.RETIRED-*", "backend/.env.bak" slipped through and each
+# carried live Azure/Salesforce/GitHub credentials.
 .env
-*.env.local
-*.env.*.local
+.env*
+*.env
+*.env.*
 backend/.deployment_env.sh
 
 # Node.js / Frontend
@@ -60,3 +64,6 @@ backend/migrate_users_to_postgres.py
 data/
 tmp/
 doc/
+
+# Generated report artifacts
+output/

@@ -25,6 +25,8 @@ import ContractorForecast from './pages/contractor/ContractorForecast'
 import ContractorPta from './pages/contractor/ContractorPta'
 import ContractorAccounting from './pages/contractor/ContractorAccounting'
 import ContractorCallDetail from './pages/contractor/ContractorCallDetail'
+import ContractorDispatch from './pages/contractor/ContractorDispatch'
+import ContractorMap from './pages/contractor/ContractorMap'
 
 /*
  * AuthApp — renders the full app when authenticated.
@@ -69,6 +71,9 @@ function AuthApp() {
           <Route path="/contractor/pta" element={<ContractorPta />} />
           <Route path="/contractor/accounting" element={<ContractorAccounting />} />
           <Route path="/contractor/accounting/calls/:woId" element={<ContractorCallDetail />} />
+          {/* UNRELEASED — backend 404s these unless FEATURE_CONTRACTOR_DISPATCH is on */}
+          <Route path="/contractor/dispatch" element={<ContractorDispatch />} />
+          <Route path="/contractor/map" element={<ContractorMap />} />
           <Route path="*" element={<Navigate to="/contractor/watchlist" replace />} />
         </Route>
       </Routes>

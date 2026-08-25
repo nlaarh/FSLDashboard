@@ -32,8 +32,11 @@ def _get_contractor_territories(request: Request) -> list[str]:
 
 
 @router.get("/api/garages")
-def list_garages(request: Request):
-    """List roadside garages -- territories with recent SA volume."""
+def list_garages(request: Request = None):
+    """List roadside garages -- territories with recent SA volume.
+
+    request is None when called by the background refresher, which only
+    warms the unfiltered 'garages_list' cache entry."""
     def _fetch():
         from ops import _get_priority_matrix
         d28 = (date.today() - timedelta(days=28)).isoformat()
@@ -83,7 +86,7 @@ def list_garages(request: Request):
         return garages
 
     garages = cache.cached_query('garages_list', _fetch, ttl=600)
-    territories = _get_contractor_territories(request)
+    territories = _get_contractor_territories(request) if request else []
     if territories:
         garages = [g for g in garages if g.get("id") in territories]
     return garages
@@ -91,8 +94,14 @@ def list_garages(request: Request):
 
 # ── Schedule ─────────────────────────────────────────────────────────────────
 
-def _check_territory_access(request: Request, territory_id: str):
-    """Raise 403 if the requesting user is a contractor without access to this territory."""
+def _check_territory_access(request: Request | None, territory_id: str):
+    """Raise 403 if the requesting user is a contractor without access to this territory.
+
+    No-op when `request` is None (direct Python call with no user context, e.g. the
+    background refresher) — same convention as permissions.require_feature().
+    """
+    if request is None:
+        return
     territories = _get_contractor_territories(request)
     if territories and territory_id not in territories:
         raise HTTPException(status_code=403, detail="Access denied")

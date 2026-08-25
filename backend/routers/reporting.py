@@ -31,10 +31,15 @@ def _require_user_adoption_role(request: Request) -> None:
 
 # ── Single-garage fallback (used when < 5 garages requested) ──────────────────
 
-def _fetch_garage_row(gid: str, start_date: str, end_date: str) -> dict:
-    """Fetch scorecard + performance for one garage (cached per-garage path)."""
+def _fetch_garage_row(request, gid: str, start_date: str, end_date: str) -> dict:
+    """Fetch scorecard + performance for one garage (cached per-garage path).
+
+    `request` is threaded through so api_garage_performance_scorecard() gets a real
+    Request for its contractor territory-access check — passing the garage id there
+    instead was the cause of "'str' object has no attribute 'cookies'".
+    """
     try:
-        sc = api_garage_performance_scorecard(gid, start_date, end_date)
+        sc = api_garage_performance_scorecard(request, gid, start_date, end_date)
         gs = sc.get('garage_summary', {})
         total = gs.get('total_sas', 0) or 0
         completed = gs.get('total_completed', 0) or 0
@@ -292,6 +297,7 @@ def _compute_bulk_report(territory_ids: list, start_date: str, end_date: str) ->
 
 @router.get('/api/reporting/garage-summary')
 def api_reporting_garage_summary(
+    request: Request,
     garage_ids: List[str] = Query(..., description='Territory IDs'),
     start_date: str = Query(None, description='YYYY-MM-DD'),
     end_date: str = Query(None, description='YYYY-MM-DD'),
@@ -319,7 +325,7 @@ def api_reporting_garage_summary(
         # Per-garage path: benefits from individual 26-hour scorecard cache
         rows = []
         with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {pool.submit(_fetch_garage_row, gid, start_date, end_date): gid
+            futures = {pool.submit(_fetch_garage_row, request, gid, start_date, end_date): gid
                        for gid in clean_ids}
             for fut in as_completed(futures):
                 rows.append(fut.result())
@@ -363,6 +369,7 @@ def api_reporting_user_adoption(request: Request):
 
 @router.get('/api/reporting/garage-summary/export')
 def api_reporting_export(
+    request: Request,
     garage_ids: List[str] = Query(..., description='Territory IDs'),
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -377,7 +384,7 @@ def api_reporting_export(
     if not end_date:
         end_date = today.isoformat()
 
-    summary = api_reporting_garage_summary(garage_ids, start_date, end_date)
+    summary = api_reporting_garage_summary(request, garage_ids, start_date, end_date)
     rows = summary['rows']
 
     wb = Workbook()

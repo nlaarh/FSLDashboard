@@ -3,7 +3,7 @@
 import os
 import logging
 from datetime import date as _date
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from sf_client import sf_query_all, sanitize_soql
 from sf_batch import batch_soql_query
@@ -17,6 +17,7 @@ log = logging.getLogger('garages_export')
 
 @router.get("/api/garages/{territory_id}/performance-scorecard/export")
 def api_garage_export(
+    request: Request,
     territory_id: str,
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -35,7 +36,7 @@ def api_garage_export(
         end_date = today.isoformat()
 
     # Get scorecard data (will use cache if available)
-    scorecard = api_garage_performance_scorecard(territory_id, start_date, end_date)
+    scorecard = api_garage_performance_scorecard(request, territory_id, start_date, end_date)
     gs = scorecard['garage_summary']
     ps = scorecard['primary_vs_secondary']
     drivers = scorecard['drivers']
@@ -466,6 +467,7 @@ def _build_report_html(garage_name: str, start_date: str, end_date: str, gs: dic
 
 @router.post("/api/garages/{territory_id}/performance-scorecard/email")
 def api_garage_email_report(
+    request: Request,
     territory_id: str,
     body: dict,
 ):
@@ -482,7 +484,7 @@ def api_garage_email_report(
         raise HTTPException(400, "Valid email address required")
 
     # Get scorecard + AI summary
-    scorecard = api_garage_performance_scorecard(territory_id, start_date, end_date)
+    scorecard = api_garage_performance_scorecard(request, territory_id, start_date, end_date)
     gs = scorecard['garage_summary']
     ps = scorecard['primary_vs_secondary']
     drivers = scorecard['drivers']

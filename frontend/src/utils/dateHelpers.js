@@ -31,3 +31,10 @@ export function getMonth(offset = 0) {
 export function today() {
   return new Date().toISOString().split('T')[0]
 }
+
+/** Today's date in Eastern time (the org's operating timezone).
+ *  Do NOT use toISOString() for "today" — after 8pm ET it returns tomorrow's
+ *  UTC date, which yields empty result sets from SF day-range queries. */
+export function todayEastern() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+}

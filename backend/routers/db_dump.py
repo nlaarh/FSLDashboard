@@ -45,8 +45,7 @@ def _config_value(key: str) -> str:
     from dotenv import dotenv_values
     from pathlib import Path
     for path in [
-        Path(__file__).resolve().parents[2] / ".env",
-        Path(__file__).resolve().parents[1] / ".env",
+        Path(__file__).resolve().parents[2] / ".env",  # FSLAPP/.env — the single env file
     ]:
         if path.exists():
             v = dotenv_values(path).get(key)

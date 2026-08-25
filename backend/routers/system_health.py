@@ -82,13 +82,10 @@ SERVICE_LINKS = {
 
 
 def _env_file_paths() -> list[Path]:
-    backend_dir = Path(__file__).resolve().parents[1]
-    app_root = backend_dir.parent
-    return [
-        app_root / ".env",
-        backend_dir / ".env",
-        app_root.parent / ".env",
-    ]
+    # FSLAPP/.env is the single env file for this app. Historically vars were
+    # split across apidev/.env and backend/.env; those were merged 2026-08-17.
+    app_root = Path(__file__).resolve().parents[2]
+    return [app_root / ".env"]
 
 
 def _mask(value: str | None) -> str:
