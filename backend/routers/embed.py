@@ -121,6 +121,10 @@ async def canvas_post(request: Request):
 
     sf_user = context.get("user") or {}
     email = (sf_user.get("email") or "").strip()
+    # Sandbox copies append ".invalid" to every user's email (jdoe@nyaaa.com.invalid).
+    # SF_CANVAS_ORG_ID locked to production rejects sandbox requests before this point.
+    if email.lower().endswith(".invalid"):
+        email = email[: -len(".invalid")]
     user = users.find_by_email(email) if email else None
     if not user:
         log.warning("Canvas sign-in: no active FleetPulse user for %s (SF %s)", email, sf_user.get("userId"))

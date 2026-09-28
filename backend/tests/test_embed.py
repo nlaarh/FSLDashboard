@@ -65,6 +65,25 @@ def test_email_match_is_case_insensitive(client):
     assert r.status_code == 303
 
 
+@pytest.mark.parametrize("email", ["jdoe@nyaaa.com.invalid", "JDoe@NYAAA.com.INVALID"])
+def test_sandbox_invalid_suffix_is_stripped(client, email):
+    r = client.post("/embed/canvas", data={"signed_request": sign(canvas_request(email=email))})
+    assert r.status_code == 303
+
+
+def test_sandbox_email_for_unknown_user_still_rejected(client):
+    r = client.post("/embed/canvas", data={"signed_request": sign(canvas_request(email="nobody@nyaaa.com.invalid"))})
+    assert r.status_code == 403
+    assert "nobody@nyaaa.com" in r.text
+
+
+def test_org_lock_rejects_sandbox_even_with_valid_email(client, monkeypatch):
+    monkeypatch.setenv("SF_CANVAS_ORG_ID", "00DDo000001BxM7")
+    r = client.post("/embed/canvas", data={"signed_request": sign(canvas_request(email="jdoe@nyaaa.com.invalid",
+                                                                                 org="00DSANDBOX00001"))})
+    assert r.status_code == 403
+
+
 def test_bad_signature_rejected(client):
     r = client.post("/embed/canvas", data={"signed_request": sign(canvas_request(), secret="wrong")})
     assert r.status_code == 401
