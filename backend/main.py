@@ -53,6 +53,19 @@ except ImportError:
     pass  # psycopg_pool not available in test env
 
 
+# ── Framing: allow FleetPulse inside Salesforce (Canvas) and itself, nobody else ──
+
+_FRAME_ANCESTORS = ("frame-ancestors 'self' https://*.force.com https://*.salesforce.com https://*.salesforce-setup.com "
+                    + os.environ.get("FRAME_ANCESTORS_EXTRA", "")).strip()  # space-separated extra origins
+
+
+@app.middleware("http")
+async def frame_ancestors_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _FRAME_ANCESTORS)
+    return response
+
+
 # ── Auth middleware ──────────────────────────────────────────────────────────
 
 @app.middleware("http")
@@ -162,7 +175,7 @@ from routers import (
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
     contractor, contractor_recommendations, contractor_dispatch,
-    garage_acceptance,
+    garage_acceptance, embed,
 )
 
 app.include_router(auth.router)
@@ -215,6 +228,7 @@ app.include_router(search.router)
 app.include_router(contractor.router)
 app.include_router(contractor_recommendations.router)
 app.include_router(contractor_dispatch.router)  # UNRELEASED: gated by contractor_dispatch flag
+app.include_router(embed.router)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────

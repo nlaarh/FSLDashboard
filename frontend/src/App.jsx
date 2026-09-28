@@ -27,6 +27,8 @@ import ContractorAccounting from './pages/contractor/ContractorAccounting'
 import ContractorCallDetail from './pages/contractor/ContractorCallDetail'
 import ContractorDispatch from './pages/contractor/ContractorDispatch'
 import ContractorMap from './pages/contractor/ContractorMap'
+import SAWatchlist from './components/SAWatchlist'
+import { isEmbedded } from './utils/embed'
 
 /*
  * AuthApp — renders the full app when authenticated.
@@ -53,12 +55,27 @@ function AuthApp() {
       .catch(() => setAuthed(false))
   }, [])
 
+  const embedded = isEmbedded()
   if (authed === null) return null        // loading — blank screen briefly
-  if (authed === false) return <Landing /> // not authenticated — show landing in place
+  if (authed === false) {
+    // Inside Salesforce: no password login — the session comes from POST /embed/canvas
+    if (embedded) { window.location.replace('/embed/canvas'); return null }
+    return <Landing /> // not authenticated — show landing in place
+  }
 
   const isFinance = department === 'finance'
   const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
   const isContractor = role === 'contractor'
+
+  // Inside Salesforce: the watchlist alone, no FleetPulse nav
+  if (embedded && !isContractor) {
+    return (
+      <Routes>
+        <Route path="/sa-watchlist" element={<div className="h-screen flex flex-col overflow-hidden"><SAWatchlist /></div>} />
+        <Route path="*" element={<Navigate to="/sa-watchlist?embed=1" replace />} />
+      </Routes>
+    )
+  }
 
   if (isContractor) {
     return (
@@ -103,6 +120,7 @@ function AuthApp() {
         } />
         <Route path="/optimizer" element={<Navigate to="/" replace />} />
         <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
+        <Route path="/sa-watchlist" element={isFinance ? <Navigate to="/accounting" replace /> : <div className="-mx-6 -mt-6 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}><SAWatchlist /></div>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

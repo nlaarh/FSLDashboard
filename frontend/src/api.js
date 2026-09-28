@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { isEmbedded } from './utils/embed'
 
 const api = axios.create({ baseURL: '/api', timeout: 60000 })
 
@@ -18,7 +19,8 @@ api.interceptors.response.use(
     }
     // Redirect to login on 401 (expired session or not logged in)
     if (status === 401 && !window.location.pathname.startsWith('/login')) {
-      window.location.href = '/login'
+      // Inside Salesforce the password login can't work (cross-site) — show the re-open message
+      window.location.href = isEmbedded() ? '/embed/canvas' : '/login'
     }
     return Promise.reject(err)
   }

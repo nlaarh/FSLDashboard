@@ -47,7 +47,7 @@ def _get_ip(request: Request) -> str:
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
 _DEV_AUTO_LOGIN = os.environ.get("DEV_AUTO_LOGIN", "false").lower() == "true"
 
-_PUBLIC_PATHS = {"/login", "/forgot-password", "/reset-password", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/verify-reset-pin", "/api/auth/reset-password", "/api/health", "/api/features", "/favicon.ico"}
+_PUBLIC_PATHS = {"/login", "/forgot-password", "/reset-password", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/verify-reset-pin", "/api/auth/reset-password", "/api/health", "/api/features", "/favicon.ico", "/embed/canvas"}
 
 # Paths finance-department users may call (everything else → 403)
 _FINANCE_ALLOWED = ('/api/auth/', '/api/accounting/', '/api/health', '/api/features')
@@ -188,4 +188,7 @@ def auth_logout(request: Request, response: Response):
         if len(parts) > 2:
             users.destroy_session(parts[2])
     response.delete_cookie("fslapp_auth")
+    # Also clear the partitioned cookie set by Salesforce embed sign-in (routers/embed.py)
+    from routers.embed import embed_cookie_header
+    response.headers.append("set-cookie", embed_cookie_header("", max_age=0))
     return {"ok": True}
