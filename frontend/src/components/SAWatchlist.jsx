@@ -55,6 +55,7 @@ const FLAG_COLORS = {
   'Call Not Assigned - Received': 'bg-amber-500/20 text-amber-400 border-amber-500/40',
   'Call Not Closed': 'bg-purple-500/20 text-purple-400 border-purple-500/40',
   'Potential Duplicate': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
+  'No Service Appointments on Work Order': 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/40',
 }
 
 // ── KMI case status colors ──────────────────────────────────────────────────
@@ -283,8 +284,8 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
           </thead>
           <tbody>
             {sortedAlerts.map((alert) => (
-              <tr key={`${alert.sa_id}-${alert.flag}`}
-                id={`alert-row-${alert.sa_id}`}
+              <tr key={`${alert.sa_id || alert.wo_id}-${alert.flag}`}
+                id={`alert-row-${alert.sa_id || alert.wo_id}`}
                 className="border-b border-slate-800/40 hover:bg-slate-800/60 transition-colors">
                 {/* Work Order */}
                 <td className="px-2 py-1.5">
@@ -298,13 +299,15 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 </td>
                 {/* SA Number — with timeline hover */}
                 <td className="px-2 py-1.5">
-                  <div className="flex items-center gap-1">
-                    <SAWithTimeline number={alert.sa_number} driver={alert} />
-                    <a href={contractorMode ? sfSaLink(alert.sa_id) : sfLink(alert.sa_id)} target="_blank" rel="noopener noreferrer"
-                      className="text-slate-500 hover:text-blue-400" title="Open in Salesforce">
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  </div>
+                  {alert.sa_id ? (
+                    <div className="flex items-center gap-1">
+                      <SAWithTimeline number={alert.sa_number} driver={alert} />
+                      <a href={contractorMode ? sfSaLink(alert.sa_id) : sfLink(alert.sa_id)} target="_blank" rel="noopener noreferrer"
+                        className="text-slate-500 hover:text-blue-400" title="Open in Salesforce">
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
+                  ) : <span className="text-slate-600">—</span>}
                 </td>
                 {/* Priority */}
                 <td className="px-2 py-1.5">
@@ -383,7 +386,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 </td>
                 {/* Dispatch Assist */}
                 <td className="px-1 py-1.5 text-center">
-                  <button
+                  {alert.sa_id && <button
                     onClick={() => {
                       setAssistSaId(alert.sa_id)
                       setAssistHints({
@@ -402,7 +405,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                     title="Dispatch Assist — show nearby resources"
                   >
                     <Navigation className="w-3.5 h-3.5" />
-                  </button>
+                  </button>}
                 </td>
                 {/* KMI Case + status */}
                 <td className="px-2 py-1.5">
@@ -761,8 +764,8 @@ export default function SAWatchlist({ contractorMode = false }) {
               <div>
                 <h3 className="font-bold text-white mb-1">What are Operational Alerts?</h3>
                 <p className="text-slate-400">
-                  SAs that match one of 6 flag conditions indicating dispatcher intervention may be needed.
-                  The system evaluates all open SAs every 30 seconds and flags those that meet criteria.
+                  SAs and Work Orders that match one of 8 flag conditions indicating dispatcher intervention may be needed.
+                  The system evaluates all open SAs (and Submitted Work Orders) every 30 seconds and flags those that meet criteria.
                 </p>
               </div>
               <div>
@@ -795,6 +798,10 @@ export default function SAWatchlist({ contractorMode = false }) {
                   <div>
                     <span className="text-cyan-400 font-bold">Potential Duplicate</span>
                     <p className="pl-2 mt-0.5">Same member has 2+ active SAs at a similar breakdown location — may be a double submission (phone + app/agent). Shows the related SA numbers.</p>
+                  </div>
+                  <div>
+                    <span className="text-fuchsia-400 font-bold">No Service Appointments on Work Order</span>
+                    <p className="pl-2 mt-0.5">Work Order is in 'Submitted' status but has no Service Appointment, 2+ minutes after it was submitted — the call can't be dispatched. Normally the SA is created within seconds. Appointment # shows '—' for these rows.</p>
                   </div>
                 </div>
               </div>

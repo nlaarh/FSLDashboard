@@ -19,7 +19,10 @@ import users as _users
 from sf_client import sf_query_all, sf_parallel
 from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt
-from routers.watchlist_alerts import build_operational_alerts, fetch_wo_data, enrich_alerts_with_kmi
+from routers.watchlist_alerts import (
+    build_operational_alerts, build_no_sa_wo_alerts, fetch_wo_data,
+    enrich_alerts_with_kmi, sort_alerts,
+)
 from routers.auth import get_request_username
 from routers.watchlist_helpers import (
     _TERMINAL_STATUSES, _RESOLVED_STATUSES,
@@ -119,8 +122,14 @@ def _build_watchlist(territories: list[str] | None = None) -> dict:
         ORDER BY CreatedDate ASC
     """)
 
+    # WO-level flag: Submitted WOs with no SA can't be found from the SA list below
+    no_sa_alerts = build_no_sa_wo_alerts(now_utc, territories)
+
     if not sas:
-        return {'watchlist': [], 'total': 0, 'last_updated': now_utc.isoformat()}
+        if no_sa_alerts:
+            enrich_alerts_with_kmi(no_sa_alerts)
+        return {'watchlist': [], 'total': 0, 'operational_alerts': no_sa_alerts,
+                'last_updated': now_utc.isoformat()}
 
     sa_map = {s['Id']: s for s in sas}
     sa_ids = list(sa_map.keys())
@@ -234,7 +243,11 @@ def _build_watchlist(territories: list[str] | None = None) -> dict:
             alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
             alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
             alert['work_type_id'] = sa.get('WorkTypeId') or ''
+
+    operational_alerts.extend(no_sa_alerts)
+    if operational_alerts:
         enrich_alerts_with_kmi(operational_alerts)
+        sort_alerts(operational_alerts)
 
     return {
         'watchlist': entries,

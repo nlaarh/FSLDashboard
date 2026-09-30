@@ -8,6 +8,8 @@ Evaluates active SAs against 7 categories:
 5. Call Not Closed — On Location or En Route > 2 hours
 6. High Priority Call Late — P1-P7 and CreatedDate > 30 min ago
 7. Potential Duplicate — same member with 2+ active SAs at similar location
+8. No Service Appointments on Work Order — WO is 'Submitted' but has no SA
+   (WO-level: see build_no_sa_wo_alerts)
 """
 
 import logging
@@ -36,6 +38,30 @@ _DUPLICATE_RADIUS_MI = 0.5
 
 # Skip pairwise O(n²) check for groups larger than this; flag all members instead
 _DUP_CHECK_MAX_GROUP = 15
+
+NO_SA_FLAG = 'No Service Appointments on Work Order'
+
+# The SA is normally created within seconds of the WO turning 'Submitted'
+# (measured: 497 WOs, all SAs created 0–11s before the Submitted transition).
+# Wait this long after Submitted before flagging, to skip in-flight creation.
+_NO_SA_GRACE_SEC = 120
+
+# Sort order shared by build_operational_alerts and the WO-level flag.
+_FLAG_PRIORITY = {
+    'Call At Risk of Missing PTA': 0,
+    'High Priority Call Late': 1,
+    'Call Not Assigned': 2,
+    'Call Not Assigned - Rejected': 3,
+    'Call Not Assigned - Received': 4,
+    NO_SA_FLAG: 5,
+    'Call Not Closed': 6,
+    'Potential Duplicate': 7,
+}
+
+
+def sort_alerts(alerts: list) -> None:
+    """Most urgent flag first, then most overdue PTA (in-place)."""
+    alerts.sort(key=lambda a: (_FLAG_PRIORITY.get(a['flag'], 99), -(a['pta_delta_min'] or 0)))
 
 
 def _haversine_mi(lat1, lon1, lat2, lon2):
@@ -208,16 +234,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
             })
 
     # Sort: most urgent first
-    _FLAG_PRIORITY = {
-        'Call At Risk of Missing PTA': 0,
-        'High Priority Call Late': 1,
-        'Call Not Assigned': 2,
-        'Call Not Assigned - Rejected': 3,
-        'Call Not Assigned - Received': 4,
-        'Call Not Closed': 5,
-        'Potential Duplicate': 6,
-    }
-    alerts.sort(key=lambda a: (_FLAG_PRIORITY.get(a['flag'], 99), -(a['pta_delta_min'] or 0)))
+    sort_alerts(alerts)
 
     # ── Flag 7: Potential Duplicate — same member with 2+ active SAs at similar location ──
     # SOQL handles both exclusions so Python only needs to group and check proximity:
@@ -356,7 +373,125 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                 alert_by_sa[sa_id] = new_alert
 
     # Re-sort with duplicates included
-    alerts.sort(key=lambda a: (_FLAG_PRIORITY.get(a['flag'], 99), -(a['pta_delta_min'] or 0)))
+    sort_alerts(alerts)
+    return alerts
+
+
+def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = None) -> list:
+    """Flag 8: ERS WOs in 'Submitted' status (last 24h) with no Service Appointment.
+
+    WO-level, so it can't come from the SA loop — alerts carry wo_id/wo_number
+    and an empty sa_id. An SA can hang off the WO two ways, so both are checked:
+    SA.ERS_Work_Order__c (SOQL anti-join) and SA.ParentRecordId → WOLI (Python).
+    """
+    cutoff = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    territory_clause = ""
+    if territories:
+        ids = ", ".join(f"'{t}'" for t in territories)
+        territory_clause = f"AND ServiceTerritoryId IN ({ids})"
+
+    try:
+        wos = sf_query_all(f"""
+            SELECT Id, WorkOrderNumber, CreatedDate, LastModifiedDate,
+                   ServiceTerritoryId, ServiceTerritory.Name, Priority_Code__c,
+                   Street, City, Latitude, Longitude,
+                   WorkType.Name, WorkTypeId, Current_Wait__c,
+                   Vehicle_Make__c, Vehicle_Model__c, License_Plate__c,
+                   Account.Name, Account.PersonMobilePhone, Account.Phone, Mobile_Phone__c,
+                   Facility_Name__c
+            FROM WorkOrder
+            WHERE RecordType.Name = 'ERS Work Order'
+              AND Status = 'Submitted'
+              AND CreatedDate >= {cutoff}
+              {territory_clause}
+              AND Id NOT IN (SELECT ERS_Work_Order__c FROM ServiceAppointment
+                             WHERE ERS_Work_Order__c != null)
+        """)
+    except Exception as e:
+        log.warning(f"No-SA WO query failed, skipping Flag 8: {e}")
+        return []
+    if not wos:
+        return []
+
+    wo_ids = [w['Id'] for w in wos]
+
+    # Second path: SA parented to one of the WO's line items
+    try:
+        wolis = batch_soql_parallel("""
+            SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE WorkOrderId IN ('{id_list}')
+        """, wo_ids, chunk_size=200)
+        wo_by_woli = {r['Id']: r['WorkOrderId'] for r in wolis}
+        woli_sas = batch_soql_parallel("""
+            SELECT ParentRecordId FROM ServiceAppointment WHERE ParentRecordId IN ('{id_list}')
+        """, list(wo_by_woli), chunk_size=200) if wo_by_woli else []
+        has_sa = {wo_by_woli[r['ParentRecordId']] for r in woli_sas if r.get('ParentRecordId') in wo_by_woli}
+    except Exception as e:
+        log.warning(f"No-SA WOLI check failed, skipping Flag 8: {e}")
+        return []
+
+    # When did each WO turn Submitted? (fallback: LastModifiedDate)
+    submitted_at = {}
+    try:
+        hist = batch_soql_parallel("""
+            SELECT WorkOrderId, NewValue, CreatedDate FROM WorkOrderHistory
+            WHERE WorkOrderId IN ('{id_list}') AND Field = 'Status'
+        """, wo_ids, chunk_size=200)
+        for h in hist:
+            if h.get('NewValue') == 'Submitted':
+                ts = _parse_dt(h.get('CreatedDate'))
+                prev = submitted_at.get(h['WorkOrderId'])
+                if ts and (prev is None or ts > prev):
+                    submitted_at[h['WorkOrderId']] = ts
+    except Exception as e:
+        log.warning(f"No-SA WO history lookup failed, using LastModifiedDate: {e}")
+
+    alerts = []
+    for wo in wos:
+        wo_id = wo['Id']
+        if wo_id in has_sa:
+            continue
+        since = submitted_at.get(wo_id) or _parse_dt(wo.get('LastModifiedDate'))
+        if since:
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            if (now_utc - since).total_seconds() < _NO_SA_GRACE_SEC:
+                continue
+
+        acct = wo.get('Account') or {}
+        street = wo.get('Street') or ''
+        city_val = wo.get('City') or ''
+        v_parts = [p for p in [wo.get('Vehicle_Make__c'), wo.get('Vehicle_Model__c')] if p]
+        alerts.append({
+            'sa_id': '',
+            'sa_number': '',
+            'wo_number': wo.get('WorkOrderNumber', ''),
+            'wo_id': wo_id,
+            'priority_code': (wo.get('Priority_Code__c') or '').strip(),
+            'gantt_label': '',
+            'pta_delta_min': None,
+            'current_wait': wo.get('Current_Wait__c'),
+            'territory': (wo.get('ServiceTerritory') or {}).get('Name', ''),
+            'territory_id': wo.get('ServiceTerritoryId') or '',
+            'parent_territory_id': '',
+            'parent_territory_name': '',
+            'city': city_val,
+            'work_type': (wo.get('WorkType') or {}).get('Name', ''),
+            'work_type_id': wo.get('WorkTypeId') or '',
+            'flag': NO_SA_FLAG,
+            'status': 'Submitted',
+            'latitude': wo.get('Latitude'),
+            'longitude': wo.get('Longitude'),
+            'created_at': wo.get('CreatedDate') or '',
+            'phone': (wo.get('Mobile_Phone__c') or acct.get('PersonMobilePhone')
+                      or acct.get('Phone') or ''),
+            'address': ', '.join(p for p in [street, city_val] if p),
+            'member_name': acct.get('Name', ''),
+            'facility_name': wo.get('Facility_Name__c') or '',
+            'facility_phone': '',
+            'vehicle': ' '.join(v_parts),
+            'vehicle_plate': wo.get('License_Plate__c') or '',
+            'phases': [],
+        })
     return alerts
 
 
