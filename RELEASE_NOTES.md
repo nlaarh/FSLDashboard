@@ -17,6 +17,29 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.1 — 2026-10-02
+
+| | |
+|---|---|
+| Tag | `release/v1.1` |
+| Commit | `af27df1` |
+| Bundle | `index-BLvxJBdj.js` (unchanged — backend-only release) |
+| Deploy | GitHub Actions run `37089722529`, 2026-10-02 22:28 ET, success |
+| Roll back to | `release/v1.0` = `9e4af0d` (bundle `index-BLvxJBdj.js`) |
+
+**Changed**
+- Salesforce Canvas sign-in now trusts three Salesforce orgs at once — test, UAT and production —
+  each with its own Connected App consumer secret. Azure settings: `SF_CANVAS_SECRET_TEST`,
+  `SF_CANVAS_SECRET_UAT`, `SF_CANVAS_SECRET_PROD` (prod not set yet), with optional per-org locks
+  `SF_CANVAS_ORG_ID_TEST/_UAT/_PROD` (production org id `00DDo000001BxM7`).
+- Removed from Azure: the old `SF_CANVAS_SECRET` and `SF_CANVAS_KEY_UAT` (no longer read).
+- Sign-in log lines name the org: `Canvas sign-in (uat, org 00D…)`.
+- Files: `backend/routers/embed.py`, `backend/tests/test_embed.py` (27 tests).
+
+**Verified live:** requests signed with the test and UAT secrets are accepted; a wrong key is rejected.
+
+---
+
 ## v1.0 — 2026-09-30
 
 | | |
