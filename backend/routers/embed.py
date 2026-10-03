@@ -4,7 +4,12 @@ Salesforce POSTs a Canvas "signed request" to /embed/canvas:
     base64(HMAC-SHA256(consumer_secret, payload_b64)) + "." + payload_b64
 where payload_b64 is the base64 CanvasRequest JSON (context.user.email, etc.).
 
-We verify the signature with the Connected App's consumer secret, match the
+One FleetPulse serves three Salesforce orgs, each with its own Connected App
+consumer secret and optional org lock (checked only against its own key):
+    test  SF_CANVAS_SECRET_TEST  / SF_CANVAS_ORG_ID_TEST
+    uat   SF_CANVAS_SECRET_UAT   / SF_CANVAS_ORG_ID_UAT
+    prod  SF_CANVAS_SECRET_PROD  / SF_CANVAS_ORG_ID_PROD
+We verify the signature against each configured secret, match the
 Salesforce user's email to an existing active FleetPulse user, and create the
 same session the password login creates. Password login is unchanged.
 
@@ -69,6 +74,18 @@ def verify_signed_request(signed_request: str, secret: str) -> dict | None:
     return data
 
 
+def _canvas_orgs() -> list[tuple[str, str, str]]:
+    """(label, consumer secret, allowed org id) for each Salesforce org whose
+    Connected App may sign users in. The org id is optional; when set, a request
+    signed with that org's secret must also come from that org."""
+    orgs = [
+        ("test", os.environ.get("SF_CANVAS_SECRET_TEST", ""), os.environ.get("SF_CANVAS_ORG_ID_TEST", "")),
+        ("uat", os.environ.get("SF_CANVAS_SECRET_UAT", ""), os.environ.get("SF_CANVAS_ORG_ID_UAT", "")),
+        ("prod", os.environ.get("SF_CANVAS_SECRET_PROD", ""), os.environ.get("SF_CANVAS_ORG_ID_PROD", "")),
+    ]
+    return [o for o in orgs if o[1]]
+
+
 def _safe_path(path) -> str:
     """Only allow same-site relative paths (no //host or scheme redirects)."""
     if isinstance(path, str) and path.startswith("/") and not path.startswith("//") and "\\" not in path:
@@ -100,29 +117,33 @@ def canvas_get():
 
 @router.post("/embed/canvas")
 async def canvas_post(request: Request):
-    secret = os.environ.get("SF_CANVAS_SECRET", "")
-    if not secret:
-        log.error("SF_CANVAS_SECRET is not set — Salesforce embed sign-in disabled")
+    orgs = _canvas_orgs()
+    if not orgs:
+        log.error("No Canvas secret set (SF_CANVAS_SECRET_TEST / SF_CANVAS_SECRET_UAT / SF_CANVAS_SECRET_PROD) — Salesforce embed sign-in disabled")
         return _message_page("Salesforce sign-in is not configured",
                              "Ask a FleetPulse admin to finish the Salesforce setup.", 503)
 
     form = await request.form()
-    data = verify_signed_request(str(form.get("signed_request", "")), secret)
+    signed_request = str(form.get("signed_request", ""))
+    data, label, expected_org = None, "", ""
+    for label, secret, expected_org in orgs:
+        data = verify_signed_request(signed_request, secret)
+        if data:
+            break
     if not data:
         log.warning("Canvas sign-in rejected: bad signature")
         return _message_page("Sign-in failed", "Salesforce's sign-in could not be verified.", 401)
 
     context = data.get("context") or {}
     org_id = ((context.get("organization") or {}).get("organizationId") or "")
-    expected_org = os.environ.get("SF_CANVAS_ORG_ID", "")
     if expected_org and org_id[:15] != expected_org[:15]:
-        log.warning("Canvas sign-in rejected: org %s", org_id)
+        log.warning("Canvas sign-in rejected: org %s (signed with %s key)", org_id, label)
         return _message_page("Sign-in failed", "This Salesforce org is not allowed.", 403)
 
     sf_user = context.get("user") or {}
     email = (sf_user.get("email") or "").strip()
     # Sandbox copies append ".invalid" to every user's email (jdoe@nyaaa.com.invalid).
-    # SF_CANVAS_ORG_ID locked to production rejects sandbox requests before this point.
+    # Only a request signed with a configured org's key reaches this point.
     if email.lower().endswith(".invalid"):
         email = email[: -len(".invalid")]
     user = users.find_by_email(email) if email else None
@@ -143,7 +164,7 @@ async def canvas_post(request: Request):
     target = _safe_path(params.get("path") if isinstance(params, dict) else None)
     target += ("&" if "?" in target else "?") + "embed=1"
 
-    log.info("Canvas sign-in: %s (SF %s) -> %s", user["username"], sf_user.get("userId"), target)
+    log.info("Canvas sign-in (%s, org %s): %s (SF %s) -> %s", label, org_id, user["username"], sf_user.get("userId"), target)
     response = RedirectResponse(target, status_code=303)
     response.headers.append("set-cookie", embed_cookie_header(cookie_value))
     return response
