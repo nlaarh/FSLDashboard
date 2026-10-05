@@ -25,7 +25,8 @@ def client(monkeypatch, tmp_path):
 
     def fake_require(feature, request):
         role = request.headers.get('x-test-role', 'admin')
-        allowed = {'scheduler.report_card': {'admin', 'executive'}, 'scheduler.report_card_admin': {'admin'}}
+        allowed = {'scheduler.report_card': {'admin', 'executive'}, 'scheduler.report_card_admin': {'admin'},
+                   'scheduler.replay': {'admin', 'executive'}}
         if role not in allowed.get(feature, set()):
             raise HTTPException(status_code=403, detail='Access restricted')
 
@@ -152,3 +153,17 @@ def test_garages_with_work_is_gated_validates_the_date_and_needs_a_past_day(clie
     assert c.get('/api/report-card/garages?date=1999-01-01').status_code == 422
     state['flag'] = False
     assert c.get('/api/report-card/garages?date=2026-09-28').status_code == 404
+
+
+def test_call_flags_are_gated_and_make_two_queries_at_most(client, monkeypatch):
+    import report_card_build
+    c, state, store = client
+    url = f'/api/report-card/{TID}/{DAY}/call-flags'
+    assert c.get(url).status_code == 404 and c.get(url).json() == {'status': 'not_built'}
+    snap = build_snapshot(tiny_raw())
+    store.save_snapshot(TID, DAY, snap)
+    seen = []
+    monkeypatch.setattr(report_card_build.Puller, 'batched', lambda self, t, ids, size=150, **k: seen.append(t) or [])
+    r = c.get(url)
+    assert r.status_code == 200 and r.json() == {'flags': {}} and len(seen) <= 2
+    assert c.get(url, headers={'x-test-role': 'contractor'}).status_code == 403
