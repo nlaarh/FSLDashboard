@@ -51,7 +51,7 @@ _STATUS_LABEL = {
     'Spotted':                           'Spotted',
     'Assigned':                          'Assigned',
     'Dispatched':                        'Dispatched',
-    'Accepted':                          'En Route',
+    'Accepted':                          'Accepted',
     'En Route':                          'En Route',
     'On Location':                       'On Location',
     'Completed':                         'Completed',

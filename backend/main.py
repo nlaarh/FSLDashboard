@@ -175,7 +175,7 @@ from routers import (
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
     contractor, contractor_recommendations, contractor_dispatch,
-    garage_acceptance, embed,
+    garage_acceptance, embed, report_card, call_story,
 )
 
 app.include_router(auth.router)
@@ -229,6 +229,8 @@ app.include_router(contractor.router)
 app.include_router(contractor_recommendations.router)
 app.include_router(contractor_dispatch.router)  # UNRELEASED: gated by contractor_dispatch flag
 app.include_router(embed.router)
+app.include_router(report_card.router)  # gated by the scheduler_report_card flag (default off)
+app.include_router(call_story.router)  # gated by the call_story flag (default off)
 
 
 # ── Startup: proactive cache refresher ──────────────────────────────────────

@@ -7,6 +7,9 @@ FEATURE_ROLES = {
     "reporting.user_adoption":    {"superadmin", "admin", "executive"},
     "admin.panel":                {"superadmin", "admin"},
     "admin.impersonate":          {"superadmin"},
+    # Never "contractor": the report card shows other drivers' workloads and dispatcher behaviour.
+    "scheduler.report_card":       {"superadmin", "admin", "executive", "ers-director"},
+    "scheduler.report_card_admin": {"superadmin", "admin"},
 }
 
 

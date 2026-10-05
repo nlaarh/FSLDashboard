@@ -18,6 +18,8 @@ import Accounting from './pages/Accounting'
 import AccountingWoaDetail from './pages/AccountingWoaDetail'
 import OptimizerDecoder from './pages/OptimizerDecoder'
 import Reporting from './pages/Reporting'
+import SchedulerReportCard from './pages/SchedulerReportCard'
+import CallStory from './pages/CallStory'
 import ContractorLayout from './pages/contractor/ContractorLayout'
 import ContractorWatchlist from './pages/contractor/ContractorWatchlist'
 import ContractorGarages from './pages/contractor/ContractorGarages'
@@ -120,6 +122,10 @@ function AuthApp() {
         } />
         <Route path="/optimizer" element={<Navigate to="/" replace />} />
         <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
+        {/* Gated server-side: scheduler_report_card flag + scheduler.report_card permission */}
+        <Route path="/report-card" element={isFinance ? <Navigate to="/accounting" replace /> : <SchedulerReportCard />} />
+        <Route path="/replay" element={isFinance ? <Navigate to="/accounting" replace /> : <SchedulerReportCard view="replay" />} />
+        <Route path="/call-story" element={isFinance ? <Navigate to="/accounting" replace /> : <CallStory />} />
         <Route path="/sa-watchlist" element={isFinance ? <Navigate to="/accounting" replace /> : <div className="-mx-6 -mt-6 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}><SAWatchlist /></div>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

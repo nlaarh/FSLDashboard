@@ -20,6 +20,7 @@ export const EVENT_STYLE = {
   'Assigned':           { color: '#3b82f6', label: 'Assigned' },
   'Reassigned':         { color: '#f97316', label: 'Reassigned' },
   'Dispatched':         { color: '#6366f1', label: 'Dispatched' },
+  'Accepted':           { color: '#0ea5e9', label: 'Accepted' },
   'En Route':           { color: '#8b5cf6', label: 'En Route' },
   'On Location':        { color: '#22c55e', label: 'On Location' },
   'Completed':          { color: '#10b981', label: 'Completed' },

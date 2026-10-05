@@ -156,6 +156,36 @@ export const triageIssues = (pin) => api.post('/issues/triage', null, pinHeader(
 // Feature Flags
 export const fetchFeatures = () => api.get('/features').then(r => r.data)
 
+// Scheduler Report Card — 202 (building), 404 (not built) and 409 (failed) are states, not errors
+const rcStates = { validateStatus: s => s < 500 && s !== 401 }
+const rcResult = r => ({ status: r.status, data: r.data })
+const rcRules = rules => (rules ? `?rules=${rules}` : '')
+export const fetchReportCardGarages = date =>
+  api.get(`/report-card/garages?date=${date}`, rcStates).then(rcResult)
+export const fetchReportCard = (territoryId, date, rules) =>
+  api.get(`/report-card/${territoryId}/${date}${rcRules(rules)}`, rcStates).then(rcResult)
+export const fetchReportCardStatus = (territoryId, date) =>
+  api.get(`/report-card/${territoryId}/${date}/status`, rcStates).then(rcResult)
+export const fetchReportCardReplay = (territoryId, date) =>
+  api.get(`/report-card/${territoryId}/${date}/replay`, { ...rcStates, timeout: 60000 }).then(rcResult)
+export const fetchReportCardFindings = (territoryId, date, rules) =>
+  api.get(`/report-card/${territoryId}/${date}/findings${rcRules(rules)}`, { ...rcStates, timeout: 120000 }).then(rcResult)
+// Call Story — 404 not found, 409 ambiguous / load first, 400/422 bad input are states, not errors
+export const fetchCallStory = (q, { sa, rules } = {}) => {
+  const p = new URLSearchParams({ q })
+  if (sa) p.set('sa', sa)
+  if (rules) p.set('rules', rules)
+  return api.get(`/call-story?${p}`, { ...rcStates, timeout: 60000 }).then(rcResult)
+}
+export const fetchCallStoryReplay = q =>
+  api.get(`/call-story/replay?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 90000 }).then(rcResult)
+export const fetchCallStoryReplayMap = q =>
+  api.get(`/call-story/replay-map?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 120000 }).then(rcResult)
+export const fetchCallStoryNarrative = saId =>
+  api.post('/call-story/narrative', { sa_id: saId }, { ...rcStates, timeout: 120000 }).then(rcResult)
+export const buildReportCard = (territoryId, date, force = false) =>
+  api.post(`/report-card/${territoryId}/${date}/build${force ? '?force=true' : ''}`, null, rcStates).then(rcResult)
+
 // Accounting — Work Order Adjustments
 export const fetchWOAdjustments = (status = 'open', page = 0, pageSize = 50, product = '', rec = '', q = '', sortCol = 'created_date', sortDir = 'desc', startDate = '', endDate = '') =>
   api.get(`/accounting/wo-adjustments?status=${status}&page=${page}&page_size=${pageSize}&product_filter=${product}&rec_filter=${rec}&q=${encodeURIComponent(q)}&sort_col=${sortCol}&sort_dir=${sortDir}&start_date=${startDate}&end_date=${endDate}`).then(r => r.data)

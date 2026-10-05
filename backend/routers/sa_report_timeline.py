@@ -12,16 +12,18 @@ from dispatch_utils import _SF_ID_RE, _STATUS_LABEL, _SYSTEM_USERS
 
 # ── Garage type classification ────────────────────────────────────────────────
 
-def _garage_type(territory: str, dispatch_method: str) -> str:
-    """Classify garage as Fleet / On-Platform Contractor / Towbook.
+_GARAGE_TYPE = {'fleet': 'Fleet', 'on_platform_contractor': 'On-Platform Contractor', 'towbook': 'Towbook'}
 
-    Rules:
-      Towbook           — dispatch_method == 'Towbook'
-      Fleet             — territory name contains 'FLEET' (WNY Fleet territories)
-      On-Platform Contractor — everything else with Field Services dispatch
+
+def _garage_type(territory: str, channel: str | None) -> str:
+    """Classify the call as Fleet / On-Platform Contractor / Towbook.
+
+    `channel` comes from the assigned driver's ERS_Driver_Type__c (metrics-spec S2), never from the
+    ERS_Dispatch_Method__c formula, which reads the facility's CURRENT method and relabels history.
+    Without a channel: territory name containing 'FLEET' -> Fleet, else On-Platform Contractor.
     """
-    if dispatch_method == 'Towbook':
-        return 'Towbook'
+    if channel in _GARAGE_TYPE:
+        return _GARAGE_TYPE[channel]
     if 'FLEET' in (territory or '').upper():
         return 'Fleet'
     return 'On-Platform Contractor'
@@ -41,11 +43,15 @@ def _sf_record_url(record_id: str) -> str | None:
         return None
 
 
-def _build_sa_summary(sa: dict) -> dict:
+def _build_sa_summary(sa: dict, channel: str | None = None, on_location: str | None = None) -> dict:
+    """on_location = the first SAHistory Status -> On Location timestamp. Towbook arrival comes from it,
+    because Towbook's ActualStartTime is a bulk midnight update or empty (metrics-spec S6)."""
+    towbook = channel == 'towbook'
+    arrival_raw = on_location if towbook else sa.get('ActualStartTime')
     et       = _to_eastern(sa.get('CreatedDate'))
-    start_et = _to_eastern(sa.get('ActualStartTime'))
+    start_et = _to_eastern(arrival_raw)
     end_et   = _to_eastern(sa.get('ActualEndTime'))
-    cd, ast  = _parse_dt(sa.get('CreatedDate')), _parse_dt(sa.get('ActualStartTime'))
+    cd, ast  = _parse_dt(sa.get('CreatedDate')), _parse_dt(arrival_raw)
     response_min = None
     if cd and ast:
         diff = (ast - cd).total_seconds() / 60
@@ -69,13 +75,11 @@ def _build_sa_summary(sa: dict) -> dict:
         'started':        start_et.strftime('%b %d, %I:%M %p') if start_et else None,
         'completed':      end_et.strftime('%b %d, %I:%M %p') if end_et else None,
         'response_min':   response_min,
+        'arrival_source': ('history' if towbook else 'actual_start') if ast else None,
         'dispatch_method': sa.get('ERS_Dispatch_Method__c') or '',
         'dispatched_lat': sa.get('ERS_Dispatched_Geolocation__Latitude__s'),
         'dispatched_lon': sa.get('ERS_Dispatched_Geolocation__Longitude__s'),
-        'garage_type':    _garage_type(
-                              (sa.get('ServiceTerritory') or {}).get('Name', ''),
-                              sa.get('ERS_Dispatch_Method__c') or '',
-                          ),
+        'garage_type':    _garage_type((sa.get('ServiceTerritory') or {}).get('Name', ''), channel),
         'sf_url':         _sf_record_url(sa['Id']),
     }
 
@@ -163,7 +167,7 @@ def _build_narrative(sa_summary: dict, timeline: list, assign_steps: list) -> li
     terr      = sa_summary.get('territory', '?')
     num       = sa_summary.get('number', '?')
     gtype     = sa_summary.get('garage_type', '')
-    is_towbook = sa_summary.get('dispatch_method') == 'Towbook'
+    is_towbook = sa_summary.get('garage_type') == 'Towbook'
 
     garage_label = f"{terr} [{gtype}]" if gtype else terr
 
@@ -347,6 +351,7 @@ def _build_phases(timeline: list, sa_summary: dict) -> list:
         'Assigned':     '#3b82f6',  # blue
         'Reassigned':   '#f97316',  # orange
         'Dispatched':   '#6366f1',  # indigo
+        'Accepted':     '#0ea5e9',  # sky: accepted, not rolling yet (Towbook's real queue)
         'En Route':     '#8b5cf6',  # violet
         'On Location':  '#22c55e',  # green
     }
@@ -356,6 +361,7 @@ def _build_phases(timeline: list, sa_summary: dict) -> list:
         'Assigned':     'Assigned',
         'Reassigned':   'Reassigned',
         'Dispatched':   'Dispatched',
+        'Accepted':     'Accepted, not rolling',
         'En Route':     'En Route',
         'On Location':  'On Location',
     }

@@ -21,7 +21,7 @@ from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from utils import parse_dt as _parse_dt, to_eastern as _to_eastern, haversine
 from dispatch_utils import (
     parse_assign_events, build_assign_steps,
-    build_truck_login_hist,
+    build_truck_login_hist, _SF_ID_RE,
 )
 from routers.misc import _SKILL_MAP
 from routers.sa_report_timeline import (
@@ -53,6 +53,18 @@ _SA_FIELDS = """
 """
 
 
+def _sa_channel(ar_row: dict | None, hist_rows: list) -> str | None:
+    """metrics-spec S2: channel from the assigned driver's ERS_Driver_Type__c. With no AR (canceled calls),
+    the last assigned name decides: 'Towbook-<code>' placeholders are Towbook. None = unknown."""
+    from report_card_verdicts import RULES_R1
+    driver_type = ((ar_row or {}).get('ServiceResource') or {}).get('ERS_Driver_Type__c')
+    if driver_type:
+        return RULES_R1['channel_map'].get(driver_type)
+    names = [h.get('NewValue') or '' for h in hist_rows
+             if h.get('Field') == 'ERS_Assigned_Resource__c' and h.get('NewValue') and not _SF_ID_RE.match(h['NewValue'])]
+    return 'towbook' if names and names[-1].lower().startswith('towbook') else None
+
+
 # ── Report endpoint ───────────────────────────────────────────────────────────
 
 @router.get('/api/sa/{sa_number}/report')
@@ -74,8 +86,8 @@ def sa_report(sa_number: str):
         wt_name = (sa.get('WorkType') or {}).get('Name', '').lower()
         sa_lat  = float(sa['Latitude'])  if sa.get('Latitude')  else None
         sa_lon  = float(sa['Longitude']) if sa.get('Longitude') else None
-        sa_summary = _build_sa_summary(sa)
-        is_towbook = (sa.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
+        sa_summary = _build_sa_summary(sa)   # rebuilt below once the driver type and history are known
+        is_towbook = False
 
         if not tid:
             return {'sa_summary': sa_summary, 'timeline': [], 'assign_steps': [],
@@ -115,15 +127,15 @@ def sa_report(sa_number: str):
 
         p1 = sf_parallel(
             hist=lambda: sf_query_all(f"""
-                SELECT ServiceAppointmentId, Field, NewValue, CreatedDate,
+                SELECT ServiceAppointmentId, Field, OldValue, NewValue, CreatedDate,
                        CreatedBy.Name, CreatedBy.Profile.Name
                 FROM ServiceAppointmentHistory
                 WHERE ServiceAppointmentId = '{sa_id}'
                   AND Field IN ('Status', 'ERS_Assigned_Resource__c', 'ERS_PTA__c', 'SchedStartTime', 'ServiceTerritory')
-                ORDER BY CreatedDate ASC
+                ORDER BY CreatedDate ASC, Id ASC
             """),
             ar=lambda: sf_query_all(f"""
-                SELECT ServiceResourceId, ServiceResource.Name, CreatedDate
+                SELECT ServiceResourceId, ServiceResource.Name, ServiceResource.ERS_Driver_Type__c, CreatedDate
                 FROM AssignedResource
                 WHERE ServiceAppointmentId = '{sa_id}'
                 ORDER BY CreatedDate DESC LIMIT 1
@@ -131,6 +143,11 @@ def sa_report(sa_number: str):
             woli_wo=_fetch_woli_wo,
         )
         hist_rows = p1['hist']
+        channel = _sa_channel((p1['ar'] or [None])[0], hist_rows)
+        is_towbook = channel == 'towbook'
+        on_loc = next((h.get('CreatedDate') for h in hist_rows
+                       if h.get('Field') == 'Status' and h.get('NewValue') == 'On Location'), None)
+        sa_summary = _build_sa_summary(sa, channel=channel, on_location=on_loc)
 
         # Extract WO fields from WOLI join result.
         woli_wo_row = (p1.get('woli_wo') or [None])[0]
