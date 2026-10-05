@@ -17,6 +17,28 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.2 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.2` |
+| Commit | `3cc48cb` |
+| Bundle | `index-CPI8Ozh_.js` |
+| Deploy | GitHub Actions run `37266512384`, 2026-10-05 ~01:30 ET, success |
+| Roll back to | `release/v1.1` = `af27df1` (bundle `index-BLvxJBdj.js`) — note main also holds Merge #7 (`18bc009`, Report Card, flags off) |
+
+**Changed**
+- Replay work-order list: RAP badge, out-of-territory icon, coverage level, explicit "Opted in / Not opted in to texts" line per work order.
+- Red icon = opted in but no member text sent (tooltip says why); grey = not opted in; none before the 2026-09-01 text log.
+- Filters: job type, member level, RAP, out of territory, no text.
+- New read-only route `/api/report-card/{territory}/{date}/call-flags`: 2 Salesforce SELECTs per garage-day, cached 24 h, hard cap 8 calls.
+- Replay restricted to administrators and executives (`0b03e8a`).
+- Flags `scheduler_report_card` / `scheduler.replay` still default off: nothing visible until switched on.
+
+**Files**: `backend/report_card_flags.py`, `backend/routers/report_card.py`, `frontend/src/components/reportcard/GarageReplay.jsx`, `frontend/src/api.js`, tests.
+
+---
+
 ## v1.1 — 2026-10-02
 
 | | |
