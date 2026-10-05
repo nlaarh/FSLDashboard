@@ -39,6 +39,25 @@ def _env_flag(name: str, default: bool = False) -> bool:
 _REFRESH_ON_STARTUP = _env_flag('FSLAPP_REFRESH_ON_STARTUP', False)
 _ENABLE_PER_GARAGE_REFRESH = _env_flag('FSLAPP_ENABLE_PER_GARAGE_REFRESH', False)
 
+# After a restart (every deploy) the in-memory cache is empty and the first person in would wait 2-5 s on
+# Salesforce. Warm just these few screens once, one at a time, instead of waiting a full interval for them.
+# Everything else still waits for its own interval (no Salesforce stampede on start).
+STARTUP_WARM_KEYS = ('queue_live', 'command_center_24', 'garages_list')
+
+
+def _warm_watchlist():
+    """Fill the shared watch-list cache once after a restart (it is not on the refresh schedule)."""
+    from routers.watchlist import _build_watchlist, CACHE_KEY
+    result = _build_watchlist(territories=None)
+    cache.put(CACHE_KEY, result, 120)
+    cache.disk_put(CACHE_KEY, result, 120)
+
+
+def initial_refresh_times(keys, now: float, refresh_all: bool, warm_keys=STARTUP_WARM_KEYS) -> dict:
+    """When each key is first due: 0 (due now) for every key in an emergency, else now (wait an interval)
+    except the few hot keys, which are due immediately."""
+    return {k: 0.0 if (refresh_all or k in warm_keys) else now for k in keys}
+
 
 # ── Refresh schedule ─────────────────────────────────────────────────────────
 # Each entry: (interval_sec, cache_key, endpoint_fn, ttl, persist_to_disk)
@@ -275,13 +294,13 @@ def _refresh_loop():
     # Do not stampede Salesforce on process start. By default each key waits
     # for its interval before the first forced refresh; stale cache remains
     # available to users. Set FSLAPP_REFRESH_ON_STARTUP=true for emergency warmup.
-    initial_refresh_time = 0.0 if _REFRESH_ON_STARTUP else time.time()
-    last_refreshed = {entry[1]: initial_refresh_time for entry in schedule}
+    last_refreshed = initial_refresh_times([entry[1] for entry in schedule], time.time(), _REFRESH_ON_STARTUP)
     if _REFRESH_ON_STARTUP:
         log.warning("Startup force-refresh is enabled; Salesforce calls may spike")
     else:
         log.info("Startup force-refresh disabled; scheduled refreshes will be staggered by interval")
     cycle = 0
+    watchlist_warmed = False
 
     while True:
         try:
@@ -289,6 +308,14 @@ def _refresh_loop():
             if not _try_become_leader():
                 time.sleep(10)
                 continue
+
+            if not watchlist_warmed:      # once per start, before the hot keys below
+                watchlist_warmed = True
+                try:
+                    _warm_watchlist()
+                    log.info("Watch list warmed after start")
+                except Exception as e:
+                    log.warning(f"Watch list warm-up failed (it will load on first request): {e}")
 
             now = time.time()
             refreshed = []
