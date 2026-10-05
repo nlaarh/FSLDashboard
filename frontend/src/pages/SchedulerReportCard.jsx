@@ -65,6 +65,7 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
 
   const stopPoll = () => { clearInterval(pollRef.current); pollRef.current = null }
 
+  const autoBuilt = useRef('')   // the garage-day we already started a build for
   const load = useCallback(async () => {
     stopPoll()
     setState({ phase: 'loading' })
@@ -75,7 +76,12 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
       if (status === 200) setState({ phase: 'ready', data })
       else if (status === 409 && data?.status === 'rules_unavailable') setState({ phase: 'rules_unavailable', info: data })
       else if (status === 202) startPoll(data.started_at)
-      else if (status === 404 && data?.status === 'not_built') setState({ phase: 'not_built' })
+      else if (status === 404 && data?.status === 'not_built') {
+        // Nothing to click: picking the garage and day starts the build and the page opens when it is ready.
+        // Once per garage-day, so a failed build shows its error instead of retrying in a loop.
+        const key = `${garage}:${date}`
+        if (autoBuilt.current !== key) { autoBuilt.current = key; build() } else setState({ phase: 'not_built' })
+      }
       else if (status === 409) setState({ phase: 'failed', error: data?.error })
       else if (status === 404 || status === 403) setState({ phase: 'unavailable' })
       else setState({ phase: 'error', error: data?.detail || `Unexpected response ${status}` })
@@ -163,7 +169,10 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
         </Message>
       )}
       {phase === 'building' && (
-        <Message icon={Loader2} tone="text-brand-400 animate-spin">Building from Salesforce… started {state.startedAt ? new Date(state.startedAt).toLocaleTimeString() : 'just now'}</Message>
+        <Message icon={Loader2} tone="text-brand-400 animate-spin">
+          <div>Reading this day from Salesforce… it opens by itself when ready (about a minute the first time, instant after that).</div>
+          <div className="mt-1 text-xs text-slate-500">started {state.startedAt ? new Date(state.startedAt).toLocaleTimeString() : 'just now'}</div>
+        </Message>
       )}
       {phase === 'rules_unavailable' && (
         <Message icon={RefreshCw} tone="text-amber-300">
