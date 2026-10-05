@@ -17,6 +17,26 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.3 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.3` |
+| Commit | `462b5d8` |
+| Bundle | `index-Da_tVr0N.js` |
+| Deploy | GitHub Actions run `37272959848`, 2026-10-05 ~02:40 ET, success |
+| Roll back to | `release/v1.2` = `3cc48cb` (bundle `index-CPI8Ozh_.js`) |
+
+**Changed** (Replay work-order list, flag-gated, admins and executives only)
+- Member survey result per call (overall satisfaction) and the garage-day "totally satisfied %" (red under 80), with a survey filter.
+- Missed PTA: red bubble and filter (uses the verdict's `pta_met`).
+- SMS not sent: red SMS pill; out of territory: compass icon; "SMS: opted in / not opted in" line.
+- Backend: 3 read-only SELECTs per garage-day (work orders, text log, surveys for completed calls), cached 1 h for recent days and 24 h once older than 3 days.
+
+**Files**: `backend/report_card_flags.py`, `backend/routers/report_card.py`, `frontend/src/components/reportcard/GarageReplay.jsx`, tests.
+
+---
+
 ## v1.2 — 2026-10-05
 
 | | |
