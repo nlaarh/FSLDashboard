@@ -17,6 +17,22 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.4 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.4` |
+| Commit | `56c6964` |
+| Bundle | `index-DJ96HwED.js` |
+| Deploy | GitHub Actions run `37276332337`, 2026-10-05 ~03:15 ET, success |
+| Roll back to | `release/v1.3` = `462b5d8` (bundle `index-Da_tVr0N.js`) |
+
+**Changed**
+- Replay work-order list shows each call's address (city), and flags calls with no address ("No address on this call"). Frontend only: `GarageReplay.jsx`.
+- Tested on production with the test login: 076DO, Oct 3: city shown on the rows, Missed PTA filter 36 of 161, 85% totally satisfied, no console errors, no failed requests.
+
+---
+
 ## v1.3 — 2026-10-05
 
 | | |
