@@ -36,7 +36,7 @@ def test_before_the_log_existed_is_no_data_not_a_failure():
 def test_compose_maps_each_sa_to_its_work_order_flags():
     wo = {'Id': 'W1', 'CreatedDate': NEW, 'Type__c': 'RAP', 'Out_of_Territory__c': True, 'Coverage__c': 'PLUS', 'SMS_Opt_In__c': True}
     out = compose([{'id': 'S1', 'woli_id': 'L1'}, {'id': 'S2', 'woli_id': 'L9'}], {'L1': 'W1'}, {'W1': wo}, {'W1': [SENT]})
-    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None, 'wo_id': 'W1', 'cases': {'total': 0, 'open': 0}}}
+    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None, 'wo_id': 'W1', 'cases': {'total': 0, 'open': 0, 'human': 0, 'auto': 0}}}
 
 
 def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
@@ -63,3 +63,18 @@ def test_survey_is_the_latest_one_and_totally_satisfied_is_flagged():
     assert survey_of(rows) == {'overall': 'Totally satisfied', 'response': 'Satisfied', 'tech': None, 'nps': None, 'score': None, 'totally': True}
     assert survey_of([{'ERS_NPS__c': 7.0, 'ERS_Survey_Completed_Date__c': 'x'}])['score'] == 70
     assert survey_of([{'ERS_NPS__c': 0.0}])['score'] == 0   # a real zero is a score, not 'missing'
+
+
+def test_case_counts_split_by_who_opened_them_and_whether_still_open():
+    from report_card_flags import pull_flags
+    class P:
+        def batched(self, template, ids, size=150, **k):
+            if 'WorkOrderLineItem' in template:
+                return [{'Id': 'L1', 'WorkOrderId': 'W1', 'WorkOrder': {'CreatedDate': NEW, 'Type__c': 'Standard', 'SMS_Opt_In__c': True}}]
+            if 'FROM Case' in template:
+                return [{'ERS_Work_Order__c': 'W1', 'IsClosed': True, 'prof': 'AAACRM Mulesoft Integration User', 'n': 2},
+                        {'ERS_Work_Order__c': 'W1', 'IsClosed': False, 'prof': 'Membership User', 'n': 1},
+                        {'ERS_Work_Order__c': 'W1', 'IsClosed': True, 'prof': 'Towbook Integrations', 'n': 1}]
+            return []
+    out = pull_flags([{'id': 'S1', 'woli_id': 'L1', 'status': 'Completed'}], P())
+    assert out['S1']['cases'] == {'total': 4, 'open': 1, 'human': 1, 'auto': 3}

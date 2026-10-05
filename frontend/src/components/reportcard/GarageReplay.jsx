@@ -129,7 +129,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
 
 const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 
-const NONE = { rap: false, ooT: false, text: false, late: false, cases: false, job: '', cover: '', survey: '' }
+const NONE = { rap: false, ooT: false, text: false, late: false, cases: '', job: '', cover: '', survey: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
 // Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
 const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
@@ -170,7 +170,7 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
   const shown = calls.filter(c => {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
-      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c)) && (!f.cases || x.cases?.total > 0)
+      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c)) && (!f.cases || (f.cases === 'any' ? x.cases?.total > 0 : f.cases === 'human' ? x.cases?.human > 0 : x.cases?.auto > 0))
       && (!f.survey || surveyMatch(f.survey, x.survey))
   })
   const on = f.rap || f.ooT || f.text || f.late || f.cases || f.job || f.cover || f.survey
@@ -201,7 +201,17 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
             {chip('ooT', 'Out of territory', all.filter(x => x.out_of_territory).length)}
             {chip('text', 'SMS not sent', all.filter(x => x.text?.state === 'missing').length)}
             {!preview && chip('late', 'Missed PTA', calls.filter(missedPta).length)}
-            {chip('cases', 'Has cases', all.filter(x => x.cases?.total > 0).length)}
+          </div>
+        )}
+        {all.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <select value={f.cases} onChange={e => setF({ ...f, cases: e.target.value })}
+              className="bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 px-1.5 py-0.5 flex-1">
+              <option value="">Cases: all</option>
+              <option value="any">Has cases · {all.filter(x => x.cases?.total > 0).length}</option>
+              <option value="human">Opened by a person · {all.filter(x => x.cases?.human > 0).length}</option>
+              <option value="auto">Automatic · {all.filter(x => x.cases?.auto > 0).length}</option>
+            </select>
           </div>
         )}
         {all.length > 0 && (
@@ -237,7 +247,7 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
                   {x.cases?.total > 0 && (
-                    <span role="button" tabIndex={0} title={`${x.cases.total} case${x.cases.total === 1 ? '' : 's'}${x.cases.open ? `, ${x.cases.open} open` : ''}: click to see who touched them`}
+                    <span role="button" tabIndex={0} title={`${x.cases.total} case${x.cases.total === 1 ? '' : 's'} (${x.cases.human || 0} opened by a person, ${x.cases.auto || 0} automatic)${x.cases.open ? `, ${x.cases.open} open` : ''}: click to see who touched them`}
                       onClick={e => { e.stopPropagation(); setTrail({ woId: x.wo_id, number: c.number }) }}
                       onKeyDown={e => e.key === 'Enter' && (e.stopPropagation(), setTrail({ woId: x.wo_id, number: c.number }))}
                       className={`flex items-center gap-0.5 px-1 rounded text-[10px] font-bold leading-4 cursor-pointer ${x.cases.open ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'}`}>

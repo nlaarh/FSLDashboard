@@ -49,19 +49,40 @@ def test_raw_ids_never_leak_and_booleans_read_naturally():
     assert flag['text'] == 'Queued for Omni bundle: no → yes'
 
 
-def test_comments_emails_and_tasks_join_the_same_timeline():
-    comments = [{'ParentId': '500A', 'CommentBody': 'Called the member', 'IsPublished': False, 'CreatedDate': '2026-10-04T04:30:00.000+0000',
+def test_what_people_wrote_and_said_is_shown_in_full_with_who_and_when():
+    feed = [{'ParentId': '500A', 'Type': 'TextPost', 'Body': "<p>I left voicemail to advise call was NC.  </p><p>Per mem&#39;s email: no tow</p>",
+             'CreatedDate': '2026-10-04T04:30:00.000+0000', 'CreatedBy': {'Name': 'Adam Sukert', 'Profile': {'Name': 'Membership User'}}},
+            {'ParentId': '500A', 'Type': 'CaseCommentPost', 'Body': 'dupe of the comment', 'CreatedDate': '2026-10-04T04:30:01.000+0000'}]
+    comments = [{'ParentId': '500A', 'CommentBody': 'Called the member back', 'IsPublished': False, 'CreatedDate': '2026-10-04T04:31:00.000+0000',
                  'CreatedBy': {'Name': 'Tyler LaFave', 'Profile': {'Name': 'Membership User'}}}]
-    emails = [{'ParentId': '500A', 'Subject': 'Your service', 'FromName': 'Member', 'Incoming': True, 'MessageDate': '2026-10-04T04:31:00.000+0000', 'TextBody': 'x' * 500}]
-    tasks = [{'WhatId': '500A', 'Subject': 'Call back', 'Status': 'Open', 'Owner': {'Name': 'Tyler LaFave'}, 'CreatedDate': '2026-10-04T04:32:00.000+0000',
-              'CreatedBy': {'Name': 'Tyler LaFave', 'Profile': {'Name': 'Membership User'}}}]
-    ev = ct.compose([CASE], HIST, comments, emails, tasks)[0]['events']
-    assert {e['type'] for e in ev} >= {'comment', 'email', 'task', 'created', 'change'}
-    assert [e for e in ev if e['type'] == 'email'][0]['text'] == 'Received email: Your service' and len([e for e in ev if e['type'] == 'email'][0]['snippet']) == 300
-    assert [e['ts'] for e in ev] == sorted(e['ts'] for e in ev)
+    emails = [{'ParentId': '500A', 'Subject': 'AAA Case ID #1', 'FromName': 'Member Relations', 'ToAddress': 'm@x.com', 'Incoming': False,
+               'MessageDate': '2026-10-04T04:32:00.000+0000', 'TextBody': 'Dear member,\nthis will not count against your four free calls.\n' + 'x' * 5000}]
+    tasks = [{'WhatId': '500A', 'Subject': 'Email: AAA Case ID #1', 'TaskSubtype': 'Email', 'Description': 'same email again', 'CreatedDate': '2026-10-04T04:32:01.000+0000',
+              'CreatedBy': {'Name': 'Debbie Gordon', 'Profile': {'Name': 'Membership User'}}},
+             {'WhatId': '500A', 'Subject': 'Call driver', 'TaskSubtype': 'Call', 'Description': 'Driver says he is 10 min out', 'Status': 'Completed',
+              'Owner': {'Name': 'Tyler LaFave'}, 'CreatedDate': '2026-10-04T04:33:00.000+0000', 'CreatedBy': {'Name': 'Tyler LaFave', 'Profile': {'Name': 'Membership User'}}}]
+    case = ct.compose([CASE], HIST, comments, emails, tasks, feed)[0]
+    ev = case['events']
+    note = next(e for e in ev if e['type'] == 'note')
+    assert note['name'] == 'Adam Sukert' and note['kind'] == 'person' and note['ts'].startswith('2026-10-04T04:30')
+    assert note['body'] == "I left voicemail to advise call was NC.\nPer mem's email: no tow"                 # tags and entities gone
+    assert next(e for e in ev if e['type'] == 'comment')['body'] == 'Called the member back' and 'internal' in next(e for e in ev if e['type'] == 'comment')['text']
+    mail = next(e for e in ev if e['type'] == 'email')
+    assert mail['name'] == 'Debbie Gordon' and mail['kind'] == 'person'                  # the person, not the shared mailbox
+    assert mail['text'].startswith('Emailed m@x.com (from the Member Relations mailbox): AAA Case ID #1') and 'will not count against your four free calls' in mail['body'] and len(mail['body']) <= 2001
+    tasks_out = [e for e in ev if e['type'] == 'task']
+    assert len(tasks_out) == 1 and tasks_out[0]['body'] == 'Driver says he is 10 min out' and tasks_out[0]['text'].startswith('Call: Call driver')
+    assert not any('dupe of the comment' in (e.get('body') or '') for e in ev)                                  # only chatter TEXT posts
+    assert case['written_count'] == 4 and [e['ts'] for e in ev] == sorted(e['ts'] for e in ev)
 
 
-def test_pull_makes_one_query_when_there_are_no_cases_and_five_when_there_are():
+def test_case_carries_its_description_and_resolution_for_the_header():
+    c = {**CASE, 'Description': '<p>Member waited 2 h</p>', 'Resolution__c': 'Courtesy', 'Resolution_Notes__c': 'Waived the call.', 'Feedback_Resolution__c': None}
+    out = ct.compose([c], [], [], [], [], [])[0]
+    assert out['description'] == 'Member waited 2 h' and out['resolution'] == 'Courtesy' and out['resolution_notes'] == 'Waived the call.' and out['written_count'] == 0
+
+
+def test_pull_makes_one_query_when_there_are_no_cases_and_six_when_there_are():
     class P:
         def __init__(self, cases): self.sql, self.cases = [], cases
         def all(self, q): self.sql.append(q); return self.cases
@@ -69,4 +90,18 @@ def test_pull_makes_one_query_when_there_are_no_cases_and_five_when_there_are():
     none, some = P([]), P([CASE])
     assert ct.pull('0WOPb00000KZeOrOAL', none) == [] and len(none.sql) == 1
     out = ct.pull('0WOPb00000KZeOrOAL', some)
-    assert len(some.sql) == 5 and out[0]['number'] == '01032674' and out[0]['events'] == []
+    assert len(some.sql) == 6 and out[0]['number'] == '01032674' and out[0]['events'] == []
+
+
+def test_a_case_is_automatic_or_human_by_who_opened_it_and_lists_who_touched_it():
+    auto = {**CASE, 'CreatedBy': {'Name': 'Mulesoft Integration', 'Profile': {'Name': 'AAACRM Mulesoft Integration User'}}}
+    human = {**CASE, 'CreatedBy': {'Name': 'Elizabeth Proper', 'Profile': {'Name': 'Membership User'}}}
+    only_system = [_h('2026-10-04T04:17:02.000+0000', 'Status', 'New', 'Closed', 'DynamicEnum', 'IT System User', 'AAACRM Mulesoft Integration User')]
+    a = ct.compose([auto], only_system, [], [], [], [])[0]
+    assert a['origin'] == 'automatic' and a['human_touched'] is False and a['people'] == []
+    h = ct.compose([human], HIST, [], [], [], [])[0]
+    assert h['origin'] == 'human' and h['human_touched'] is True and h['people'] == ['Elizabeth Proper', 'Tyler LaFave']
+
+
+def test_a_system_administrator_is_a_person_not_an_automation():
+    assert ct.actor('Pat Admin', 'System Administrator')['kind'] == 'person'
