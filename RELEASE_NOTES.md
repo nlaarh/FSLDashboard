@@ -17,6 +17,26 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.10 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.10` |
+| Commit | `da508ef` |
+| Bundle | `index-Qy6LI9dH.js` |
+| Deploy | GitHub Actions run `37383756265`, 2026-10-05 (daytime, on the user's explicit instruction), success, 54 s |
+| Roll back to | `release/v1.9` = `82f4420` (bundle `index-BKp-HTOv.js`) |
+
+**Changed**
+- Replay list: cases per SA (count chip, "Cases:" filter), and a panel with each case's full trail: when, who (person or system), what, and what people wrote (notes, comments, emails, call notes). Cases are Human (opened by a person) or Automatic (integration/system), with a Both / Human / Automatic switch for cases and for events. The panel opens on the case people wrote on.
+- An unbuilt day shows its work orders as soon as the build has read them (about 3 s on production) instead of waiting ~35 s; the full view opens by itself.
+- Replay speed: the call-story rate limit counts only real Salesforce pulls (cache hits are free); hovering a work order starts loading its story.
+- Hot screens (queue, command center, garages, watch list) are warmed once after a restart.
+- Backend: `/api/case-trail/{wo_id}` (replay permission), `case_trail.py`; `call-flags` adds one grouped case-count query; the build publishes its calls as it goes.
+- Tests: 461 passing.
+
+---
+
 ## v1.9 — 2026-10-05
 
 | | |
