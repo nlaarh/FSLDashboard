@@ -242,7 +242,17 @@ def get_call_flags(territory_id: str, service_date: str, request: Request):
     require_feature('scheduler.replay', request)
     snap = store.load_snapshot(territory_id, service_date)
     if snap is None:
-        return _not_ready(territory_id, service_date)
+        # Not built yet: while it builds, the calls it has already read are enough to work out the flags.
+        st = store.get_status(territory_id, service_date) or {}
+        preview = st.get('preview') if st.get('status') == 'building' else None
+        if not preview:
+            return _not_ready(territory_id, service_date)
+        sas, key = [s for s in preview['sas'] if not s['is_drop_off']], f"report_card_flags_preview:{territory_id}:{service_date}:{st.get('started_at')}"
+        flags = cache.get(key)
+        if flags is None:
+            flags = pull_flags(sas, Puller(max_calls=8))
+            cache.put(key, flags, ttl=300)
+        return {'flags': flags}
     key = f"report_card_flags:{territory_id}:{service_date}:{snap['built_at']}"
     flags = cache.get(key)
     if flags is None:
@@ -277,13 +287,23 @@ def get_case_trail(wo_id: str, request: Request):
     return out
 
 
+def _publish_progress(territory_id: str, service_date: str, started: str, stage: str, partial: dict):
+    """Publish the day's calls (then their drivers) in the build status so the page can show them while the slow
+    reads continue. Keeps the original start time so the 15-minute stale-build rule still works."""
+    from report_card_build import preview_from_raw
+    cur = store.get_status(territory_id, service_date) or {}
+    store.set_status(territory_id, service_date, **{**cur, 'status': 'building', 'started_at': started,
+                     'stage': stage, 'preview': preview_from_raw(partial)})
+
+
 def _run_build(territory_id: str, service_date: str, started: str):
     from report_card_build import pull_garage_day
     from report_card_snapshot import build_snapshot
     with _BUILD_SEM:
         t0, raw = time.time(), None
         try:
-            raw = pull_garage_day(territory_id, service_date)
+            progress = lambda stage, partial: _publish_progress(territory_id, service_date, started, stage, partial)
+            raw = pull_garage_day(territory_id, service_date, progress=progress)
             size = store.save_snapshot(territory_id, service_date, build_snapshot(raw))
             store.set_status(territory_id, service_date, status='ready', started_at=started,
                              finished_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),

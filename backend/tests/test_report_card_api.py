@@ -186,3 +186,20 @@ def test_case_trail_is_gated_validated_and_cached(client, monkeypatch):
     assert len(calls) == 1                                  # second call served from cache: no Salesforce
     state['flag'] = False
     assert c.get(url).status_code == 404
+
+
+def test_build_publishes_its_calls_as_it_goes_and_flags_work_while_building(client, monkeypatch):
+    import time
+    import report_card_build
+    from routers import report_card as rc
+    c, state, store = client
+    flags_url = f'/api/report-card/{TID}/{DAY}/call-flags'
+    assert c.get(flags_url).status_code == 404                      # nothing built, nothing building: not ready
+    store.set_status(TID, DAY, status='building', started_at='t0', started_ts=time.time())
+    assert c.get(flags_url).status_code == 202                      # building, nothing read yet: 'building'
+    rc._publish_progress(TID, DAY, 't0', 'calls', tiny_raw())       # the build has read the day's calls
+    st = c.get(f'/api/report-card/{TID}/{DAY}/status').json()
+    assert st['status'] == 'building' and st['stage'] == 'calls' and st['preview']['sas'] and st['started_ts']
+    monkeypatch.setattr(report_card_build.Puller, 'batched', lambda self, t, ids, size=150, **k: [])
+    r = c.get(flags_url)
+    assert r.status_code == 200 and r.json() == {'flags': {}}       # works from the preview, no snapshot needed

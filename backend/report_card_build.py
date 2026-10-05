@@ -104,8 +104,36 @@ _SA_FIELDS = """Id, AppointmentNumber, Status, CreatedDate, SchedStartTime, Sche
  ERS_Dispatched_Geolocation__Latitude__s, ERS_Dispatched_Geolocation__Longitude__s, Auto_Schedule_Requested__c"""
 
 
-def pull_garage_day(territory_id: str, service_date: str) -> dict:
-    """Read everything one garage-day needs. Raises on an SA count mismatch (section 5.6)."""
+def preview_from_raw(raw: dict) -> dict:
+    """What the page can show while the rest of the day is still being read: the day's calls, then their drivers.
+    Pure and cheap: it reuses rows the build already pulled, so it adds no Salesforce calls."""
+    driver_by_sa = {}
+    for a in raw.get('assigned') or []:
+        driver_by_sa[a['ServiceAppointmentId']] = (a.get('ServiceResource') or {}).get('Name')
+    day_start = (raw.get('window') or {}).get('day_start')
+    calls = []
+    for s in raw.get('sas') or []:
+        if day_start and (s.get('CreatedDate') or '')[:19] < day_start[:19]:
+            continue                      # carry-over context from the day before is not one of the day's calls
+        wt = (s.get('WorkType') or {}).get('Name') or ''
+        calls.append({'id': s['Id'], 'number': s.get('AppointmentNumber'), 'work_type': wt, 'is_drop_off': 'drop' in wt.lower(),
+                      'status': s.get('Status'), 'created': s.get('CreatedDate'), 'city': s.get('City'),
+                      'postal_code': s.get('PostalCode'), 'woli_id': s.get('ParentRecordId'),
+                      'driver_name': driver_by_sa.get(s['Id']) or (s.get('Off_Platform_Driver__r') or {}).get('Name') or ''})
+    calls.sort(key=lambda c: c['created'] or '')
+    return {'sas': calls, 'garage': (raw.get('territory') or {}).get('Name'), 'drivers_known': 'assigned' in raw}
+
+
+def pull_garage_day(territory_id: str, service_date: str, progress=None) -> dict:
+    """Read everything one garage-day needs. Raises on an SA count mismatch (section 5.6).
+    `progress(stage, raw)` is called after the calls and after their drivers are read, so the page can start
+    showing the day; a failure in it never breaks the build."""
+    def _tell(stage):
+        if progress:
+            try:
+                progress(stage, raw)
+            except Exception:
+                log.warning('report card progress hook failed at %s', stage, exc_info=True)
     t0 = time.time()
     tid = sanitize_soql(territory_id)
     w = day_window(service_date)
@@ -131,6 +159,7 @@ def pull_garage_day(territory_id: str, service_date: str) -> dict:
     raw['sa_count_expected'] = expected
     raw['sas'] = sas
     sa_ids = [s['Id'] for s in sas]
+    _tell('calls')
 
     # Q2, Q3, Q3b: history, assigned resources, WOLI skill requirements.
     raw['history'] = p.batched("""SELECT ServiceAppointmentId, Field, OldValue, NewValue, CreatedDate,
@@ -140,6 +169,7 @@ def pull_garage_day(territory_id: str, service_date: str) -> dict:
     raw['assigned'] = p.batched("""SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name,
         ServiceResource.ERS_Driver_Type__c, CreatedDate, CreatedBy.Name
         FROM AssignedResource WHERE ServiceAppointmentId IN ({ids})""", sa_ids)
+    _tell('drivers')
     raw['woli_skills'] = p.batched("""SELECT RelatedRecordId, Skill.MasterLabel FROM SkillRequirement
         WHERE RelatedRecordId IN ({ids})""", [s.get('ParentRecordId') for s in sas])
 

@@ -158,7 +158,7 @@ const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call
 const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
-function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) {
+export function CallList({ calls, names, flags, selected, onSelect, prefetchStories, preview }) {
   // Hovering a work order for a moment starts loading its story, so the click usually opens it instantly.
   const hoverTimer = useRef(null)
   const startHover = number => { if (!prefetchStories) return; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => loadStoryReplay(number), 350) }
@@ -200,7 +200,7 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
             {chip('rap', 'RAP', all.filter(x => x.rap).length)}
             {chip('ooT', 'Out of territory', all.filter(x => x.out_of_territory).length)}
             {chip('text', 'SMS not sent', all.filter(x => x.text?.state === 'missing').length)}
-            {chip('late', 'Missed PTA', calls.filter(missedPta).length)}
+            {!preview && chip('late', 'Missed PTA', calls.filter(missedPta).length)}
             {chip('cases', 'Has cases', all.filter(x => x.cases?.total > 0).length)}
           </div>
         )}
@@ -228,7 +228,7 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
                 : <span className="mt-3 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />}
               <span className="min-w-0 flex-1">
                 <span className="block text-xs text-white font-medium">{c.number} · {c.work_type}</span>
-                <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
+                <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || c.driver_name || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
                 {c.city ? <span className="block text-[11px] text-slate-500 truncate">{c.city}{c.postal_code ? ` ${c.postal_code}` : ''}</span>
                   : <span className="block text-[11px] text-amber-400">No address on this call</span>}
                 {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
@@ -256,6 +256,30 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
         {!shown.length && <div className="px-3 py-4 text-xs text-slate-500">No work orders match these filters.</div>}
       </div>
       {trail && <CaseTrailPanel woId={trail.woId} number={trail.number} onClose={() => setTrail(null)} />}
+    </div>
+  )
+}
+
+/** A day that is still being built: the calls it has already read, with their flags, scores and cases, right away.
+ *  The map, drivers and grades open by themselves when the build finishes. */
+export function BuildingPreview({ preview, stage, garage, date, startedAt }) {
+  const [flags, setFlags] = useState({})
+  useEffect(() => {
+    let live = true
+    if (preview.sas.length) loadCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
+    return () => { live = false }
+  }, [garage, date, preview.sas.length > 0]) // eslint-disable-line react-hooks/exhaustive-deps
+  const calls = useMemo(() => preview.sas.filter(c => !c.is_drop_off)
+    .map(c => ({ ...c, preview: true, driver_name: c.driver_name || (preview.drivers_known ? '' : '…') })), [preview])
+  return (
+    <div className="flex gap-3 items-start">
+      <CallList calls={calls} names={{}} flags={flags} selected={null} onSelect={() => {}} preview />
+      <div className="flex-1 min-w-0 glass rounded-xl p-8 text-center">
+        <Loader2 className="w-6 h-6 text-brand-400 animate-spin mx-auto mb-3" />
+        <div className="text-sm text-white">{calls.length} work orders are already here.</div>
+        <div className="text-sm text-slate-400 mt-1">Still reading driver locations and grading the day from Salesforce. The map, drivers and grades open by themselves when it finishes (about a minute the first time, instant after that).</div>
+        <div className="text-xs text-slate-500 mt-2">{stage === 'drivers' ? 'Step 2 of 3: drivers read' : 'Step 1 of 3: calls read'}{startedAt ? ` · started ${new Date(startedAt).toLocaleTimeString()}` : ''}</div>
+      </div>
     </div>
   )
 }
