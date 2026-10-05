@@ -60,4 +60,6 @@ def test_survey_is_the_latest_one_and_totally_satisfied_is_flagged():
     rows = [{'ERS_Overall_Satisfaction__c': 'Dissatisfied', 'ERS_Survey_Completed_Date__c': '2026-10-01'},
             {'ERS_Overall_Satisfaction__c': 'Totally satisfied', 'ERS_Response_Time_Satisfaction__c': 'Satisfied',
              'ERS_Survey_Completed_Date__c': '2026-10-02'}]
-    assert survey_of(rows) == {'overall': 'Totally satisfied', 'response': 'Satisfied', 'tech': None, 'totally': True}
+    assert survey_of(rows) == {'overall': 'Totally satisfied', 'response': 'Satisfied', 'tech': None, 'nps': None, 'score': None, 'totally': True}
+    assert survey_of([{'ERS_NPS__c': 7.0, 'ERS_Survey_Completed_Date__c': 'x'}])['score'] == 70
+    assert survey_of([{'ERS_NPS__c': 0.0}])['score'] == 0   # a real zero is a score, not 'missing'

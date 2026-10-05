@@ -123,6 +123,14 @@ const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'Ameri
 
 const NONE = { rap: false, ooT: false, text: false, late: false, job: '', cover: '', survey: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
+// Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
+const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
+  : mode === 'totally' ? sv.totally : mode === 'not' ? !sv.totally
+  : mode === 'low' ? sv.score != null && sv.score < 80 : mode === 'high' ? sv.score != null && sv.score >= 80 : true
+const scoreColour = n => (n == null ? 'text-slate-400' : n >= 80 ? 'text-emerald-400' : n >= 60 ? 'text-amber-400' : 'text-rose-400')
+// Why an SA has no survey, so a blank never looks like a missing feature
+const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call is completed'
+  : x.opted_in === false ? 'Survey: none (member not opted in to texts)' : 'Survey: none yet (no response)'
 const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
@@ -134,7 +142,7 @@ function CallList({ calls, names, flags, selected, onSelect }) {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
       && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c))
-      && (!f.survey || (f.survey === 'none' ? !x.survey : f.survey === 'totally' ? x.survey?.totally : x.survey && !x.survey.totally))
+      && (!f.survey || surveyMatch(f.survey, x.survey))
   })
   const on = f.rap || f.ooT || f.text || f.late || f.job || f.cover || f.survey
   const surveyed = Object.values(flags).filter(x => x.survey)
@@ -171,7 +179,8 @@ function CallList({ calls, names, flags, selected, onSelect }) {
             <select value={f.survey} onChange={e => setF({ ...f, survey: e.target.value })}
               className="bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 px-1.5 py-0.5 flex-1">
               <option value="">Survey: all</option><option value="totally">Totally satisfied</option>
-              <option value="not">Not totally satisfied</option><option value="none">No survey</option>
+              <option value="not">Not totally satisfied</option><option value="low">Score below 80</option>
+              <option value="high">Score 80 and above</option><option value="none">No survey</option>
             </select>
             {tsPct != null && <span title={`${surveyed.length} surveys on this day`} className={`text-[11px] font-semibold ${tsPct < 80 ? 'text-rose-400' : 'text-emerald-400'}`}>{tsPct}% totally satisfied</span>}
           </div>
@@ -192,7 +201,10 @@ function CallList({ calls, names, flags, selected, onSelect }) {
                 {c.city ? <span className="block text-[11px] text-slate-500 truncate">{c.city}{c.postal_code ? ` ${c.postal_code}` : ''}</span>
                   : <span className="block text-[11px] text-amber-400">No address on this call</span>}
                 {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
-                {x?.survey && <span className={`block text-[11px] ${SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}`}>Survey: {x.survey.overall || 'no answer'}</span>}
+                {x && (x.survey
+                  ? <span className="block text-[11px]"><span className={SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}>Survey: {x.survey.overall || 'no answer'}</span>
+                      {x.survey.score != null && <span className={`font-semibold ${scoreColour(x.survey.score)}`} title="Likelihood to recommend, 0-10, shown out of 100"> · score {x.survey.score}</span>}</span>
+                  : <span className="block text-[11px] text-slate-600">{noSurveyWhy(c, x)}</span>)}
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
