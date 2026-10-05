@@ -17,6 +17,19 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.9 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.9` |
+| Commit | `82f4420` |
+| Bundle | `index-BKp-HTOv.js` |
+| Deploy | GitHub Actions run `37281697932`, 2026-10-05, success, 55 s |
+| Roll back to | `release/v1.8` = `a3437cb` (bundle `index-Co5Cta7c.js`) |
+
+**Changed** (frontend only)
+- Replay work-order list: a satisfaction score badge is the first thing in every row (number out of 100, green 80+, amber 60-79, red below 60). A dash and "no survey" (reason on hover) when the call has no survey. Verified with screenshots on the live site.
+
 ## v1.8 — 2026-10-05
 
 | | |
