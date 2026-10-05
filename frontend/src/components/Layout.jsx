@@ -359,7 +359,7 @@ export default function Layout() {
               <ClipboardCheck className="w-4 h-4 inline mr-1.5 -mt-0.5" />Report Card
             </Link>
             )}
-            {features.scheduler_report_card === true && userFeatures.includes('scheduler.report_card') && (
+            {features.scheduler_report_card === true && userFeatures.includes('scheduler.replay') && (
             <Link to="/replay"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/replay' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'

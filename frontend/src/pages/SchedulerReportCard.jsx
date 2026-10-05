@@ -10,7 +10,7 @@ import AiFindings from '../components/reportcard/AiFindings'
 import GarageReplay from '../components/reportcard/GarageReplay'
 import WorkOrderReplayTab from '../components/woreplay/WorkOrderReplayTab'
 
-const TABS = [['day', 'Day'], ['replay', 'Garage Replay'], ['wo', 'Work Order']]
+const TABS = [['day', 'Day']]                                            // the Report Card page: grading only. Replay has its own page and permission.
 const REPLAY_TABS = [['replay', 'Garage'], ['wo', 'Work Order']]   // the "Replay" menu page: replay only, no grading
 
 const POLL_MS = 3000
@@ -29,6 +29,12 @@ function Message({ icon: Icon = AlertTriangle, tone = 'text-slate-400', children
 export default function SchedulerReportCard({ view = 'report-card' }) {
   const isReplay = view === 'replay'
   const tabs = isReplay ? REPLAY_TABS : TABS
+  // Replay is for administrators and executives only: the server refuses everyone else, and this tells them why instead of showing an empty page
+  const [canReplay, setCanReplay] = useState(null)   // null = still checking
+  useEffect(() => {
+    if (!isReplay) return
+    fetch('/api/auth/me').then(r => r.json()).then(d => setCanReplay((d.features || []).includes('scheduler.replay'))).catch(() => setCanReplay(false))
+  }, [isReplay])
   const [params, setParams] = useSearchParams()
   const garage = params.get('garage') || ''
   const date = params.get('date') || ''
@@ -114,6 +120,7 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
     setUrl({ garage, date, sa: sa && sa.number !== saNumber ? sa.number : '' })
   }
 
+  if (isReplay && canReplay === false) return <div className="space-y-4"><Message icon={PlayCircle}>Replay is available to administrators and executives only.</Message></div>
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4">
@@ -175,7 +182,7 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
         </Message>
       )}
 
-      {(
+      {tabs.length > 1 && (
         <div className="flex gap-1 border-b border-slate-700/60" role="tablist">
           {tabs.filter(([k]) => k !== 'wo' || callStory).map(([k, label]) => (
             <button key={k} role="tab" aria-selected={tab === k} onClick={() => setUrl({ garage, date, sa: saNumber, tab: k, q })}

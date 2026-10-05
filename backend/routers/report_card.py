@@ -219,6 +219,7 @@ def get_replay(territory_id: str, service_date: str, request: Request):
     """Positions and call holds from the saved snapshot. No SF, no Postgres."""
     from report_card_replay import replay_view
     _gate(request, territory_id, service_date)
+    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
     snap = store.load_snapshot(territory_id, service_date)
     if snap is None:
         return _not_ready(territory_id, service_date)

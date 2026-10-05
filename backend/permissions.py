@@ -10,6 +10,8 @@ FEATURE_ROLES = {
     # Never "contractor": the report card shows other drivers' workloads and dispatcher behaviour.
     "scheduler.report_card":       {"superadmin", "admin", "executive", "ers-director"},
     "scheduler.report_card_admin": {"superadmin", "admin"},
+    # Replay (garage and work order): administrators and executives only, not ers-director. Superadmin sits above admin.
+    "scheduler.replay":            {"superadmin", "admin", "executive"},
 }
 
 
