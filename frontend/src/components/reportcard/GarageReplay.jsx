@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
-import { loadReplay, loadCallFlags } from './prefetch'
+import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
 import ReplayPlayer from '../replay/ReplayPlayer'
@@ -35,7 +35,7 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
   const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
   return (
     <div className="flex gap-3 items-start">
-      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} />
+      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />
       <div className="flex-1 min-w-0">
         {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
         {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
@@ -157,7 +157,11 @@ const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call
 const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
-function CallList({ calls, names, flags, selected, onSelect }) {
+function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) {
+  // Hovering a work order for a moment starts loading its story, so the click usually opens it instantly.
+  const hoverTimer = useRef(null)
+  const startHover = number => { if (!prefetchStories) return; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => loadStoryReplay(number), 350) }
+  const stopHover = () => clearTimeout(hoverTimer.current)
   const [f, setF] = useState(NONE)
   const jobs = useMemo(() => [...new Set(calls.map(c => c.work_type))].sort(), [calls])
   const covers = useMemo(() => [...new Set(Object.values(flags).map(x => x.coverage).filter(Boolean))].sort(), [flags])
@@ -213,7 +217,7 @@ function CallList({ calls, names, flags, selected, onSelect }) {
         {shown.map(c => {
           const x = flags[c.id]
           return (
-            <button key={c.id} onClick={() => onSelect(c.id)}
+            <button key={c.id} onClick={() => onSelect(c.id)} onMouseEnter={() => startHover(c.number)} onMouseLeave={stopHover}
               className={`w-full text-left px-3 py-2 border-b border-slate-800/80 flex items-start gap-2 transition-colors ${selected === c.id ? 'bg-brand-600/20' : 'hover:bg-slate-800/60'}`}>
               <ScoreBadge call={c} flag={x} />
               {missedPta(c)

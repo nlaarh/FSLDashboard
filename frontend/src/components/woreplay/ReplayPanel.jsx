@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Loader2, AlertTriangle, Target } from 'lucide-react'
-import { fetchCallStoryReplay, fetchCallStoryReplayMap } from '../../api'
+import { loadStoryReplay, loadStoryMap } from '../reportcard/prefetch'
 import TakeawaysCard from './TakeawaysCard'
 
 const WoReplayStage = lazy(() => import('./WoReplayStage'))   // the map stage loads only when a replay opens
@@ -23,11 +23,11 @@ export default function ReplayPanel({ q }) {
     let live = true
     setState({ phase: 'loading' })
     setLocations(undefined)
-    fetchCallStoryReplay(q)
+    loadStoryReplay(q)
       .then(({ status, data }) => live && setState(status === 200 ? { phase: 'ready', data } : { phase: 'error', error: MSG[status] || data?.detail || `Replay unavailable (${status})` }))
       .catch(e => live && setState({ phase: 'error', error: e.message }))
     // The map loads after the animation: Salesforce's driver GPS history is its slowest read.
-    fetchCallStoryReplayMap(q)
+    loadStoryMap(q)
       .then(({ status, data }) => live && setLocations(status === 200 ? data : null))
       .catch(() => live && setLocations(null))
     return () => { live = false }
