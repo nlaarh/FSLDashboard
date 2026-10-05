@@ -21,6 +21,9 @@ env/
 *.env.*
 backend/.deployment_env.sh
 
+# Local DB backups — contain password hashes, never commit
+backend/local_backups/
+
 # Node.js / Frontend
 frontend/node_modules/
 frontend/.vite/
