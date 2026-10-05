@@ -10,8 +10,9 @@ from datetime import datetime, date, timedelta, timezone
 from collections import defaultdict
 
 from utils import _ET, parse_dt as _parse_dt, minutes_since as _minutes_since
-from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
+from cache import DASHBOARD_TTL
 
 
 def _calc_ata(sa, towbook_on_location=None):
@@ -189,20 +190,12 @@ def get_ops_territories():
         ]
         all_sa_ids = [sa['Id'] for sa in sas if sa.get('Id')]
 
-        from sf_batch import batch_soql_parallel
-        # Both queries depend on sas but not on each other — run in parallel
-        _hist = sf_parallel(
-            towbook=lambda: get_towbook_on_location(towbook_completed_ids),
-            sa_hist=lambda: batch_soql_parallel("""
-                SELECT ServiceAppointmentId, NewValue, CreatedDate
-                FROM ServiceAppointmentHistory
-                WHERE Field = 'ServiceTerritory'
-                  AND ServiceAppointmentId IN ('{id_list}')
-                ORDER BY ServiceAppointmentId, CreatedDate ASC
-            """, all_sa_ids, chunk_size=200) if all_sa_ids else [],
-        )
-        towbook_on_location = _hist['towbook']
-        sa_hist_rows = _hist['sa_hist']
+        # Arrival times and territory moves come from the dashboards' shared history copy: one small update per
+        # refresh instead of ~15 batched Salesforce queries for appointments that are mostly closed already.
+        import sa_history
+        created = {sa['Id']: sa.get('CreatedDate') for sa in sas if sa.get('Id')}
+        towbook_on_location = get_towbook_on_location(towbook_completed_ids, created) if towbook_completed_ids else {}
+        sa_hist_rows = sa_history.rows_for('ServiceTerritory', all_sa_ids, created) if all_sa_ids else []
 
         matrix = _get_priority_matrix()
         rank_lookup = matrix['rank_lookup']
@@ -363,7 +356,7 @@ def get_ops_territories():
             },
         }
 
-    return cache.cached_query('ops_territories', _fetch, ttl=120)
+    return cache.cached_query('ops_territories', _fetch, ttl=DASHBOARD_TTL)
 
 
 def get_ops_territory_detail(territory_id: str):
@@ -397,7 +390,7 @@ def get_ops_territory_detail(territory_id: str):
         tb_ids = [s['Id'] for s in sas
                   if (s.get('ERS_Dispatch_Method__c') or '') == 'Towbook'
                   and s.get('Status') == 'Completed' and s.get('Id')]
-        towbook_on_location = get_towbook_on_location(tb_ids)
+        towbook_on_location = get_towbook_on_location(tb_ids, {s['Id']: s.get('CreatedDate') for s in sas if s.get('Id')}) if tb_ids else {}
 
         # Load priority matrix for rank lookup
         matrix = _get_priority_matrix()

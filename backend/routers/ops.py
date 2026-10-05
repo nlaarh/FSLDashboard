@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel, sanitize_soql
 from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
     is_fleet_territory, haversine,
@@ -13,6 +13,7 @@ from utils import (
 from dispatch import _driver_tier, _call_tier, _can_serve
 from ops import get_ops_territories, get_ops_territory_detail, get_ops_garages
 import cache
+from cache import DASHBOARD_TTL
 
 router = APIRouter()
 
@@ -473,4 +474,4 @@ def ops_brief():
             'generated_at': now_utc.isoformat(),
         }
 
-    return cache.cached_query('ops_brief', _fetch, ttl=60)
+    return cache.cached_query('ops_brief', _fetch, ttl=DASHBOARD_TTL)

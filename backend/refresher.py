@@ -44,6 +44,16 @@ _ENABLE_PER_GARAGE_REFRESH = _env_flag('FSLAPP_ENABLE_PER_GARAGE_REFRESH', False
 # Everything else still waits for its own interval (no Salesforce stampede on start).
 STARTUP_WARM_KEYS = ('queue_live', 'command_center_24', 'garages_list')
 
+# A schedule key is refreshed only if somebody read it in this long. Nobody looking (nights, weekends) = zero calls.
+ACTIVE_WINDOW_S = 900
+# Schedule key -> the cache key the endpoint really uses, when they differ (the Command Center caches under '..h').
+REAL_CACHE_KEY = {'command_center_24': 'command_center_24h', 'command_center_4': 'command_center_4h'}
+
+
+def refresh_due(elapsed: float, interval: float, read_recently: bool, warm_once: bool = False) -> bool:
+    """Refresh when the interval has passed AND somebody is looking (or it is the one-time warm-up after a restart)."""
+    return warm_once or (elapsed >= interval and read_recently)
+
 
 def _warm_watchlist():
     """Fill the shared watch-list cache once after a restart (it is not on the refresh schedule)."""
@@ -87,13 +97,13 @@ def _get_schedule():
         (30,   'queue_live',               get_live_queue,                  False),
 
         # ── Live dashboards (60s) ──
-        (60,   'ops_brief',               ops_brief,                        False),
-        (60,   'scheduler_insights_today', scheduler_insights,              False),
+        (300,  'ops_brief',               ops_brief,                        False),
+        (300,  'scheduler_insights_today', scheduler_insights,              False),
 
         # ── Operational views (120s) ──
-        (120,  'command_center_24',       lambda: command_center(hours=24), False),
-        (120,  'command_center_4',        lambda: command_center(hours=4),  False),
-        (120,  'ops_territories',         get_ops_territories,              False),
+        (300,  'command_center_24',       lambda: command_center(hours=24), False),
+        (300,  'command_center_4',        lambda: command_center(hours=4),  False),
+        (300,  'ops_territories',         get_ops_territories,              False),
         (120,  'map_drivers',             get_map_drivers,                  False),
 
         # ── Reference data (600s) ──
@@ -163,9 +173,10 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
     try:
         # Mark L1 as expired — stale data stays available for other readers
         with cache._lock:
-            entry = cache._store.get(key)
-            if entry:
-                entry['expires'] = 0
+            for k in {key, REAL_CACHE_KEY.get(key, key)}:
+                entry = cache._store.get(k)
+                if entry:
+                    entry['expires'] = 0
         # Call the endpoint — cached_query sees expired, re-fetches from SF
         # Other concurrent requests get stale data instantly (no blink)
         result = endpoint_fn()
@@ -301,6 +312,7 @@ def _refresh_loop():
         log.info("Startup force-refresh disabled; scheduled refreshes will be staggered by interval")
     cycle = 0
     watchlist_warmed = False
+    cache.set_system_thread(True)    # the refresher's own reads must not count as someone looking
 
     while True:
         try:
@@ -322,8 +334,13 @@ def _refresh_loop():
 
             for interval, key, fn, persist in schedule:
                 elapsed = now - last_refreshed[key]
+                looked_at = cache.recently_read(REAL_CACHE_KEY.get(key, key), ACTIVE_WINDOW_S)
+                warm_once = last_refreshed[key] == 0.0 and key in STARTUP_WARM_KEYS
+                if elapsed >= interval and not looked_at and not warm_once:
+                    last_refreshed[key] = time.time()     # nobody is looking: spend no Salesforce calls, look again later
+                    continue
                 # Refresh on schedule — always force-fetch fresh data from SF
-                if elapsed >= interval:
+                if refresh_due(elapsed, interval, looked_at, warm_once):
                     if _refresh_one(key, fn, interval, persist):
                         refreshed.append(key)
                     last_refreshed[key] = time.time()

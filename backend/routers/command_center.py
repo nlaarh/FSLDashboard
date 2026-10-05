@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel
 from utils import (
     _ET, parse_dt as _parse_dt,
 )
@@ -291,10 +291,11 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
             'hours': hours,
         }
 
-    ttl = 120 if hours >= 24 else 60 if hours >= 8 else 30
+    # Up to 5 minutes old for every window (the 4 h view used to be 30 s: a 42-call rebuild every half minute).
+    # Older than 15 minutes is rebuilt before it is shown, so an old screen is never served as current.
     return cache.stale_while_revalidate(
         f'command_center_{hours}h',
         _build,
-        ttl=ttl,
-        stale_ttl=3600,
+        ttl=cache.DASHBOARD_TTL,
+        stale_ttl=900,
     )

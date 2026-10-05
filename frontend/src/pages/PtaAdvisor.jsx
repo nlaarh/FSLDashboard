@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { RefreshCw, Loader2, Clock, AlertTriangle, Check, Shield, HelpCircle } from 'lucide-react'
 import { fetchPtaAdvisor, refreshPtaAdvisor, adminGetSettings, adminUpdateSettings } from '../api'
 import { GarageRow, HowItWorks, REC_STYLES } from '../components/PtaAdvisorDetail'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 export default function PtaAdvisor() {
   const [data, setData] = useState(null)
@@ -34,14 +35,14 @@ export default function PtaAdvisor() {
 
   useEffect(() => {
     load()
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+    return () => { intervalRef.current?.() }
   }, [load])
 
   // Auto-refresh
   useEffect(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = setInterval(load, refreshInterval * 1000)
-    return () => clearInterval(intervalRef.current)
+    intervalRef.current?.()
+    intervalRef.current = pollWhileVisible(load, refreshInterval * 1000)
+    return () => intervalRef.current?.()
   }, [refreshInterval, load])
 
   const handleForceRefresh = async () => {

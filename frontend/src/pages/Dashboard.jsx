@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'rea
 import { useNavigate } from 'react-router-dom'
 import { fetchGarages, fetchOpsTerritories } from '../api'
 import { clsx } from 'clsx'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 import {
   Search, AlertTriangle, Clock, RefreshCw,
   Activity, Flame, Phone, Users,
@@ -60,8 +61,8 @@ export default function Dashboard({ onNav: onNavProp } = {}) {
 
   // Auto-refresh every 2 min
   useEffect(() => {
-    refreshRef.current = setInterval(loadLive, 120_000)
-    return () => clearInterval(refreshRef.current)
+    refreshRef.current = pollWhileVisible(loadLive, 120_000)
+    return () => refreshRef.current?.()
   }, [loadLive])
 
   // ── Merge ────────────────────────────────────────────────────────────────────
