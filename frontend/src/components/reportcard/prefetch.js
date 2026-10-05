@@ -1,4 +1,4 @@
-import { fetchReportCardReplay, fetchReportCardCallFlags, fetchCallStoryReplay, fetchCallStoryReplayMap } from '../../api'
+import { fetchReportCardReplay, fetchReportCardCallFlags, fetchCallStoryReplay, fetchCallStoryReplayMap, fetchCaseTrail } from '../../api'
 
 /** One request per key, shared by whoever asks first (a hover that started loading, then the click that needs it).
  *  The Replay page starts these the moment the garage and date are known, in parallel with the day request.
@@ -20,3 +20,6 @@ export const loadCallFlags = once('flags', fetchReportCardCallFlags)
 // One call's story (animation steps) and map. Short life: a call still in progress keeps changing.
 export const loadStoryReplay = once('story', q => fetchCallStoryReplay(q), 90_000)
 export const loadStoryMap = once('storymap', q => fetchCallStoryReplayMap(q), 90_000)
+
+// A work order's cases and who touched each one: loaded when someone opens them, kept for 2 minutes (open cases change).
+export const loadCaseTrail = once('cases', woId => fetchCaseTrail(woId), 120_000)

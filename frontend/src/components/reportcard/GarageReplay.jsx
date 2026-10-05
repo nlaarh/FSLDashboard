@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
+import { Loader2, Compass, MessageSquareOff, FolderOpen } from 'lucide-react'
+import CaseTrailPanel from './CaseTrailPanel'
 import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
@@ -128,7 +129,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
 
 const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 
-const NONE = { rap: false, ooT: false, text: false, late: false, job: '', cover: '', survey: '' }
+const NONE = { rap: false, ooT: false, text: false, late: false, cases: false, job: '', cover: '', survey: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
 // Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
 const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
@@ -163,15 +164,16 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
   const startHover = number => { if (!prefetchStories) return; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => loadStoryReplay(number), 350) }
   const stopHover = () => clearTimeout(hoverTimer.current)
   const [f, setF] = useState(NONE)
+  const [trail, setTrail] = useState(null)   // the work order whose cases are open: { woId, number }
   const jobs = useMemo(() => [...new Set(calls.map(c => c.work_type))].sort(), [calls])
   const covers = useMemo(() => [...new Set(Object.values(flags).map(x => x.coverage).filter(Boolean))].sort(), [flags])
   const shown = calls.filter(c => {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
-      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c))
+      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c)) && (!f.cases || x.cases?.total > 0)
       && (!f.survey || surveyMatch(f.survey, x.survey))
   })
-  const on = f.rap || f.ooT || f.text || f.late || f.job || f.cover || f.survey
+  const on = f.rap || f.ooT || f.text || f.late || f.cases || f.job || f.cover || f.survey
   const surveyed = Object.values(flags).filter(x => x.survey)
   const tsPct = surveyed.length ? Math.round(100 * surveyed.filter(x => x.survey.totally).length / surveyed.length) : null
   const chip = (key, label, n) => (
@@ -199,6 +201,7 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
             {chip('ooT', 'Out of territory', all.filter(x => x.out_of_territory).length)}
             {chip('text', 'SMS not sent', all.filter(x => x.text?.state === 'missing').length)}
             {chip('late', 'Missed PTA', calls.filter(missedPta).length)}
+            {chip('cases', 'Has cases', all.filter(x => x.cases?.total > 0).length)}
           </div>
         )}
         {all.length > 0 && (
@@ -233,6 +236,14 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
+                  {x.cases?.total > 0 && (
+                    <span role="button" tabIndex={0} title={`${x.cases.total} case${x.cases.total === 1 ? '' : 's'}${x.cases.open ? `, ${x.cases.open} open` : ''}: click to see who touched them`}
+                      onClick={e => { e.stopPropagation(); setTrail({ woId: x.wo_id, number: c.number }) }}
+                      onKeyDown={e => e.key === 'Enter' && (e.stopPropagation(), setTrail({ woId: x.wo_id, number: c.number }))}
+                      className={`flex items-center gap-0.5 px-1 rounded text-[10px] font-bold leading-4 cursor-pointer ${x.cases.open ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'}`}>
+                      <FolderOpen className="w-3 h-3" />{x.cases.total}
+                    </span>
+                  )}
                   {x.rap && <span title="RAP call" className="px-1 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold leading-4">RAP</span>}
                   {x.out_of_territory && <span title="Out of territory"><Compass className="w-3.5 h-3.5 text-amber-400" /></span>}
                   {x.text?.state === 'missing' && <span title={x.text.tip} className="flex items-center gap-0.5 px-1 rounded bg-rose-500/20 text-rose-400 text-[10px] font-bold leading-4"><MessageSquareOff className="w-3 h-3" />SMS</span>}
@@ -244,6 +255,7 @@ function CallList({ calls, names, flags, selected, onSelect, prefetchStories }) 
         })}
         {!shown.length && <div className="px-3 py-4 text-xs text-slate-500">No work orders match these filters.</div>}
       </div>
+      {trail && <CaseTrailPanel woId={trail.woId} number={trail.number} onClose={() => setTrail(null)} />}
     </div>
   )
 }

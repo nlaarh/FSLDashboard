@@ -7,6 +7,7 @@
   GET  /api/report-card/{territory_id}/{date}/findings AI findings from the fact sheet (template without a key)
   GET  /api/report-card/{territory_id}/{date}/replay   driver tracks and call holds for the Day replay tab
   GET  /api/report-card/{territory_id}/{date}/call-flags   RAP / out of territory / coverage / member-text flags per call
+  GET  /api/case-trail/{wo_id}   the work order's cases, each with who touched it and what they did (on demand)
 
 Gates (architecture.md section 9): feature flag `scheduler_report_card` (404 when off, default off),
 permission `scheduler.report_card` (403; contractors never have it), territory access check.
@@ -250,6 +251,30 @@ def get_call_flags(territory_id: str, service_date: str, request: Request):
         old = (datetime.now(_ET).date() - date.fromisoformat(service_date)).days > 3
         cache.put(key, flags, ttl=86400 if old else 3600)
     return {'flags': flags}
+
+
+_WO_ID = re.compile(r'^0WO[A-Za-z0-9]{12,15}$')
+
+
+@router.get('/api/case-trail/{wo_id}')
+def get_case_trail(wo_id: str, request: Request):
+    """Cases on one work order with every touch (owner/status changes, comments, emails, tasks). Replay permission."""
+    import feature_flags
+    from report_card_build import Puller
+    import case_trail
+    if not feature_flags.is_on('scheduler_report_card'):
+        raise HTTPException(status_code=404, detail='Not found')
+    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    if not _WO_ID.match(wo_id or ''):
+        raise HTTPException(status_code=422, detail='Invalid work order id')
+    key = f'case_trail:{wo_id}'
+    out = cache.get(key)
+    if out is None:
+        cases = case_trail.pull(wo_id, Puller(max_calls=8))
+        out = {'wo_id': wo_id, 'cases': cases}
+        # open cases keep changing; a closed set is stable for longer
+        cache.put(key, out, ttl=3600 if cases and all(c['closed'] for c in cases) else 120)
+    return out
 
 
 def _run_build(territory_id: str, service_date: str, started: str):

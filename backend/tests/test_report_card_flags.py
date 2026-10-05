@@ -36,7 +36,7 @@ def test_before_the_log_existed_is_no_data_not_a_failure():
 def test_compose_maps_each_sa_to_its_work_order_flags():
     wo = {'Id': 'W1', 'CreatedDate': NEW, 'Type__c': 'RAP', 'Out_of_Territory__c': True, 'Coverage__c': 'PLUS', 'SMS_Opt_In__c': True}
     out = compose([{'id': 'S1', 'woli_id': 'L1'}, {'id': 'S2', 'woli_id': 'L9'}], {'L1': 'W1'}, {'W1': wo}, {'W1': [SENT]})
-    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None}}
+    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None, 'wo_id': 'W1', 'cases': {'total': 0, 'open': 0}}}
 
 
 def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
@@ -50,7 +50,7 @@ def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
     from report_card_flags import pull_flags
     f = Fake()
     out = pull_flags([{'id': 'S1', 'woli_id': 'L1'}], f)
-    assert len(f.sql) == 3 and f.sql[1][1] == [] and f.sql[2][1] == []        # old call: no log ids requested
+    assert len(f.sql) == 4 and f.sql[1][1] == [] and f.sql[2][1] == []      # work orders, text log (none), surveys (none), case counts        # old call: no log ids requested
     assert out['S1']['rap'] and out['S1']['text']['state'] == 'no_data'
 
 

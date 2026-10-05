@@ -170,6 +170,8 @@ export const fetchReportCardReplay = (territoryId, date) =>
   api.get(`/report-card/${territoryId}/${date}/replay`, { ...rcStates, timeout: 60000 }).then(rcResult)
 export const fetchReportCardCallFlags = (territoryId, date) =>
   api.get(`/report-card/${territoryId}/${date}/call-flags`, { ...rcStates, timeout: 60000 }).then(rcResult)
+export const fetchCaseTrail = woId =>
+  api.get(`/case-trail/${woId}`, { ...rcStates, timeout: 60000 }).then(rcResult)
 export const fetchReportCardFindings = (territoryId, date, rules) =>
   api.get(`/report-card/${territoryId}/${date}/findings${rcRules(rules)}`, { ...rcStates, timeout: 120000 }).then(rcResult)
 // Call Story — 404 not found, 409 ambiguous / load first, 400/422 bad input are states, not errors
