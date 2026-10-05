@@ -187,6 +187,7 @@ export default function ContractorLayout() {
   const { pathname } = useLocation()
   const [name, setName] = useState('')
   const [garageNames, setGarageNames] = useState([])
+  const [meLoaded, setMeLoaded] = useState(false)   // true once /api/auth/me answered, so 'no garages' is never a loading flash
   const [theme, setTheme] = useState(() => localStorage.getItem('fp_theme') || 'dark')
 
   useEffect(() => {
@@ -198,6 +199,7 @@ export default function ContractorLayout() {
     fetch('/api/auth/me').then(r => r.json()).then(d => {
       setName(d.name || '')
       setGarageNames(d.garage_names || [])
+      setMeLoaded(true)
     }).catch(() => {})
   }, [])
 
@@ -291,7 +293,12 @@ export default function ContractorLayout() {
       </nav>
 
       <main className="max-w-[1600px] mx-auto px-6 py-6">
-        <Outlet />
+        {meLoaded && garageNames.length === 0 ? (
+          <div className="glass rounded-xl p-8 text-center max-w-xl mx-auto">
+            <div className="text-white font-semibold mb-1">No garages are assigned to your account yet</div>
+            <div className="text-sm text-slate-400">Every contractor screen is filtered by your garages, so there is nothing to show until an administrator assigns them. Please ask your FleetPulse administrator to add your garage(s).</div>
+          </div>
+        ) : <Outlet />}
       </main>
 
       {/* Chatbot disabled for all users (per request). Re-add <FloatingChat /> to re-enable. */}
