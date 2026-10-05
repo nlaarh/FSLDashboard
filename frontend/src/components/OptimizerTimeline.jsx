@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import { optimizerGetRuns } from '../api'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const TERRITORY_DOT = {
   'WNY Fleet': 'bg-blue-500',
@@ -60,8 +61,8 @@ export default function OptimizerTimeline({ onSelectRun, selectedId }) {
 
   useEffect(() => {
     load()
-    timerRef.current = setInterval(load, 2 * 60 * 1000)
-    return () => clearInterval(timerRef.current)
+    timerRef.current = pollWhileVisible(load, 2 * 60 * 1000)
+    return () => timerRef.current?.()
   }, [])
 
   // Group runs by date + territory

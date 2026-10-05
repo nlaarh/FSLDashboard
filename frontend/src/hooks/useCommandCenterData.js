@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchCommandCenter, lookupSA, fetchMapGrids, fetchMapDrivers, fetchMapWeather, fetchOpsGarages, fetchOpsBrief, fetchSchedulerInsights, fetchGpsHealth } from '../api'
 import { getMapConfig } from '../mapStyles'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const REFRESH_MS = 60 * 1000
 
@@ -85,8 +86,7 @@ export default function useCommandCenterData() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    const iv = setInterval(load, REFRESH_MS)
-    return () => clearInterval(iv)
+    return pollWhileVisible(load, REFRESH_MS)
   }, [load])
   // Scheduler insights — always fetched fresh (no cache), loaded when user visits page
   const loadScheduler = useCallback(() => {
