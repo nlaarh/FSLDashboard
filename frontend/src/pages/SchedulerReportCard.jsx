@@ -8,13 +8,13 @@ import DaySummary from '../components/reportcard/DaySummary'
 import DayGantt from '../components/reportcard/DayGantt'
 import CallPanel from '../components/reportcard/CallPanel'
 import AiFindings from '../components/reportcard/AiFindings'
-import GarageReplay from '../components/reportcard/GarageReplay'
+import GarageReplay, { BuildingPreview } from '../components/reportcard/GarageReplay'
 import WorkOrderReplayTab from '../components/woreplay/WorkOrderReplayTab'
 
 const TABS = [['day', 'Day']]                                            // the Report Card page: grading only. Replay has its own page and permission.
 const REPLAY_TABS = [['replay', 'Garage'], ['wo', 'Work Order']]   // the "Replay" menu page: replay only, no grading
 
-const POLL_MS = 3000
+const POLL_MS = 1500   // the building page fills in as the build publishes the day's calls
 const POLL_LIMIT_MS = 3 * 60 * 1000
 
 function Message({ icon: Icon = AlertTriangle, tone = 'text-slate-400', children }) {
@@ -101,6 +101,7 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
         return
       }
       const { data } = await fetchReportCardStatus(garage, date).catch(() => ({ data: null }))
+      if (data?.status === 'building' && data.preview) setState(s => (s.phase === 'building' ? { ...s, preview: data.preview, stage: data.stage } : s))
       if (data?.status === 'ready') load()
       else if (data?.status === 'failed') { stopPoll(); setState({ phase: 'failed', error: data.error }) }
     }, POLL_MS)
@@ -168,12 +169,14 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
           <button onClick={() => build()} className="mt-3 px-4 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-medium">Build report</button>
         </Message>
       )}
-      {phase === 'building' && (
-        <Message icon={Loader2} tone="text-brand-400 animate-spin">
-          <div>Reading this day from Salesforce… it opens by itself when ready (about a minute the first time, instant after that).</div>
-          <div className="mt-1 text-xs text-slate-500">started {state.startedAt ? new Date(state.startedAt).toLocaleTimeString() : 'just now'}</div>
-        </Message>
-      )}
+      {phase === 'building' && (state.preview && isReplay && tab === 'replay'
+        ? <BuildingPreview preview={state.preview} stage={state.stage} garage={garage} date={date} startedAt={state.startedAt} />
+        : (
+          <Message icon={Loader2} tone="text-brand-400 animate-spin">
+            <div>Reading this day from Salesforce… it opens by itself when ready (about a minute the first time, instant after that).</div>
+            <div className="mt-1 text-xs text-slate-500">started {state.startedAt ? new Date(state.startedAt).toLocaleTimeString() : 'just now'}</div>
+          </Message>
+        ))}
       {phase === 'rules_unavailable' && (
         <Message icon={RefreshCw} tone="text-amber-300">
           <div>{state.info.error}</div>

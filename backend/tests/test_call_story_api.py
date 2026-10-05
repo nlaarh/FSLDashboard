@@ -99,10 +99,17 @@ def test_story_then_cache_hit_with_zero_salesforce_calls(client):
     assert c.get('/api/call-story?q=05164342&raw=1').json()['raw_history'][0]['Field'] == 'created'
 
 
-def test_rate_limit_429(client):
-    c, _ = client
-    codes = [c.get('/api/call-story?q=05164342').status_code for _ in range(11)]
-    assert codes[:10] == [200] * 10 and codes[10] == 429
+def test_rate_limit_429_counts_real_salesforce_pulls(client):
+    c, state = client
+    numbers = [f'051643{n:02d}' for n in range(20, 31)]     # 11 different calls = 11 pulls
+    codes = [c.get(f'/api/call-story?q={n}').status_code for n in numbers]
+    assert codes[:10] == [200] * 10 and codes[10] == 429 and state['pulls'] == 10
+
+
+def test_cache_hits_never_count_towards_the_limit(client):
+    c, state = client
+    codes = [c.get('/api/call-story?q=05164342').status_code for _ in range(25)]   # 1 pull, 24 hits
+    assert codes == [200] * 25 and state['pulls'] == 1
 
 
 def test_narrative_needs_the_story_first_and_falls_back_without_a_key(client, monkeypatch):

@@ -58,8 +58,10 @@ def _rate_limit(user: str, cfg: dict):
     q.append(now)
 
 
-def _raw_for(q: str, cfg: dict) -> tuple:
-    """(raw bundle, cache state). Resolution is cached so a repeat input costs 0 Salesforce calls."""
+def _raw_for(q: str, cfg: dict, user: str | None = None) -> tuple:
+    """(raw bundle, cache state). Resolution is cached so a repeat input costs 0 Salesforce calls.
+    `user` is rate limited only when a real Salesforce pull is needed: cache hits are free, so opening several
+    calls in a row (each is 2-3 requests) is never blocked."""
     kind, value = classify(q, cfg)
     with _WO_LOCKS[f'{kind}:{value}']:               # concurrent clicks on one call share a single pull
         wo_id = cache.get(f'cs_resolve:{kind}:{value}')
@@ -67,6 +69,8 @@ def _raw_for(q: str, cfg: dict) -> tuple:
             hit = cache.get(f'cs_raw:{wo_id}') or _stored(wo_id, cfg)
             if hit:
                 return hit, 'hit'
+        if user:
+            _rate_limit(user, cfg)
         with _PULLS:
             raw = pull_story(q, cfg)
         wo_id = raw['resolution']['wo']['id']
@@ -106,10 +110,9 @@ def get_story(request: Request, q: str, sa: str | None = None, rules: str | None
         classify(q, cfg)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    _rate_limit(_user(request), cfg)
     t0 = time.time()
     try:
-        bundle, state = _raw_for(q, cfg)
+        bundle, state = _raw_for(q, cfg, _user(request))
     except NotFound:
         return JSONResponse(status_code=404, content={'status': 'not_found'})
     except Ambiguous as e:

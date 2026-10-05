@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
-import { loadReplay, loadCallFlags } from './prefetch'
+import { Loader2, Compass, MessageSquareOff, FolderOpen } from 'lucide-react'
+import CaseTrailPanel from './CaseTrailPanel'
+import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
 import ReplayPlayer from '../replay/ReplayPlayer'
@@ -35,7 +36,7 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
   const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
   return (
     <div className="flex gap-3 items-start">
-      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} />
+      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />
       <div className="flex-1 min-w-0">
         {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
         {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
@@ -128,7 +129,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
 
 const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 
-const NONE = { rap: false, ooT: false, text: false, late: false, job: '', cover: '', survey: '' }
+const NONE = { rap: false, ooT: false, text: false, late: false, cases: '', job: '', cover: '', survey: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
 // Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
 const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
@@ -157,17 +158,22 @@ const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call
 const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
-function CallList({ calls, names, flags, selected, onSelect }) {
+export function CallList({ calls, names, flags, selected, onSelect, prefetchStories, preview }) {
+  // Hovering a work order for a moment starts loading its story, so the click usually opens it instantly.
+  const hoverTimer = useRef(null)
+  const startHover = number => { if (!prefetchStories) return; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => loadStoryReplay(number), 350) }
+  const stopHover = () => clearTimeout(hoverTimer.current)
   const [f, setF] = useState(NONE)
+  const [trail, setTrail] = useState(null)   // the work order whose cases are open: { woId, number }
   const jobs = useMemo(() => [...new Set(calls.map(c => c.work_type))].sort(), [calls])
   const covers = useMemo(() => [...new Set(Object.values(flags).map(x => x.coverage).filter(Boolean))].sort(), [flags])
   const shown = calls.filter(c => {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
-      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c))
+      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c)) && (!f.cases || (f.cases === 'any' ? x.cases?.total > 0 : f.cases === 'human' ? x.cases?.human > 0 : x.cases?.auto > 0))
       && (!f.survey || surveyMatch(f.survey, x.survey))
   })
-  const on = f.rap || f.ooT || f.text || f.late || f.job || f.cover || f.survey
+  const on = f.rap || f.ooT || f.text || f.late || f.cases || f.job || f.cover || f.survey
   const surveyed = Object.values(flags).filter(x => x.survey)
   const tsPct = surveyed.length ? Math.round(100 * surveyed.filter(x => x.survey.totally).length / surveyed.length) : null
   const chip = (key, label, n) => (
@@ -194,7 +200,18 @@ function CallList({ calls, names, flags, selected, onSelect }) {
             {chip('rap', 'RAP', all.filter(x => x.rap).length)}
             {chip('ooT', 'Out of territory', all.filter(x => x.out_of_territory).length)}
             {chip('text', 'SMS not sent', all.filter(x => x.text?.state === 'missing').length)}
-            {chip('late', 'Missed PTA', calls.filter(missedPta).length)}
+            {!preview && chip('late', 'Missed PTA', calls.filter(missedPta).length)}
+          </div>
+        )}
+        {all.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <select value={f.cases} onChange={e => setF({ ...f, cases: e.target.value })}
+              className="bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 px-1.5 py-0.5 flex-1">
+              <option value="">Cases: all</option>
+              <option value="any">Has cases · {all.filter(x => x.cases?.total > 0).length}</option>
+              <option value="human">Opened by a person · {all.filter(x => x.cases?.human > 0).length}</option>
+              <option value="auto">Automatic · {all.filter(x => x.cases?.auto > 0).length}</option>
+            </select>
           </div>
         )}
         {all.length > 0 && (
@@ -213,7 +230,7 @@ function CallList({ calls, names, flags, selected, onSelect }) {
         {shown.map(c => {
           const x = flags[c.id]
           return (
-            <button key={c.id} onClick={() => onSelect(c.id)}
+            <button key={c.id} onClick={() => onSelect(c.id)} onMouseEnter={() => startHover(c.number)} onMouseLeave={stopHover}
               className={`w-full text-left px-3 py-2 border-b border-slate-800/80 flex items-start gap-2 transition-colors ${selected === c.id ? 'bg-brand-600/20' : 'hover:bg-slate-800/60'}`}>
               <ScoreBadge call={c} flag={x} />
               {missedPta(c)
@@ -221,7 +238,7 @@ function CallList({ calls, names, flags, selected, onSelect }) {
                 : <span className="mt-3 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />}
               <span className="min-w-0 flex-1">
                 <span className="block text-xs text-white font-medium">{c.number} · {c.work_type}</span>
-                <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
+                <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || c.driver_name || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
                 {c.city ? <span className="block text-[11px] text-slate-500 truncate">{c.city}{c.postal_code ? ` ${c.postal_code}` : ''}</span>
                   : <span className="block text-[11px] text-amber-400">No address on this call</span>}
                 {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
@@ -229,6 +246,14 @@ function CallList({ calls, names, flags, selected, onSelect }) {
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
+                  {x.cases?.total > 0 && (
+                    <span role="button" tabIndex={0} title={`${x.cases.total} case${x.cases.total === 1 ? '' : 's'} (${x.cases.human || 0} opened by a person, ${x.cases.auto || 0} automatic)${x.cases.open ? `, ${x.cases.open} open` : ''}: click to see who touched them`}
+                      onClick={e => { e.stopPropagation(); setTrail({ woId: x.wo_id, number: c.number }) }}
+                      onKeyDown={e => e.key === 'Enter' && (e.stopPropagation(), setTrail({ woId: x.wo_id, number: c.number }))}
+                      className={`flex items-center gap-0.5 px-1 rounded text-[10px] font-bold leading-4 cursor-pointer ${x.cases.open ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30' : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'}`}>
+                      <FolderOpen className="w-3 h-3" />{x.cases.total}
+                    </span>
+                  )}
                   {x.rap && <span title="RAP call" className="px-1 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold leading-4">RAP</span>}
                   {x.out_of_territory && <span title="Out of territory"><Compass className="w-3.5 h-3.5 text-amber-400" /></span>}
                   {x.text?.state === 'missing' && <span title={x.text.tip} className="flex items-center gap-0.5 px-1 rounded bg-rose-500/20 text-rose-400 text-[10px] font-bold leading-4"><MessageSquareOff className="w-3 h-3" />SMS</span>}
@@ -239,6 +264,31 @@ function CallList({ calls, names, flags, selected, onSelect }) {
           )
         })}
         {!shown.length && <div className="px-3 py-4 text-xs text-slate-500">No work orders match these filters.</div>}
+      </div>
+      {trail && <CaseTrailPanel woId={trail.woId} number={trail.number} onClose={() => setTrail(null)} />}
+    </div>
+  )
+}
+
+/** A day that is still being built: the calls it has already read, with their flags, scores and cases, right away.
+ *  The map, drivers and grades open by themselves when the build finishes. */
+export function BuildingPreview({ preview, stage, garage, date, startedAt }) {
+  const [flags, setFlags] = useState({})
+  useEffect(() => {
+    let live = true
+    if (preview.sas.length) loadCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
+    return () => { live = false }
+  }, [garage, date, preview.sas.length > 0]) // eslint-disable-line react-hooks/exhaustive-deps
+  const calls = useMemo(() => preview.sas.filter(c => !c.is_drop_off)
+    .map(c => ({ ...c, preview: true, driver_name: c.driver_name || (preview.drivers_known ? '' : '…') })), [preview])
+  return (
+    <div className="flex gap-3 items-start">
+      <CallList calls={calls} names={{}} flags={flags} selected={null} onSelect={() => {}} preview />
+      <div className="flex-1 min-w-0 glass rounded-xl p-8 text-center">
+        <Loader2 className="w-6 h-6 text-brand-400 animate-spin mx-auto mb-3" />
+        <div className="text-sm text-white">{calls.length} work orders are already here.</div>
+        <div className="text-sm text-slate-400 mt-1">Still reading driver locations and grading the day from Salesforce. The map, drivers and grades open by themselves when it finishes (about a minute the first time, instant after that).</div>
+        <div className="text-xs text-slate-500 mt-2">{stage === 'drivers' ? 'Step 2 of 3: drivers read' : 'Step 1 of 3: calls read'}{startedAt ? ` · started ${new Date(startedAt).toLocaleTimeString()}` : ''}</div>
       </div>
     </div>
   )

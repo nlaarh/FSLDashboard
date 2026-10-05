@@ -8,6 +8,7 @@ notifications don't count. Why there was none: opted out (not a problem) vs opte
 from call_story_config import CS1 as CONFIG
 from call_story_sms import label
 from utils import parse_dt
+from case_trail import actor
 
 LOG_START = CONFIG['sms']['log_start_utc']
 NOT_TO_MEMBER = {'Opt_in_Confirmation', 'Survey_IC_SMS', *CONFIG['sms']['exclude_definitions']}
@@ -43,7 +44,7 @@ def survey_of(rows: list) -> dict | None:
             'totally': (r.get('ERS_Overall_Satisfaction__c') or '').lower() == 'totally satisfied'}
 
 
-def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by_wo: dict | None = None) -> dict:
+def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by_wo: dict | None = None, cases_by_wo: dict | None = None) -> dict:
     out = {}
     for sa in sas:
         wo = wos.get(woli_to_wo.get(sa.get('woli_id')))
@@ -56,6 +57,8 @@ def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by
             'coverage': COVERAGE.get(wo.get('Coverage__c'), wo.get('Coverage__c')),
             'text': text_state(wo, logs_by_wo.get(wo['Id'], [])),
             'survey': survey_of((surveys_by_wo or {}).get(wo['Id'], [])),
+            'wo_id': wo['Id'],
+            'cases': (cases_by_wo or {}).get(wo['Id'], {'total': 0, 'open': 0, 'human': 0, 'auto': 0}),
         }
     return out
 
@@ -63,7 +66,7 @@ def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by
 def pull_flags(sas: list, puller) -> dict:
     """sas: snapshot SA records (non-drop-off). puller: report_card_build.Puller (one query at a time).
     Cost per garage-day: 1 query for all work orders (parent fields read through the line item) + 1 for the text log
-    (none when every call predates it) + 1 for surveys (completed calls only; none exist for the rest). Rows are filtered in SOQL, only needed columns are read."""
+    (none when every call predates it) + 1 for surveys (completed calls only) + 1 aggregate for case counts. Rows are filtered in SOQL, only needed columns are read."""
     woli_ids = sorted({s['woli_id'] for s in sas if s.get('woli_id')})
     woli_to_wo, wos = {}, {}
     for r in puller.batched(
@@ -86,4 +89,14 @@ def pull_flags(sas: list, puller) -> dict:
                             "ERS_Technician_Satisfaction__c, ERS_NPS__c, ERS_Survey_Completed_Date__c FROM Survey_Result__c "
                             "WHERE ERS_Work_Order__c IN ({ids})", sorted(done), size=200):
         surveys_by_wo.setdefault(r['ERS_Work_Order__c'], []).append(r)
-    return compose(sas, woli_to_wo, wos, logs_by_wo, surveys_by_wo)
+    # One aggregate query: how many cases (open, and opened by a person vs an automation) each work order has.
+    # The list shows counts; the cases themselves and who touched them load only when someone opens them.
+    cases_by_wo = {}
+    for r in puller.batched("SELECT ERS_Work_Order__c, IsClosed, CreatedBy.Profile.Name prof, COUNT(Id) n FROM Case "
+                            "WHERE ERS_Work_Order__c IN ({ids}) GROUP BY ERS_Work_Order__c, IsClosed, CreatedBy.Profile.Name", sorted(wos), size=200):
+        c = cases_by_wo.setdefault(r['ERS_Work_Order__c'], {'total': 0, 'open': 0, 'human': 0, 'auto': 0})
+        c['total'] += r['n']
+        c['human' if actor(None, r.get('prof'))['kind'] == 'person' else 'auto'] += r['n']
+        if not r['IsClosed']:
+            c['open'] += r['n']
+    return compose(sas, woli_to_wo, wos, logs_by_wo, surveys_by_wo, cases_by_wo)
