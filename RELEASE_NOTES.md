@@ -17,6 +17,27 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.11 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.11` |
+| Commit | `5922c62` (merge of PR #20, branch `perf/salesforce-load`) |
+| Bundle | `index-YDV7zsZ_.js` (css `index-khmI-deV.css`) |
+| Deploy | GitHub Actions run `37389056416`, 2026-10-05 evening (outside working hours, on the user's explicit "deploy and test"), success |
+| Roll back to | `release/v1.10` = `543cb6b` (notes commit on top of `da508ef`; bundle `index-Qy6LI9dH.js`) |
+
+**Changed** (Salesforce load reduction, measured ~95 calls/min before)
+- Dashboards refresh in the background only if a user read them in the last 15 minutes; nights and weekends make no refresh calls.
+- Command Center / Ops Brief / Scheduler Insights / Ops Territories may be up to 5 minutes old; fixed a wrong Command Center cache key.
+- Command Center no longer queries once per garage for Towbook: about 90 down to 13 calls per refresh.
+- New shared 26-hour appointment history store (`sa_history`), updated incrementally; identical dashboard queries within 5 minutes share one read. Extra result pages now count as API requests.
+- Frontend: background polling pauses when the browser tab is hidden or the computer sleeps (`pollWhileVisible`).
+- Files: `backend/cache.py`, `ops.py`, `refresher.py`, `sa_history.py`, `sf_client.py`, `routers/command_center*.py`, `routers/misc_diagnostics.py`, `routers/ops.py`; `frontend/src/utils/pollWhileVisible.js`, `hooks/useCommandCenterData.js`, `pages/Dashboard.jsx`, `pages/PtaAdvisor.jsx`, `components/OptimizerTimeline.jsx`; new tests.
+- Tests: 482 passing.
+
+---
+
 ## v1.10 — 2026-10-05
 
 | | |
