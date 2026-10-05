@@ -135,6 +135,22 @@ const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
   : mode === 'totally' ? sv.totally : mode === 'not' ? !sv.totally
   : mode === 'low' ? sv.score != null && sv.score < 80 : mode === 'high' ? sv.score != null && sv.score >= 80 : true
 const scoreColour = n => (n == null ? 'text-slate-400' : n >= 80 ? 'text-emerald-400' : n >= 60 ? 'text-amber-400' : 'text-rose-400')
+const scoreBadgeClass = n => n == null ? 'border-slate-700 bg-slate-800/40 text-slate-500'
+  : n >= 80 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : n >= 60 ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+  : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+/** The satisfaction score, first thing in every row: the number out of 100, or a dash with the reason on hover. */
+function ScoreBadge({ call, flag }) {
+  if (!flag) return <span className="w-11 h-9 shrink-0 rounded-lg border border-slate-800 bg-slate-800/30 animate-pulse" title="Loading survey scores…" />
+  const sv = flag.survey
+  const score = sv?.score ?? null
+  const tip = sv ? `Satisfaction: ${sv.overall || 'no answer'}${score != null ? ` · recommend ${sv.nps}/10 = ${score}/100` : ''}` : noSurveyWhy(call, flag)
+  return (
+    <span title={tip} className={`w-11 shrink-0 rounded-lg border py-1 text-center leading-none ${scoreBadgeClass(score)}`}>
+      <span className="block text-base font-bold tabular-nums">{score != null ? score : '—'}</span>
+      <span className="block text-[8px] uppercase tracking-wide mt-0.5 opacity-80">{sv ? 'score' : 'no survey'}</span>
+    </span>
+  )
+}
 // Why an SA has no survey, so a blank never looks like a missing feature
 const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call is completed'
   : x.opted_in === false ? 'Survey: none (member not opted in to texts)' : 'Survey: none yet (no response)'
@@ -199,19 +215,17 @@ function CallList({ calls, names, flags, selected, onSelect }) {
           return (
             <button key={c.id} onClick={() => onSelect(c.id)}
               className={`w-full text-left px-3 py-2 border-b border-slate-800/80 flex items-start gap-2 transition-colors ${selected === c.id ? 'bg-brand-600/20' : 'hover:bg-slate-800/60'}`}>
+              <ScoreBadge call={c} flag={x} />
               {missedPta(c)
-                ? <span title="PTA missed" className="mt-0.5 w-3 h-3 rounded-full shrink-0 bg-rose-500 ring-2 ring-rose-500/30" />
-                : <span className="mt-1 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />}
+                ? <span title="PTA missed" className="mt-2.5 w-3 h-3 rounded-full shrink-0 bg-rose-500 ring-2 ring-rose-500/30" />
+                : <span className="mt-3 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />}
               <span className="min-w-0 flex-1">
                 <span className="block text-xs text-white font-medium">{c.number} · {c.work_type}</span>
                 <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
                 {c.city ? <span className="block text-[11px] text-slate-500 truncate">{c.city}{c.postal_code ? ` ${c.postal_code}` : ''}</span>
                   : <span className="block text-[11px] text-amber-400">No address on this call</span>}
                 {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
-                {x && (x.survey
-                  ? <span className="block text-[11px]"><span className={SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}>Survey: {x.survey.overall || 'no answer'}</span>
-                      {x.survey.score != null && <span className={`font-semibold ${scoreColour(x.survey.score)}`} title="Likelihood to recommend, 0-10, shown out of 100"> · score {x.survey.score}</span>}</span>
-                  : <span className="block text-[11px] text-slate-600">{noSurveyWhy(c, x)}</span>)}
+                {x?.survey && <span className={`block text-[11px] ${SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}`}>Survey: {x.survey.overall || 'no answer'}</span>}
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
