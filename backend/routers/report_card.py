@@ -1,5 +1,6 @@
 """Scheduler Report Card, slice 1: build a past garage-day once, then serve the day view.
 
+  GET  /api/report-card/garages?date=YYYY-MM-DD        only the garages that had ERS work orders that day (for the pickers)
   GET  /api/report-card/{territory_id}/{date}          day view (404 not built, 202 building, 409 failed)
   POST /api/report-card/{territory_id}/{date}/build    start a build (202), or 200 if already built
   GET  /api/report-card/{territory_id}/{date}/status   build status
@@ -107,6 +108,48 @@ def _rules(version: str, snap: dict):
             'error': f'Rules {version} need data this day was built without (original PTA, auto-schedule stamp). '
                      'Rebuild the day.'})
     return rules, None
+
+
+@router.get('/api/report-card/garages')
+def garages_with_work(request: Request, date: str):
+    """Garages that had at least one ERS work order that Eastern day, busiest first: [{id, name, count}].
+    Two small read-only aggregate queries per day, cached an hour (a past day does not change)."""
+    import feature_flags
+    from sf_client import sf_query_all, sanitize_soql
+    if not feature_flags.is_on('scheduler_report_card'):
+        raise HTTPException(status_code=404, detail='Not found')
+    require_feature('scheduler.report_card', request)
+    if not _DATE.match(date or ''):
+        raise HTTPException(status_code=422, detail='Date must be YYYY-MM-DD')
+    d, today = date_from_iso(date), datetime.now(_ET).date()
+    if d >= today:
+        raise HTTPException(status_code=422, detail='Past days only: pick yesterday or earlier')
+    if d < today - timedelta(days=MAX_LOOKBACK_DAYS):
+        raise HTTPException(status_code=422, detail=f'Older than {MAX_LOOKBACK_DAYS} days: Salesforce history is gone')
+    key = f'report_card_day_garages:{date}'
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    start = datetime(d.year, d.month, d.day, tzinfo=_ET).astimezone(timezone.utc)
+    stop = start + timedelta(days=1)
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ')
+    rows = sf_query_all(f"""SELECT ServiceTerritoryId, COUNT(Id) cnt FROM ServiceAppointment
+        WHERE CreatedDate >= {iso(start)} AND CreatedDate < {iso(stop)} AND ServiceTerritoryId != null
+        AND RecordType.Name = 'ERS Service Appointment' AND WorkType.Name != 'Tow Drop-Off'
+        GROUP BY ServiceTerritoryId ORDER BY COUNT(Id) DESC""")
+    ids = [r['ServiceTerritoryId'] for r in rows if _ID.match(r.get('ServiceTerritoryId') or '')]
+    names = {}
+    if ids:
+        names = {t['Id']: t['Name'] for t in sf_query_all(
+            "SELECT Id, Name FROM ServiceTerritory WHERE Id IN (" + ','.join(f"'{sanitize_soql(i)}'" for i in ids) + ')')}
+    out = [{'id': r['ServiceTerritoryId'], 'name': names.get(r['ServiceTerritoryId'], r['ServiceTerritoryId']), 'count': r['cnt']}
+           for r in rows if r.get('ServiceTerritoryId') in names]
+    cache.put(key, out, ttl=3600)
+    return out
+
+
+def date_from_iso(s: str) -> date:
+    return date.fromisoformat(s)
 
 
 @router.get('/api/report-card/{territory_id}/{service_date}')

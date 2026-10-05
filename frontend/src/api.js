@@ -160,6 +160,8 @@ export const fetchFeatures = () => api.get('/features').then(r => r.data)
 const rcStates = { validateStatus: s => s < 500 && s !== 401 }
 const rcResult = r => ({ status: r.status, data: r.data })
 const rcRules = rules => (rules ? `?rules=${rules}` : '')
+export const fetchReportCardGarages = date =>
+  api.get(`/report-card/garages?date=${date}`, rcStates).then(rcResult)
 export const fetchReportCard = (territoryId, date, rules) =>
   api.get(`/report-card/${territoryId}/${date}${rcRules(rules)}`, rcStates).then(rcResult)
 export const fetchReportCardStatus = (territoryId, date) =>

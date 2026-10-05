@@ -123,3 +123,32 @@ def test_replay_is_gated_and_served_from_the_snapshot(client):
     assert c.get(url, headers={'x-test-role': 'contractor'}).status_code == 403
     state['flag'] = False
     assert c.get(url).status_code == 404
+
+
+def test_garages_with_work_lists_only_garages_that_had_ers_work_orders_that_day(client, monkeypatch):
+    c, state, *_ = client
+    asked = []
+
+    def fake_query(soql):
+        asked.append(soql)
+        if 'GROUP BY ServiceTerritoryId' in soql:
+            return [{'ServiceTerritoryId': '0HhFAKE0000000A1AA', 'cnt': 90}, {'ServiceTerritoryId': '0HhFAKE0000000B2AA', 'cnt': 4}]
+        return [{'Id': '0HhFAKE0000000A1AA', 'Name': '100 - Fleet'}, {'Id': '0HhFAKE0000000B2AA', 'Name': '076DO - Towbook Garage'}]
+    monkeypatch.setattr('sf_client.sf_query_all', fake_query)
+    r = c.get('/api/report-card/garages?date=2026-09-28')
+    assert r.status_code == 200 and r.json() == [{'id': '0HhFAKE0000000A1AA', 'name': '100 - Fleet', 'count': 90},
+                                                  {'id': '0HhFAKE0000000B2AA', 'name': '076DO - Towbook Garage', 'count': 4}]
+    day_q = asked[0]
+    assert "RecordType.Name = 'ERS Service Appointment'" in day_q and "WorkType.Name != 'Tow Drop-Off'" in day_q
+    assert 'CreatedDate >= 2026-09-28T04:00:00Z' in day_q and 'CreatedDate < 2026-09-29T04:00:00Z' in day_q       # the Eastern day, in UTC
+    assert len(asked) == 2                                       # one aggregate + one name lookup
+
+
+def test_garages_with_work_is_gated_validates_the_date_and_needs_a_past_day(client):
+    c, state, *_ = client
+    assert c.get('/api/report-card/garages?date=2026-09-28', headers={'x-test-role': 'contractor'}).status_code == 403
+    assert c.get('/api/report-card/garages?date=tomorrow').status_code == 422
+    assert c.get('/api/report-card/garages?date=2999-01-01').status_code == 422
+    assert c.get('/api/report-card/garages?date=1999-01-01').status_code == 422
+    state['flag'] = False
+    assert c.get('/api/report-card/garages?date=2026-09-28').status_code == 404
