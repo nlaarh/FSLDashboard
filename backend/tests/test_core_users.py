@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 import pytest
-from conftest import _make_mock_conn
+from tests.conftest import _make_mock_conn
 
 
 class TestCoreUsers:
