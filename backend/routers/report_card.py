@@ -234,7 +234,7 @@ def get_replay(territory_id: str, service_date: str, request: Request):
 
 @router.get('/api/report-card/{territory_id}/{service_date}/call-flags')
 def get_call_flags(territory_id: str, service_date: str, request: Request):
-    """Icons and filters for the Replay work-order list. Two read-only SELECTs, cached against the snapshot."""
+    """Icons and filters for the Replay work-order list. Three read-only SELECTs, cached against the snapshot."""
     from report_card_build import Puller
     from report_card_flags import pull_flags
     _gate(request, territory_id, service_date)
@@ -246,7 +246,9 @@ def get_call_flags(territory_id: str, service_date: str, request: Request):
     flags = cache.get(key)
     if flags is None:
         flags = pull_flags([s for s in snap['sas'] if not s['is_drop_off']], Puller(max_calls=8))
-        cache.put(key, flags, ttl=86400)   # a past day never changes
+        # surveys arrive for a few days after a call: cache short while the day is recent, long once it can't change
+        old = (datetime.now(_ET).date() - date.fromisoformat(service_date)).days > 3
+        cache.put(key, flags, ttl=86400 if old else 3600)
     return {'flags': flags}
 
 

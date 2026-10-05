@@ -31,7 +31,17 @@ def text_state(wo: dict, logs: list) -> dict:
     return {'state': 'missing', 'sent': 0, 'tip': f'Opted in but got no text: {why}'}
 
 
-def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict) -> dict:
+def survey_of(rows: list) -> dict | None:
+    """The member's survey for this work order (latest if several). None = no survey."""
+    if not rows:
+        return None
+    r = max(rows, key=lambda x: x.get('ERS_Survey_Completed_Date__c') or '')
+    return {'overall': r.get('ERS_Overall_Satisfaction__c'), 'response': r.get('ERS_Response_Time_Satisfaction__c'),
+            'tech': r.get('ERS_Technician_Satisfaction__c'),
+            'totally': (r.get('ERS_Overall_Satisfaction__c') or '').lower() == 'totally satisfied'}
+
+
+def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by_wo: dict | None = None) -> dict:
     out = {}
     for sa in sas:
         wo = wos.get(woli_to_wo.get(sa.get('woli_id')))
@@ -43,14 +53,15 @@ def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict) -> dict:
             'opted_in': wo.get('SMS_Opt_In__c'),
             'coverage': COVERAGE.get(wo.get('Coverage__c'), wo.get('Coverage__c')),
             'text': text_state(wo, logs_by_wo.get(wo['Id'], [])),
+            'survey': survey_of((surveys_by_wo or {}).get(wo['Id'], [])),
         }
     return out
 
 
 def pull_flags(sas: list, puller) -> dict:
     """sas: snapshot SA records (non-drop-off). puller: report_card_build.Puller (one query at a time).
-    Cost per garage-day: 1 query for all work orders (parent fields read through the line item) + 1 for the text log,
-    and none for the log when every call predates it. Rows are filtered in SOQL, only needed columns are read."""
+    Cost per garage-day: 1 query for all work orders (parent fields read through the line item) + 1 for the text log
+    (none when every call predates it) + 1 for surveys (completed calls only; none exist for the rest). Rows are filtered in SOQL, only needed columns are read."""
     woli_ids = sorted({s['woli_id'] for s in sas if s.get('woli_id')})
     woli_to_wo, wos = {}, {}
     for r in puller.batched(
@@ -67,4 +78,10 @@ def pull_flags(sas: list, puller) -> dict:
     for r in puller.batched("SELECT Work_Order__c, Message_Definition__c, Outcome__c FROM SMS_Send_Log__c "
                             f"WHERE Work_Order__c IN ({{ids}}) AND Message_Definition__c NOT IN ({skip})", log_ids, size=200):
         logs_by_wo.setdefault(r['Work_Order__c'], []).append(r)
-    return compose(sas, woli_to_wo, wos, logs_by_wo)
+    done = {woli_to_wo[s['woli_id']] for s in sas if s.get('status') == 'Completed' and s.get('woli_id') in woli_to_wo}
+    surveys_by_wo = {}
+    for r in puller.batched("SELECT ERS_Work_Order__c, ERS_Overall_Satisfaction__c, ERS_Response_Time_Satisfaction__c, "
+                            "ERS_Technician_Satisfaction__c, ERS_Survey_Completed_Date__c FROM Survey_Result__c "
+                            "WHERE ERS_Work_Order__c IN ({ids})", sorted(done), size=200):
+        surveys_by_wo.setdefault(r['ERS_Work_Order__c'], []).append(r)
+    return compose(sas, woli_to_wo, wos, logs_by_wo, surveys_by_wo)

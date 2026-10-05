@@ -36,7 +36,7 @@ def test_before_the_log_existed_is_no_data_not_a_failure():
 def test_compose_maps_each_sa_to_its_work_order_flags():
     wo = {'Id': 'W1', 'CreatedDate': NEW, 'Type__c': 'RAP', 'Out_of_Territory__c': True, 'Coverage__c': 'PLUS', 'SMS_Opt_In__c': True}
     out = compose([{'id': 'S1', 'woli_id': 'L1'}, {'id': 'S2', 'woli_id': 'L9'}], {'L1': 'W1'}, {'W1': wo}, {'W1': [SENT]})
-    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text']}}
+    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None}}
 
 
 def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
@@ -50,5 +50,14 @@ def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
     from report_card_flags import pull_flags
     f = Fake()
     out = pull_flags([{'id': 'S1', 'woli_id': 'L1'}], f)
-    assert len(f.sql) == 2 and f.sql[1][1] == []        # old call: no log ids requested
+    assert len(f.sql) == 3 and f.sql[1][1] == [] and f.sql[2][1] == []        # old call: no log ids requested
     assert out['S1']['rap'] and out['S1']['text']['state'] == 'no_data'
+
+
+def test_survey_is_the_latest_one_and_totally_satisfied_is_flagged():
+    from report_card_flags import survey_of
+    assert survey_of([]) is None
+    rows = [{'ERS_Overall_Satisfaction__c': 'Dissatisfied', 'ERS_Survey_Completed_Date__c': '2026-10-01'},
+            {'ERS_Overall_Satisfaction__c': 'Totally satisfied', 'ERS_Response_Time_Satisfaction__c': 'Satisfied',
+             'ERS_Survey_Completed_Date__c': '2026-10-02'}]
+    assert survey_of(rows) == {'overall': 'Totally satisfied', 'response': 'Satisfied', 'tech': None, 'totally': True}
