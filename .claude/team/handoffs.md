@@ -1,0 +1,87 @@
+# Team Handoff Log
+
+Newest first. One entry per handoff.
+
+Format:
+## YYYY-MM-DD HH:MM — <From> → <To>
+- **Need:**
+- **Context:**
+- **Status:** open | picked up | done
+
+## 2026-10-04 — Ruby → Henry, Tamy, Kathy (r2 + builder 1.1 + GPS retry)
+- **Need:** Henry: r2 is in and is the default (metrics-spec 7.7). Rebuilt 9/28 with rc-build-1.1: PTA met r1 65/82, r2 64/82, the only flip is SA-1075021, 0 code changes, matching your table. 8/31 rebuilt: r2 = r1 (124/185). The other 18 ROI days in ~/.fslapp/report_card are still rc-build-1.0: under r2 they show "rebuild needed" (409 rules_unavailable), never r1 silently; ?rules=r1 still works. Tamy: rules selector on /report-card (r2 original PTA / r1 final PTA) and the rebuild-needed state. Kathy: GPS history read now cools down 20 s and retries the failed batch in halves down to 5 drivers (076DO 2026-08-03 timeout); still sequential.
+- **Context:** report_card_build.py (ERS_PTA__c in Q2, split retry), report_card_snapshot.py (pta_initial_min/src/due, pta events, rc-build-1.1), report_card_verdicts.py (RULES_R2_DELTA, DEFAULT_RULES='r2', supports/RulesNotAvailable), routers/report_card.py (?rules=). 132 report-card and flag tests pass.
+- **Status:** open
+
+## 2026-10-04 — Ruby → Tamy, Henry (Findings panel rewritten for ops directors)
+- **Need:** Tamy: re-test the Findings panel. Titles are now plain English and lead with member impact; cards are ordered by member impact (minutes past PTA on the finding's calls) and show "Cost members N waiting minutes on M late calls"; actions read "Owner: action"; codes are small grey tags. Henry: "member impact" is the product owner's definition (sum of minutes past ERS_PTA_Due__c on late calls in the finding); a call can count in more than one finding. Please confirm or refine it in the spec.
+- **Context:** The model now writes only title, text and headline for a diagnosis id it chooses; the server attaches severity, owner, action, cause, tags, impact and evidence. The validator also rejects verdict/flag/lever codes and internal terms (RSO, In-Day) in prose, and requires the headline's "The biggest lever:" sentence. 120 report-card and flag tests pass. Screenshots: scratchpad rc4_*.png.
+- **Status:** open
+
+## 2026-10-04 — Ruby → Henry, Tamy, Kathy, Dan (B4a auto-schedule, 5B impact, rebuilds, Call Story, SA-report fixes)
+- **Need:** Henry: B4a + 5B are in (rules r2 + builder rc-build-1.2). 8/31 under r2: BYPASSED_OPTIMIZER 134 = 47 garage-portal + 45 AAA dispatchers + 42 IT System User without stamp; 28 FSL_AUTO_SCHEDULE finals. 9/28: 31 (all 39 integration finals are FSL auto-schedule). New 8/31 headline: rebalance (L03), integration finding = 42 IT System User picks, ranked 5th by member impact. Please confirm the 10% / n>=3 trigger I used for the IT System User finding. All 40 stored days are now rc-build-1.2 (38 rebuilt one at a time, 638 calls; the GPS split-retry recovered 076DO 08-03). Tamy: Call Story built behind flag `call_story` (off); SA-report fixes 1/3/4/5 are a separate change set (sa_report.py, sa_report_timeline.py, dispatch_utils.py, SAReportTimeline.jsx, tests/test_sa_report_fixes.py). Kathy: demo backend on :8000 needs a restart to pick these up. Dan: Call Story deviations listed in my report (call_story_compose.py added; SA input resolves in 2 calls until the ERS_Work_Order__r relationship is described; Q7 logs and Q8 blocking pull not implemented; G4 not implemented).
+- **Context:** Call Story golden tests use a synthetic 10.4 bundle; the 4 real golden captures and the sf_describe checks (matrix object, Mobile_Phone__c, MessagingPlatformKey format) are still pending a Salesforce window.
+- **Status:** open
+
+## 2026-10-04 — Ruby → Tamy, Henry, Kathy (flag override + AI findings)
+- **Need:** Tamy: test the Findings panel on /report-card (9/28 WNY and 8/31 076DO are built locally), and the template path with no AI key. Henry: (1) confirm the garage-portal rule: a roster member with profile Partner Community User who makes an assignment is GARAGE_DISPATCHER (Todd Kryszak, 46 finals on 8/31, as in spec 6.2), while their status updates stay DRIVER. (2) Review the deterministic diagnosis rules in backend/report_card_facts.py (10A.2 mapped to L01–L13). Kathy: FSLAPP_FEATURE_OVERRIDES is local-only; it is ignored when WEBSITE_SITE_NAME is set and must never go into Azure settings or a committed file. The local ANTHROPIC_API_KEY has no credit (Anthropic returns 400 "credit balance is too low"); if production's AI provider is Anthropic, the chatbot and findings will fall back too.
+- **Context:** 8/31 verdicts match Henry exactly (GOOD 80, BOUNCED 35, STACKED 26, LDC 17, FAR 15; failures 93/195). AI output for both days validated first time with gpt-4o. 121 report-card and flag tests pass.
+- **Status:** open
+
+## 2026-10-04 — Dan → Henry, Ruby, Tamy, Kathy (Call Story design)
+- **Need:** Henry: settle O1 (r1 grades the re-based PTA; the story grades the original per the user's decision; r2 `pta_basis`?), O2 (golden 10.2 S6 56.5 min is SLOW under the 60-min floor, not STUCK), O3 (golden 10.3 S3 is CRITICAL under `critical_if_pta_passed`, not STUCK), O5 (pooled all-channel fallback for S7/S8/S9). Ruby: build only after the user approves; SA-report fixes 1/3/4/5 as a separate commit, bug 2 superseded. Tamy: acceptance steps in §8.4. Kathy: no env vars or migrations; new `stories/` folder in the report-card file store; flag `call_story`.
+- **Context:** docs/scheduler-report-card/call-story-architecture.md. User decisions on spec §14 recorded in §0 (D1–D5). Typical story 7 SF calls, worst case 10, hard cap 12; baselines come from report-card snapshots only (0 SF calls) and need 56-day coverage (O6, user decision).
+- **Status:** open (needs the user's approval)
+
+## 2026-10-03 — Ruby → Henry, Tamy (slice 1 follow-ups)
+- **Need:** Henry: h1 health + S9-T are in (report_card_health.py, report_card_verdicts.py). Saved 9/28 snapshot gives 4 healthy / 6 watch / 2 unhealthy and SKILL_MISMATCH = 1 (SA-1075493); every H1/H2/H4/H6 value and band matches your table. One input differs: Jacob's H5 is 0, not 1. His 82.9-min pull-back (SA-1075417) happened while he had another open job (SA-1075257), and §5A counts only drivers with 0 open jobs at dispatch. His badge is unchanged (unhealthy, scheduler); only the execution lens reads good instead of watch. Please confirm the definition. Tamy: Gantt redesigned (one work lane per driver, stacking strip with open-job count, waiting rail, hover tooltips, health badge names its lens).
+- **Context:** 90 report card tests pass, including a golden h1 test that runs when the local 9/28 snapshot exists. Screenshots: session scratchpad rc2_*.png.
+- **Status:** open
+
+## 2026-10-03 — Henry → Ruby, Dan, Tamy
+- **Need:**
+  - **Ruby: replace the interim driver health with h1.** See metrics-spec.md §5A. It uses two lenses (workload =
+    scheduler, execution = driver), returns `health_owner`, and drops M08 p90 and M13 from the badge. The config
+    JSON is in §5A. 9/28 result: 4 healthy / 6 watch / 2 unhealthy.
+  - **Ruby: SKILL_MISMATCH.** Your 5 was the correct reading of the old rule; my 3 was wrong. Implement S9-T: a
+    pre-login pick is qualified by the first truck logged into within 30 min of the decision and before En Route;
+    otherwise `unknown` and no flag. Correct 9/28 count = 1 (SA-1075493).
+  - **Ruby:** fix the 5 SA-report bugs in call-story-spec.md §11 before reusing that code.
+  - **Dan:** design the Call Story from docs/scheduler-report-card/call-story-spec.md (inputs, query plan, events,
+    stuck segments with baselines, grid/SPOT, SMS, cause codes, response shape §13).
+  - **Tamy:** the 4 golden calls in §10 are the acceptance tests (SA-1073520, SA-1074927, SA-1074304, SA-1067245).
+- **Context:**
+  - call-story-spec.md is new. metrics-spec.md gained §5A and S9-T, and the §7.4 SKILL_MISMATCH count is corrected.
+  - Scripts: docs/scheduler-report-card/validation/call_story/ and validation/driver_health/. h1 was computed
+    offline from ~/.fslapp/report_card/0HhPb00000007qGKAQ_2026-09-28.snapshot.json.
+- **Status:** open. The Call Story needs the user's answers to call-story-spec §14 (grid meaning, PTA promise, SMS
+  delivery access).
+
+## 2026-10-03 — Ruby → Tamy, Henry, Dan, Kathy
+- **Need:** Tamy: test Scheduler Report Card slice 1 (Day view + Gantt) on branch feature/scheduler-report-card (uncommitted, not deployed). Henry: confirm the interim driver-health rule (worst band of M06, M08 p90, M13; n >= 3) and the SKILL_MISMATCH 5 vs 3 difference (Jacob Schaich assigned 18:38/18:40 UTC, truck login 18:41:38, so no truck caps at decision time). Dan/Kathy: storage is an interim JSON file store (~/.fslapp/report_card locally, /home/fslapp/report_card on Azure), no DDL; Kathy's ops_002 migration can replace it later.
+- **Context:** Builder reproduces Henry's 9/28 WNY numbers exactly (90 SAs, PTA 65/82, verdicts GOOD 54 / CAPACITY_SHORT 10 / BOUNCED 7 / INBOUND 7 / GOOD_NO_ARRIVAL 6 / LDC 2 / LE 2 / INSUFFICIENT 2, M17 38/87, M19 36/43, M20 3/80 and 0/80, failure 9/81) in 16 sequential SOQL calls. Tests: backend/tests/test_report_card_*.py (79 pass). Flag `scheduler_report_card` default off; permission `scheduler.report_card` (never contractor).
+- **Status:** open
+
+## 2026-10-03 — Henry → Dan, Ruby, Kathy
+- **Need:** Dan: adopt metrics-spec.md §3–§7 into the design. Key changes: final decision maker = last ERS_Assigned_Resource__c history actor (not AR.CreatedBy); Platform Integration User = FSL engine; "qualified" = WOLI skills ⊆ SR skills + logged-in truck capabilities; store candidates at every assignment event; pilot garage = 100 WNY Fleet (076DO went Towbook 9/1); add region-level outbound-bounce pull; snapshot the SF optimizer trail (FSL__Optimization_Request__c, FSL__Territory_Optimization_Request__c, Optimization_Log__c). Kathy: Postgres opt_* coverage check still open (I did not query prod Postgres). Ruby: validation scripts in docs/scheduler-report-card/validation/ are the reference for numbers.
+- **Context:** docs/scheduler-report-card/metrics-spec.md; validation outputs output_100_2026-09-28.txt and output_076DO_2026-08-31.txt.
+- **Status:** open (needs the user's approval of §13 assumptions)
+
+## 2026-10-03 — Dan → Ruby (after user approval), Kathy, Henry
+- **Update:** Henry's metrics-spec.md folded into architecture.md (§5.2–§7); policy diagnosis (§7.6) and sandbox validation (§19) added. Remaining verifications: SF optimizer Request/Response files persist since 2024-12? request skills include truck caps? (§18.5)
+
+- **Need:** Henry: fill the plug-in slots in `docs/scheduler-report-card/architecture.md` §6 (metric registry), §7 (verdict codes, precedence, rule logic, r1 thresholds JSON, failure set, ERS_Driver_Type__c → channel mapping), §11.3 (recommendation lever library); answer open questions (Shift populated?, track SAs bounced OUT?, supervisor access?, driver names in AI input?, FSL SLR setting, is a balance objective FSL-native?). Kathy (read-only): actual FSLAPP_RETENTION_DAYS in Azure, what schedules optimizer_retention, is optimizer.* still being synced (max(run_at)), daily pilot-territory row counts — needed for §18.5 calibration corpus. Ruby: build only after the user approves the design.
+- **Context:** Design covers snapshot JSON, 6 additive `ops.src_*` tables (admin-applied migration, no startup DDL), sequential SF build ≤30 calls, Day + Patterns views, AI from fact sheets only, nightly gentle backfill.
+- **Status:** open
+
+## 2026-10-04 — Henry → Ruby, Dan, user
+- **Update:** ROI baseline written: `docs/scheduler-report-card/roi-baseline.md` (20 garage-days built with Ruby's builder, scored r1; scripts in `docs/scheduler-report-card/validation/roi/`). Call-story open items settled: O1 (r2 = original-promise PTA, metrics-spec §7.7), O2 + O3 (goldens 10.2/10.3 corrected, severity rule tightened in call-story-spec §5.3/§12), O5 (level-4 pooled S7/S8/S9 recorded, first data n=76), O7 (prod flows verified via Tooling API; match on trigger logic; prod adds logging and fixed the 80-min phone check; always-true OR re-check exists in prod).
+- **Need:** Ruby: (1) r2 needs `'ERS_PTA__c'` added to the Q2 SAHistory `Field IN (...)` in `report_card_build.py` + `pta_initial_min` in the snapshot (builder rc-build-1.1); `rules_for('r2')` = r1 + `pta_basis: "initial"`, 5 s window, chain same-second rows. (2) GPS read (`ServiceResourceHistory`) timed out at 45 s on 076DO 2026-08-03 with 126 drivers; consider a cool-down retry + smaller batches (my script used 40 ids + 60 s retry; 0 further failures). Dan: §8.1 rows updated; O4 and O6 still need the user. User: unit-cost inputs U1–U9 (roi-baseline §8). Flow owner (Kathleen Osuch): Check_SA_Status OR → AND in the 3 not-accepted SMS flows (safety net, no member impact today).
+- **Context:** Snapshots in ~/.fslapp/report_card/ (append-only). ~420 sequential read-only SF calls, no Postgres, no DML.
+- **Status:** open (unit costs from user; r2 build by Ruby after approval)
+
+## 2026-10-04 (later) — Henry → Ruby, Dan, user
+- **Update:** (1) Integration-account verdict in metrics-spec §4 B4a: Mulesoft + Replicant driver picks are FSL auto-schedule (ERS_SA_AutoSchedule sets FSL__Auto_Schedule__c → managed FSL.BatchScheduleServiceAppointments runs as that user; 179/179 + 68/68 picks inside those batch runs, last 2 days). IT System User is mixed: 167 of 286 driver picks have no FSL batch/stamp → decided outside Salesforce code (likely MuleSoft; unconfirmed). FSL__Scheduling_Policy_Used__c is never populated org-wide (0/45,725 in Aug), so it is not evidence of bypass. (2) Member impact defined in metrics-spec §5B (original promise; member cancels after the promise count to cancel time; overlap rule; one-call dominance note). (3) ROI extension: 800 Central Fleet + 421 Action Towing appended (roi-baseline §11); channel split replicates.
+- **Need:** Ruby: (a) the 8/31 headline "send integration picks through the FSL scheduler (162 of 195)" is wrong. 162 = 47 garage dispatcher + 45 AAA dispatcher + 42 IT System User + 28 FSL auto-schedule. Add class FSL_AUTO_SCHEDULE (integration pick 0–60 s after SA.Auto_Schedule_Requested__c; pull that field in Q1), exclude it from BYPASSED_OPTIMIZER, reword L01/L02 to "IT System User picks without auto-schedule", and stop citing the empty policy field. (b) report_card_facts impact: switch to due_initial + member-cancel rule (§5B). Integration team (via user): what decides IT System User's unstamped picks?
+- **Context:** docs/scheduler-report-card/validation/roi/integ*.py; snapshots ~/.fslapp/report_card/ (40 garage-days). No DML, no Postgres.
+- **Status:** open
