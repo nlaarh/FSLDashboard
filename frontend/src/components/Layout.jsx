@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef, useCallback } from 'react'
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, Loader2, DollarSign, BrainCircuit, FileText, Sun, Moon, X as XIcon } from 'lucide-react'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { PlayCircle, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, Loader2, DollarSign, BrainCircuit, FileText, Sun, Moon, ClipboardCheck, X as XIcon } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures, searchQuery } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
@@ -43,7 +43,8 @@ function Logo({ className = '' }) {
   )
 }
 
-function SASearch() {
+function SASearch({ callStory }) {
+  const navigate = useNavigate()
   const [query, setQuery]   = useState('')
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -60,6 +61,12 @@ function SASearch() {
     e?.preventDefault()
     const q = query.trim()
     if (!q) return
+    // Call Story: a call key or a record Id goes straight to the story (SA# keeps opening the SA report)
+    if (callStory && (/^\d{3}-\d{8}-\d{8}$/.test(q) || /^(08p|0WO|1WL)[A-Za-z0-9]{15}$/.test(q))) {
+      navigate(`/call-story?q=${encodeURIComponent(q)}`)
+      setQuery(''); setResults(null); setOpen(false)
+      return
+    }
     if (isSaDirect(q)) {
       const num = q.toUpperCase().startsWith('SA-') ? q.toUpperCase() : `SA-${q}`
       ctx?.open(num)
@@ -179,6 +186,13 @@ function SASearch() {
                   ))
                   : <span style={{ fontSize: 10, color: '#334155' }}>No SAs</span>
                 }
+                {callStory && r.wo_number && (
+                  <Link to={`/call-story?q=${encodeURIComponent(r.wo_number)}`} onClick={() => { setOpen(false); setResults(null) }}
+                    style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, color: '#cbd5e1',
+                             border: '1px solid #334155', textDecoration: 'none' }}>
+                    Story
+                  </Link>
+                )}
               </div>
             </div>
           ))}
@@ -194,6 +208,7 @@ export default function Layout() {
   const [department, setDepartment] = useState('')
   const [role, setRole] = useState('')
   const [name, setName] = useState('')
+  const [userFeatures, setUserFeatures] = useState([])
   const [impersonating, setImpersonating] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('impersonating') || 'null') } catch { return null }
   })
@@ -210,6 +225,7 @@ export default function Layout() {
       setDepartment(d.department || '')
       setRole(d.role || '')
       setName(d.name || '')
+      setUserFeatures(d.features || [])
     }).catch(() => {})
     const handler = (e) => {
       if (e.detail) setFeatures(e.detail)
@@ -335,9 +351,25 @@ export default function Layout() {
               <FileText className="w-4 h-4 inline mr-1.5 -mt-0.5" />Reporting
             </Link>
             )}
+            {features.scheduler_report_card === true && userFeatures.includes('scheduler.report_card') && (
+            <Link to="/report-card"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/report-card' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}>
+              <ClipboardCheck className="w-4 h-4 inline mr-1.5 -mt-0.5" />Report Card
+            </Link>
+            )}
+            {features.scheduler_report_card === true && userFeatures.includes('scheduler.report_card') && (
+            <Link to="/replay"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                pathname === '/replay' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}>
+              <PlayCircle className="w-4 h-4 inline mr-1.5 -mt-0.5" />Replay
+            </Link>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-1">
-            <SASearch />
+            <SASearch callStory={features.call_story === true && userFeatures.includes('scheduler.report_card')} />
             <div className="w-px h-5 bg-slate-700/50 mx-1" />
             <Link to="/issues" title="Report / Track Bugs"
               className={`p-1.5 rounded-lg transition-all ${

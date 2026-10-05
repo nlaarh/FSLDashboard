@@ -28,7 +28,7 @@ def _check_pin(request: Request):
 
 # Shared with routers/misc.py — the save loop below iterates these keys, so a
 # flag missing here is silently dropped when an admin saves. Keep one copy.
-from feature_flags import DEFAULT_FEATURES as _DEFAULT_FEATURES
+from feature_flags import DEFAULT_FEATURES as _DEFAULT_FEATURES, env_overrides
 
 
 def _load_settings():
@@ -350,8 +350,9 @@ def admin_update_settings(request: Request, body: dict):
     if 'features' in body:
         feat = body['features']
         settings.setdefault('features', _DEFAULT_FEATURES.copy())
+        local_only = env_overrides()   # never persist a local FSLAPP_FEATURE_OVERRIDES value
         for k in _DEFAULT_FEATURES:
-            if k in feat:
+            if k in feat and k not in local_only:
                 settings['features'][k] = bool(feat[k])
     _save_settings(settings)
     return settings

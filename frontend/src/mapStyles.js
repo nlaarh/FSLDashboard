@@ -1,4 +1,6 @@
 // Map tile styles — shared across all map components
+// 2026-10-04: Carto's free tiles began answering every request with an "API KEY REQUIRED" image, so the Carto-based
+// styles below now use OpenStreetMap tiles (the look comes from the CSS filter).
 // Preference saved in localStorage, changeable from Admin page
 
 // Preview tile: Buffalo area at zoom 9, tile x=150, y=187
@@ -15,42 +17,42 @@ export const MAP_STYLES = {
   apple_dark: {
     name: 'Apple Dark',
     description: 'Clean dark, muted tones',
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(1.05) saturate(0.3)',
     dark: true,
   },
   dark_matter: {
     name: 'Dark Matter',
     description: 'Classic dark, bright labels',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    filter: '',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    filter: 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.1) saturate(0.25)',
     dark: true,
   },
   voyager_dark: {
     name: 'Voyager Dark',
     description: 'Google dark mode style',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: 'invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.1) saturate(0.4)',
     dark: true,
   },
   voyager: {
     name: 'Voyager',
     description: 'Colorful, Google-like',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: '',
     dark: false,
   },
   apple_light: {
     name: 'Apple Light',
     description: 'Clean light, minimal',
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: 'saturate(0.4) brightness(1.02)',
     dark: false,
   },
   positron: {
     name: 'Positron',
     description: 'Light grey, minimal',
-    url: 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: '',
     dark: false,
   },

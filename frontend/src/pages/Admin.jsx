@@ -320,6 +320,8 @@ export default function Admin({ role = '' }) {
                   { key: 'chat',        label: 'AI Chat',       desc: 'Floating chatbot assistant' },
                   { key: 'accounting',  label: 'Accounting',    desc: 'WO Adjustment audit & recommendations' },
                   { key: 'contractor_dispatch', label: 'Dispatch & Map', desc: 'Contractor live dispatch board & driver map' },
+                  { key: 'scheduler_report_card', label: 'Report Card', desc: 'Scheduler Report Card: past garage-day Gantt and verdicts' },
+                  { key: 'call_story', label: 'Call Story', desc: 'Type a call, see what happened and why' },
                 ].map(m => {
                   const on = features[m.key] !== false
                   return (
