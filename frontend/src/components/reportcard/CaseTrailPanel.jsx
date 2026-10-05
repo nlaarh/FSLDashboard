@@ -46,8 +46,10 @@ export default function CaseTrailPanel({ woId, number, onClose }) {
 
   const all = state.phase === 'ready' ? state.cases : []
   const shown = all.filter(c => caseView === 'both' || caseKind(c) === caseView)
-  // keep a valid choice: the open case first, else the first one shown
-  const chosen = shown.find(c => c.id === pick) || shown.find(c => !c.closed) || shown[0]
+  // Open on the case people actually wrote on (the one with most written items); else an open case; else the first.
+  const mostWritten = [...shown].filter(c => c.written_count > 0).sort((a, b) => b.written_count - a.written_count)[0]
+  const chosen = shown.find(c => c.id === pick) || mostWritten || shown.find(c => !c.closed) || shown[0]
+  const writtenTotal = all.reduce((n, c) => n + c.written_count, 0)
   const events = useMemo(() => (chosen ? chosen.events.filter(e => eventView === 'both' || eventKind(e) === eventView) : []), [chosen, eventView])
   const caseCount = k => all.filter(c => k === 'both' || caseKind(c) === k).length
   const eventCount = k => (chosen ? chosen.events.filter(e => k === 'both' || eventKind(e) === k).length : 0)
@@ -65,6 +67,11 @@ export default function CaseTrailPanel({ woId, number, onClose }) {
         {state.phase === 'ready' && !all.length && <div className="p-6 text-sm text-slate-400">This work order has no cases.</div>}
         {all.length > 0 && (
           <div className="p-4 space-y-4">
+            <div className={`rounded-lg border px-3 py-2 text-xs ${writtenTotal ? 'border-sky-500/40 bg-sky-500/10 text-sky-100' : 'border-slate-800 text-slate-500'}`}>
+              {writtenTotal
+                ? <>People wrote <b>{writtenTotal}</b> {writtenTotal === 1 ? 'note, comment or email' : 'notes, comments and emails'} on this work order's cases. Cases with writing are marked <b>✎ written</b>.</>
+                : 'Nobody wrote a note, comment or email on these cases: they only have system and ownership changes.'}
+            </div>
             <div className="space-y-2">
               <Switch label="Cases" value={caseView} onChange={setCaseView} count={caseCount} />
               <div className="text-[10px] text-slate-600 pl-14">Human = opened by a person · Automatic = opened by an integration or the system</div>
@@ -83,7 +90,7 @@ export default function CaseTrailPanel({ woId, number, onClose }) {
                   <div className="text-[11px] text-slate-500 mt-0.5">Owner: {c.owner || 'nobody'} · opened by {c.created_by} · {when(c.created)}</div>
                   <div className="text-[11px] mt-0.5 flex gap-3">
                     <span className={c.human_touched ? 'text-emerald-400' : 'text-slate-600'}>{c.human_touched ? `${c.people.length} ${c.people.length === 1 ? 'person' : 'people'} touched it` : 'no person touched it'}</span>
-                    {c.written_count > 0 && <span className="text-sky-300">{c.written_count} written</span>}
+                    {c.written_count > 0 && <span className="px-1.5 rounded bg-sky-500/20 text-sky-200 font-semibold">✎ {c.written_count} written</span>}
                   </div>
                 </button>
               ))}
