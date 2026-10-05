@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
-import { fetchReportCardReplay, fetchReportCardCallFlags } from '../../api'
+import { loadReplay, loadCallFlags } from './prefetch'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
 import ReplayPlayer from '../replay/ReplayPlayer'
@@ -10,30 +10,42 @@ import DayGantt from './DayGantt'
 import ReplayPanel from '../woreplay/ReplayPanel'
 import { verdictColour } from './reportCardStyles'
 
-/** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock. */
+/** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock.
+ *  The work-order list shows as soon as the day data is here; the map side fills in when the replay arrives. */
 export default function GarageReplay({ data, garage, date, selectedSa, onSelectSa, callStory }) {
   const [state, setState] = useState({ phase: 'loading' })
   useEffect(() => {
     let live = true
     setState({ phase: 'loading' })
-    fetchReportCardReplay(garage, date)
+    loadReplay(garage, date)
       .then(({ status, data: d }) => live && setState(status === 200 ? { phase: 'ready', replay: d } : { phase: 'error', error: d?.detail || d?.error || `Replay unavailable (${status})` }))
       .catch(e => live && setState({ phase: 'error', error: e.message }))
     return () => { live = false }
   }, [garage, date])
 
-  if (state.phase === 'loading') return <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>
-  if (state.phase === 'error') return <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>
-  return <ReplayBody key={`${garage}:${date}`} garage={garage} date={date} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />
-}
-
-function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callStory }) {
-  const [flags, setFlags] = useState({})   // RAP / out of territory / coverage / texts per call; the list works without them
+  const [flags, setFlags] = useState({})   // RAP / out of territory / coverage / texts / survey per call; the list works without them
   useEffect(() => {
     let live = true
-    fetchReportCardCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
+    setFlags({})
+    loadCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
     return () => { live = false }
   }, [garage, date])
+
+  const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
+  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
+  return (
+    <div className="flex gap-3 items-start">
+      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} />
+      <div className="flex-1 min-w-0">
+        {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
+        {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
+        {state.phase === 'ready' && <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />}
+      </div>
+    </div>
+  )
+}
+
+function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
   // The day's ACTIVE hours only: from 15 min before the first call to 15 min after the last one clears (not midnight to midnight).
   const win = useMemo(() => {
     const made = replay.calls.map(c => c.created).filter(Boolean), done = replay.calls.map(c => c.end).filter(Boolean)
@@ -64,12 +76,8 @@ function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callSt
   const roster = frame.drivers.filter(d => d.pos || ['en_route', 'on_scene', 'assigned', 'idle'].includes(d.status.key)).sort((a, b) => (ORDER[a.status.key] ?? 9) - (ORDER[b.status.key] ?? 9) || a.name.localeCompare(b.name))
   const counts = roster.reduce((o, d) => ({ ...o, [d.status.key]: (o[d.status.key] || 0) + 1 }), {})
 
-  const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
-  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
   return (
-    <div className="flex gap-3 items-start">
-    <CallList calls={calls} names={names} flags={flags} selected={selected} onSelect={onSelectSa} />
-    <div className="space-y-3 flex-1 min-w-0">
+    <div className="space-y-3 min-w-0">
       {selected && callStory && <div ref={panelRef}><ReplayPanel q={sasById[selected].number} /></div>}
       <ReplayPlayer clock={clock} start={win[0]} end={win[1]} density={density}>
         <span className="text-[11px] text-slate-400">{frame.open.length} open · {frame.late.length} past promise</span>
@@ -114,7 +122,6 @@ function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callSt
       </div>
       <DayGantt data={data} selectedSa={selected} onSelect={onSelectSa} clockMs={clock.t * 1000}
         onSeek={ms => clock.setT(ms / 1000)} onSelectDriver={setDriverId} selectedDriver={driverId} />
-    </div>
     </div>
   )
 }

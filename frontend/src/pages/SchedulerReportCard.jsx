@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ClipboardCheck, PlayCircle, Loader2, AlertTriangle, Hammer, RefreshCw } from 'lucide-react'
 import { fetchReportCard, fetchReportCardStatus, buildReportCard, fetchFeatures } from '../api'
+import { loadReplay, loadCallFlags } from '../components/reportcard/prefetch'
 import ReportCardPickers from '../components/reportcard/ReportCardPickers'
 import DaySummary from '../components/reportcard/DaySummary'
 import DayGantt from '../components/reportcard/DayGantt'
@@ -67,6 +68,8 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
   const load = useCallback(async () => {
     stopPoll()
     setState({ phase: 'loading' })
+    // Replay page: start the map and list-detail requests now, alongside the day request, instead of after it
+    if (isReplay && tab === 'replay' && garage && date) { loadReplay(garage, date); loadCallFlags(garage, date) }
     try {
       const { status, data } = await fetchReportCard(garage, date, rules)
       if (status === 200) setState({ phase: 'ready', data })
