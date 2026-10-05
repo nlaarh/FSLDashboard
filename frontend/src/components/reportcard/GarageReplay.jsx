@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, MapPinOff, MessageSquareOff } from 'lucide-react'
+import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
 import { fetchReportCardReplay, fetchReportCardCallFlags } from '../../api'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
@@ -121,7 +121,9 @@ function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callSt
 
 const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 
-const NONE = { rap: false, ooT: false, text: false, job: '', cover: '' }
+const NONE = { rap: false, ooT: false, text: false, late: false, job: '', cover: '', survey: '' }
+const missedPta = c => c.verdict?.evidence?.pta_met === false
+const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
 function CallList({ calls, names, flags, selected, onSelect }) {
@@ -131,9 +133,12 @@ function CallList({ calls, names, flags, selected, onSelect }) {
   const shown = calls.filter(c => {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
-      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing')
+      && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c))
+      && (!f.survey || (f.survey === 'none' ? !x.survey : f.survey === 'totally' ? x.survey?.totally : x.survey && !x.survey.totally))
   })
-  const on = f.rap || f.ooT || f.text || f.job || f.cover
+  const on = f.rap || f.ooT || f.text || f.late || f.job || f.cover || f.survey
+  const surveyed = Object.values(flags).filter(x => x.survey)
+  const tsPct = surveyed.length ? Math.round(100 * surveyed.filter(x => x.survey.totally).length / surveyed.length) : null
   const chip = (key, label, n) => (
     <button key={key} onClick={() => setF({ ...f, [key]: !f[key] })}
       className={`px-2 py-0.5 rounded-full text-[11px] border ${f[key] ? 'bg-brand-600/30 border-brand-500 text-white' : 'border-slate-700 text-slate-400 hover:text-white'}`}>{label} · {n}</button>
@@ -157,7 +162,18 @@ function CallList({ calls, names, flags, selected, onSelect }) {
           <div className="flex flex-wrap gap-1.5">
             {chip('rap', 'RAP', all.filter(x => x.rap).length)}
             {chip('ooT', 'Out of territory', all.filter(x => x.out_of_territory).length)}
-            {chip('text', 'No text', all.filter(x => x.text?.state === 'missing').length)}
+            {chip('text', 'SMS not sent', all.filter(x => x.text?.state === 'missing').length)}
+            {chip('late', 'Missed PTA', calls.filter(missedPta).length)}
+          </div>
+        )}
+        {all.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <select value={f.survey} onChange={e => setF({ ...f, survey: e.target.value })}
+              className="bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 px-1.5 py-0.5 flex-1">
+              <option value="">Survey: all</option><option value="totally">Totally satisfied</option>
+              <option value="not">Not totally satisfied</option><option value="none">No survey</option>
+            </select>
+            {tsPct != null && <span title={`${surveyed.length} surveys on this day`} className={`text-[11px] font-semibold ${tsPct < 80 ? 'text-rose-400' : 'text-emerald-400'}`}>{tsPct}% totally satisfied</span>}
           </div>
         )}
       </div>
@@ -167,17 +183,20 @@ function CallList({ calls, names, flags, selected, onSelect }) {
           return (
             <button key={c.id} onClick={() => onSelect(c.id)}
               className={`w-full text-left px-3 py-2 border-b border-slate-800/80 flex items-start gap-2 transition-colors ${selected === c.id ? 'bg-brand-600/20' : 'hover:bg-slate-800/60'}`}>
-              <span className="mt-1 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />
+              {missedPta(c)
+                ? <span title="PTA missed" className="mt-0.5 w-3 h-3 rounded-full shrink-0 bg-rose-500 ring-2 ring-rose-500/30" />
+                : <span className="mt-1 w-2 h-2 rounded-full shrink-0" style={{ background: verdictColour(c.verdict?.code) }} />}
               <span className="min-w-0 flex-1">
                 <span className="block text-xs text-white font-medium">{c.number} · {c.work_type}</span>
                 <span className="block text-[11px] text-slate-400 truncate">{hhmm(c.created)} · {names[c.final_driver_id] || (c.channel === 'towbook' ? 'Towbook garage' : 'no driver')}{x?.coverage ? ` · ${x.coverage}` : ''}</span>
-                {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>{x.opted_in ? 'Opted in to texts' : 'Not opted in to texts'}</span>}
+                {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
+                {x?.survey && <span className={`block text-[11px] ${SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}`}>Survey: {x.survey.overall || 'no answer'}</span>}
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">
                   {x.rap && <span title="RAP call" className="px-1 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold leading-4">RAP</span>}
-                  {x.out_of_territory && <span title="Out of territory"><MapPinOff className="w-3.5 h-3.5 text-amber-400" /></span>}
-                  {x.text?.state === 'missing' && <span title={x.text.tip}><MessageSquareOff className="w-3.5 h-3.5 text-rose-500" /></span>}
+                  {x.out_of_territory && <span title="Out of territory"><Compass className="w-3.5 h-3.5 text-amber-400" /></span>}
+                  {x.text?.state === 'missing' && <span title={x.text.tip} className="flex items-center gap-0.5 px-1 rounded bg-rose-500/20 text-rose-400 text-[10px] font-bold leading-4"><MessageSquareOff className="w-3 h-3" />SMS</span>}
                   {x.text?.state === 'opted_out' && <span title={x.text.tip}><MessageSquareOff className="w-3.5 h-3.5 text-slate-500" /></span>}
                 </span>
               )}

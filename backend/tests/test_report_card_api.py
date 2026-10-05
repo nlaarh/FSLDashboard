@@ -155,7 +155,7 @@ def test_garages_with_work_is_gated_validates_the_date_and_needs_a_past_day(clie
     assert c.get('/api/report-card/garages?date=2026-09-28').status_code == 404
 
 
-def test_call_flags_are_gated_and_make_two_queries_at_most(client, monkeypatch):
+def test_call_flags_are_gated_and_make_three_queries_at_most(client, monkeypatch):
     import report_card_build
     c, state, store = client
     url = f'/api/report-card/{TID}/{DAY}/call-flags'
@@ -165,5 +165,5 @@ def test_call_flags_are_gated_and_make_two_queries_at_most(client, monkeypatch):
     seen = []
     monkeypatch.setattr(report_card_build.Puller, 'batched', lambda self, t, ids, size=150, **k: seen.append(t) or [])
     r = c.get(url)
-    assert r.status_code == 200 and r.json() == {'flags': {}} and len(seen) <= 2
+    assert r.status_code == 200 and r.json() == {'flags': {}} and len(seen) <= 3
     assert c.get(url, headers={'x-test-role': 'contractor'}).status_code == 403
