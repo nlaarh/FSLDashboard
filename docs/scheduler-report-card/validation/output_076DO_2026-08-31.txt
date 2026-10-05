@@ -1,0 +1,145 @@
+N SA (non drop-off) 208 Counter({'On-Platform Contractor Driver': 207, 'NO_AR': 1})
+AR.CreatedBy == last pick creator: 137 of 186
+AR.CreatedBy source: Counter({'INTEGRATION': 104, 'HUMAN': 34, 'FSL_ENGINE': 26, None: 22, 'OTHER:Todd Kryszak': 21, 'OTHER:Anna Guarino': 1})
+FINAL decision source (last ERS_Assigned_Resource__c actor): Counter({'INTEGRATION': 70, 'OTHER:Todd Kryszak': 46, 'HUMAN': 45, 'FSL_ENGINE': 45, None: 1, 'OTHER:Anna Guarino': 1})
+pullbacks (Dispatched/Accepted/EnRoute -> Spotted) SAs: 38
+cross: AR src vs final src Counter({('INTEGRATION', 'FSL_ENGINE'): 18, ('INTEGRATION', 'OTHER:Todd Kryszak'): 17, (None, 'HUMAN'): 8, (None, 'INTEGRATION'): 6, ('INTEGRATION', 'HUMAN'): 5, (None, 'FSL_ENGINE'): 4, (None, 'OTHER:Todd Kryszak'): 3, ('FSL_ENGINE', 'OTHER:Todd Kryszak'): 3, ('HUMAN', 'OTHER:Todd Kryszak'): 2, ('HUMAN', 'FSL_ENGINE'): 1, ('OTHER:Anna Guarino', 'INTEGRATION'): 1, ('FSL_ENGINE', 'HUMAN'): 1, ('INTEGRATION', 'OTHER:Anna Guarino'): 1})
+first-pick source: Counter({'INTEGRATION': 167, 'FSL_ENGINE': 18, 'HUMAN': 15, 'OTHER:Todd Kryszak': 7, None: 1})
+optimizer touched any pick: 71
+AR creators: Counter({'IT System User': 77, 'Platform Integration User': 26, None: 22, 'Mulesoft Integration': 22, 'Todd Kryszak': 21, 'Paige White': 20, 'Lynn Pilarski': 10, 'Replicant Integration User': 5, 'Tyler LaFave': 3, 'Anna Guarino': 1, 'Katie Tamez': 1})
+ActualStartTime vs SAHist OnLoc minutes diff: n 183 median 0.0 max abs 2.4
+ActualStart present w/o OnLoc hist 2 OnLoc w/o ActualStart 0
+ALL: n=208 arrived=185 median_resp=62 mean=74 PTA_met=124/185=67%
+PTA due vs created+PTA disagreements 0
+final=FSL_ENGINE: n=45 arrived=41 median_resp=67 mean=77 PTA_met=27/41=66%
+final=INTEGRATION: n=70 arrived=64 median_resp=46 mean=54 PTA_met=49/64=77%
+final=HUMAN: n=45 arrived=37 median_resp=82 mean=92 PTA_met=23/37=62%
+first=FSL_ENGINE: n=18 arrived=17 median_resp=59 mean=68 PTA_met=12/17=71%
+first=INTEGRATION: n=167 arrived=148 median_resp=61 mean=72 PTA_met=101/148=68%
+first=HUMAN: n=15 arrived=13 median_resp=65 mean=88 PTA_met=9/13=69%
+opt-touched: n=71 arrived=63 median_resp=67 mean=81 PTA_met=40/63=63% | never-opt: n=136 arrived=122 median_resp=54 mean=71 PTA_met=84/122=69%
+garage bounces SAs 10 Counter({('647 - A1 ENTERPRISES OF WNY', '076DO - TRANSIT AUTO DETAIL'): 4, ("202 - ELLMAN'S GARAGE INC.", '076DO - TRANSIT AUTO DETAIL'): 3, ('000- WNY M SPOT', '076DO - TRANSIT AUTO DETAIL'): 2, ('641 - DNA', '000- WNY M SPOT'): 2, ('078 - AUTO COLLISON & GLASS TOWING', '076DO - TRANSIT AUTO DETAIL'): 2, ('076DO - TRANSIT AUTO DETAIL', "626 - DAN'S TIRE & AUTO SER CNTR"): 1, ("626 - DAN'S TIRE & AUTO SER CNTR", '000- WNY M SPOT'): 1, ('000- WNY M SPOT', '641 - DNA'): 1, ('076DO - TRANSIT AUTO DETAIL', 'WM035'): 1, ('WM035', '076DO - TRANSIT AUTO DETAIL'): 1, ('076DO - TRANSIT AUTO DETAIL', "202 - ELLMAN'S GARAGE INC."): 1, ('076DO - TRANSIT AUTO DETAIL', '443 - RIDGEWAY SUNOCO'): 1, ('443 - RIDGEWAY SUNOCO', 'WM025'): 1, ('WM025', '076DO - TRANSIT AUTO DETAIL'): 1, ('076DO - TRANSIT AUTO DETAIL', '078 - AUTO COLLISON & GLASS TOWING'): 1})
+post-dispatch driver reassign SAs 37 pre-dispatch picks/SA Counter({1: 108, 2: 67, 3: 23, 4: 7, 6: 2, 0: 1})
+distinct drivers per SA Counter({1: 90, 2: 76, 3: 31, 4: 9, 0: 1, 5: 1})
+final driver lacks strict WOLI skills: 207 of 207 Counter({frozenset({'Tow'}): 107, frozenset({'Tow', 'Flat Bed'}): 48, frozenset({'Battery Service'}): 30, frozenset({'Tire'}): 13, frozenset({'Lockout'}): 6, frozenset({'Fuel - Gasoline'}): 1, frozenset({'Battery Service', 'Battery Certified'}): 1, frozenset({'Extrication- Highway/Roadway'}): 1})
+final driver has NONE of required skills: 164
+
+DRIVER-DAY
+{'d': 'Jett Malczewski 076DO', 'onshift_h': 8.4, 'assigned': 12, 'completed': 9, 'busy_h': 7.4, 'idle_h': 1.0, 'max_conc': 3, 'stack_min': 192, 'jph': 1.43, 'shifts': [('10:43', '17:42'), ('17:42', '19:06')], 'util': 0.88, 'asg_offshift': 1}
+{'d': 'David Tormey 076DO', 'onshift_h': 11.8, 'assigned': 11, 'completed': 10, 'busy_h': 8.8, 'idle_h': 3.0, 'max_conc': 3, 'stack_min': 166, 'jph': 0.93, 'shifts': [('08:08', '19:55')], 'util': 0.75, 'asg_offshift': 0}
+{'d': 'Austin Samit 076DO', 'onshift_h': 9.2, 'assigned': 11, 'completed': 8, 'busy_h': 7.8, 'idle_h': 1.8, 'max_conc': 2, 'stack_min': 107, 'jph': 1.2, 'shifts': [('12:16', '21:28')], 'util': 0.81, 'asg_offshift': 1}
+{'d': 'Anthony Mickiewicz 076DO', 'onshift_h': 11.3, 'assigned': 11, 'completed': 9, 'busy_h': 9.6, 'idle_h': 2.0, 'max_conc': 2, 'stack_min': 204, 'jph': 0.97, 'shifts': [('12:18', '23:36')], 'util': 0.82, 'asg_offshift': 1}
+{'d': 'Weston Thomas 076DO', 'onshift_h': 9.8, 'assigned': 10, 'completed': 8, 'busy_h': 9.1, 'idle_h': 0.7, 'max_conc': 2, 'stack_min': 180, 'jph': 1.02, 'shifts': [('07:19', '15:29'), ('15:30', '17:51')], 'util': 0.93, 'asg_offshift': 0}
+{'d': 'Trevor Briggs 076DO', 'onshift_h': 8.7, 'assigned': 10, 'completed': 7, 'busy_h': 6.9, 'idle_h': 2.2, 'max_conc': 3, 'stack_min': 162, 'jph': 1.15, 'shifts': [('10:17', '19:39')], 'util': 0.75, 'asg_offshift': 2}
+{'d': 'Raymond Rohauer 076DO', 'onshift_h': 9.2, 'assigned': 10, 'completed': 6, 'busy_h': 7.5, 'idle_h': 2.9, 'max_conc': 2, 'stack_min': 78, 'jph': 1.08, 'shifts': [('05:06', '14:21')], 'util': 0.69, 'asg_offshift': 1}
+{'d': 'Owen Potycz 076DO', 'onshift_h': 10.3, 'assigned': 10, 'completed': 8, 'busy_h': 8.6, 'idle_h': 1.7, 'max_conc': 3, 'stack_min': 258, 'jph': 0.97, 'shifts': [('10:58', '21:16')], 'util': 0.84, 'asg_offshift': 0}
+{'d': 'Matthew Moyer 076DO', 'onshift_h': 7.9, 'assigned': 9, 'completed': 8, 'busy_h': 6.1, 'idle_h': 1.8, 'max_conc': 2, 'stack_min': 151, 'jph': 1.13, 'shifts': [('09:05', '18:25')], 'util': 0.77, 'asg_offshift': 0}
+{'d': 'Thomas Shultz 076DO', 'onshift_h': 9.2, 'assigned': 8, 'completed': 7, 'busy_h': 7.8, 'idle_h': 1.5, 'max_conc': 2, 'stack_min': 93, 'jph': 0.86, 'shifts': [('07:04', '16:19')], 'util': 0.84, 'asg_offshift': 0}
+{'d': 'Teron Abrams 076DO', 'onshift_h': 9.0, 'assigned': 8, 'completed': 8, 'busy_h': 7.4, 'idle_h': 1.6, 'max_conc': 2, 'stack_min': 148, 'jph': 0.89, 'shifts': [('09:43', '18:41')], 'util': 0.82, 'asg_offshift': 0}
+{'d': 'Dean Kovacic 076DO', 'onshift_h': 7.2, 'assigned': 8, 'completed': 8, 'busy_h': 6.7, 'idle_h': 0.5, 'max_conc': 2, 'stack_min': 68, 'jph': 1.11, 'shifts': [('15:15', '22:28')], 'util': 0.93, 'asg_offshift': 0}
+{'d': 'Dawn Wilder 076DO', 'onshift_h': 11.6, 'assigned': 8, 'completed': 7, 'busy_h': 9.3, 'idle_h': 2.3, 'max_conc': 2, 'stack_min': 114, 'jph': 0.69, 'shifts': [('06:57', '19:28')], 'util': 0.8, 'asg_offshift': 0}
+{'d': 'Connor Kurdziel 076DO', 'onshift_h': 7.2, 'assigned': 8, 'completed': 7, 'busy_h': 6.0, 'idle_h': 1.2, 'max_conc': 2, 'stack_min': 147, 'jph': 1.1, 'shifts': [('06:02', '13:17')], 'util': 0.83, 'asg_offshift': 0}
+{'d': 'Brandon Bainbridge 076DO', 'onshift_h': 10.3, 'assigned': 8, 'completed': 8, 'busy_h': 6.9, 'idle_h': 3.4, 'max_conc': 2, 'stack_min': 132, 'jph': 0.78, 'shifts': [('08:59', '19:16')], 'util': 0.67, 'asg_offshift': 0}
+{'d': 'John Szpara 076DO', 'onshift_h': 9.6, 'assigned': 7, 'completed': 6, 'busy_h': 5.9, 'idle_h': 3.8, 'max_conc': 3, 'stack_min': 158, 'jph': 0.73, 'shifts': [('07:10', '16:48')], 'util': 0.61, 'asg_offshift': 0}
+{'d': 'Adam Lucas 076DO', 'onshift_h': 9.3, 'assigned': 7, 'completed': 6, 'busy_h': 8.2, 'idle_h': 1.1, 'max_conc': 3, 'stack_min': 299, 'jph': 0.75, 'shifts': [('07:06', '16:27')], 'util': 0.88, 'asg_offshift': 0}
+{'d': 'Michael Gemboys 076DO', 'onshift_h': 8.3, 'assigned': 7, 'completed': 6, 'busy_h': 7.1, 'idle_h': 1.2, 'max_conc': 3, 'stack_min': 206, 'jph': 0.85, 'shifts': [('07:05', '15:21')], 'util': 0.86, 'asg_offshift': 0}
+{'d': 'Jon-Michael Herrington 076DO', 'onshift_h': 7.1, 'assigned': 7, 'completed': 6, 'busy_h': 8.2, 'idle_h': 0.1, 'max_conc': 2, 'stack_min': 117, 'jph': 0.98, 'shifts': [('14:16', '22:23')], 'util': 0.99, 'asg_offshift': 1}
+{'d': 'Daniel Brusie 076DO', 'onshift_h': 10.5, 'assigned': 7, 'completed': 7, 'busy_h': 7.2, 'idle_h': 3.2, 'max_conc': 2, 'stack_min': 121, 'jph': 0.67, 'shifts': [('08:33', '12:52'), ('12:52', '19:17')], 'util': 0.69, 'asg_offshift': 1}
+{'d': 'William Bundschuh 076DO', 'onshift_h': 8.0, 'assigned': 7, 'completed': 5, 'busy_h': 6.7, 'idle_h': 1.2, 'max_conc': 2, 'stack_min': 61, 'jph': 0.88, 'shifts': [('06:01', '14:00')], 'util': 0.84, 'asg_offshift': 0}
+{'d': 'Shawn Daniels 076DO', 'onshift_h': 10.1, 'assigned': 6, 'completed': 5, 'busy_h': 8.1, 'idle_h': 2.0, 'max_conc': 2, 'stack_min': 250, 'jph': 0.59, 'shifts': [('10:58', '21:06')], 'util': 0.8, 'asg_offshift': 0}
+{'d': 'Bryan Mccarthy 076DO', 'onshift_h': 6.9, 'assigned': 6, 'completed': 2, 'busy_h': 4.0, 'idle_h': 2.9, 'max_conc': 2, 'stack_min': 24, 'jph': 0.87, 'shifts': [('20:53', '04:54'), ('21:59', '02:00')], 'util': 0.58, 'asg_offshift': 0}
+{'d': 'Jacob Gerardi 076DO', 'onshift_h': 4.9, 'assigned': 5, 'completed': 4, 'busy_h': 4.5, 'idle_h': 0.4, 'max_conc': 2, 'stack_min': 78, 'jph': 1.02, 'shifts': [('14:00', '00:03'), ('18:10', '22:59')], 'util': 0.91, 'asg_offshift': 0}
+{'d': 'Hunter Talley 076DO', 'onshift_h': 4.9, 'assigned': 4, 'completed': 2, 'busy_h': 1.9, 'idle_h': 3.0, 'max_conc': 1, 'stack_min': 0, 'jph': 0.81, 'shifts': [('19:03', '00:58')], 'util': 0.39, 'asg_offshift': 0}
+{'d': 'Matt Bruenn 076DO', 'onshift_h': 3.2, 'assigned': 2, 'completed': 1, 'busy_h': 2.5, 'idle_h': 0.7, 'max_conc': 1, 'stack_min': 0, 'jph': 0.62, 'shifts': [('12:51', '16:03'), ('19:01', '19:22')], 'util': 0.78, 'asg_offshift': 0}
+drivers on shift>=1h 26 calls/driver median 8.0 max 12 top/median 1.5
+jobs/onshift-hour median 0.91 min 0.59 max 1.43
+drivers with max_conc>=2 24 max overall 3 total stacked driver-min 3514
+idle driver-hours while a call waited >=10m AND idle driver within 15 mi of it (GPS): 37.6 h
+idle driver-hours while >=1 call waited >=10m: 42.5 h over 1000 clock-minutes; matched (min(idle,waiting)) 41.1 h
+queue wait final-assign -> En Route: n 190 median 21 p90 83
+final-assign -> Dispatched median 1.0
+created -> first pick median min 0.2
+
+CLOSEST (skill mode=combo, stale<=30m, at final-assign time): graded 204/207; ungraded reasons Counter({'no GPS for assigned driver': 3})
+ closest FREE picked 55 of 162  extra_free>FAR 33 extra_free>2 52
+ closest picked 55 27%  extra miles total 978.1 median extra when not closest 4.9
+ within 2mi of closest 88
+ assigned driver had other open job at assign 106  ...and an idle qualified driver was closer 28
+  final=FSL_ENGINE: n=45 closest=10 (22%) extra_mi_sum=270.7
+  final=INTEGRATION: n=69 closest=29 (42%) extra_mi_sum=199.2
+  final=HUMAN: n=44 closest=13 (30%) extra_mi_sum=191.0
+ simulate_day-replica (no truck gate, no staleness, first-pick time, WorkType skills=none): closest 16/199 = 8%; closest-candidate GPS age >60m in 64 SAs
+
+VERDICTS Counter({'GOOD': 80, 'BOUNCED': 35, 'STACKED': 26, 'LATE_DESPITE_CAPACITY': 17, 'FAR_PICK': 15, 'GOOD_NO_ARRIVAL': 12, 'INBOUND_CASCADE': 10, 'CAPACITY_SHORT': 8, 'LATE_EXECUTION': 2, 'UNVERIFIABLE': 2, 'NOT_GRADED': 1})
+TAGS Counter({'BYPASSED_OPTIMIZER': 115, 'HUMAN_FINAL': 45, 'MISSED_REBALANCE': 45, 'SLOW_RELEASE': 42, 'OPTIMIZER_CHURN': 32, 'SKILL_MISMATCH': 13})
+  BOUNCED                  SA-1020087 08pPb000009DTtRIAW Tow Pick-Up created 01:11 assign 05:08 by Tyler LaFave (AR:None) -> Raymond Rohauer 076DO open=1 dist=10.0 closest=Raymond Rohauer 076DO@10.0 resp=- PTA=180.0 ok=None status=Cancel Call - Service Not En Route picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  BOUNCED                  SA-1020152 08pPb000009DYl3IAG Tow Pick-Up created 07:16 assign 07:17 by Lynn Pilarski (AR:Lynn Pilarski) -> William Bundschuh 076DO open=0 dist=27.7 closest=Raymond Rohauer 076DO@2.5 resp=62 PTA=60.0 ok=False status=Completed picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  BOUNCED                  SA-1020169 08pPb000009DZCTIA4 Tow Pick-Up created 07:31 assign 07:33 by Todd Kryszak (AR:None) -> Dawn Wilder 076DO open=0 dist=27.4 closest=Thomas Shultz 076DO@4.9 resp=- PTA=60.0 ok=None status=Cancel Call - Service En Route picks=2 tags=['SKILL_MISMATCH']
+  CAPACITY_SHORT           SA-1020236 08pPb000009DaRtIAK Battery  created 08:11 assign 08:11 by Mulesoft Integration (AR:Mulesoft Integration) -> Weston Thomas 076DO open=1 dist=14.7 closest=Connor Kurdziel 076DO@11.0 resp=61 PTA=60.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  CAPACITY_SHORT           SA-1020592 08pPb000009DihBIAS Battery  created 09:58 assign 10:01 by Todd Kryszak (AR:Todd Kryszak) -> Connor Kurdziel 076DO open=1 dist=6.0 closest=Matthew Moyer 076DO@0.6 resp=101 PTA=60.0 ok=False status=Completed picks=1 tags=[]
+  CAPACITY_SHORT           SA-1020804 08pPb000009Dns9IAC Tire     created 10:42 assign 10:42 by Mulesoft Integration (AR:Mulesoft Integration) -> Matthew Moyer 076DO open=1 dist=10.6 closest=Brandon Bainbridge 076DO@2.3 resp=83 PTA=60.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER', 'SLOW_RELEASE']
+  FAR_PICK                 SA-1020257 08pPb000009Daq5IAC Tow Pick-Up created 08:20 assign 08:32 by Todd Kryszak (AR:Todd Kryszak) -> Daniel Brusie 076DO open=0 dist=35.3 closest=William Bundschuh 076DO@1.8 resp=65 PTA=75.0 ok=True status=Completed picks=2 tags=['SKILL_MISMATCH']
+  FAR_PICK                 SA-1020265 08pPb000009Day9IAC Tow Pick-Up created 08:22 assign 08:28 by Todd Kryszak (AR:Todd Kryszak) -> Michael Gemboys 076DO open=0 dist=23.2 closest=David Tormey 076DO@0.5 resp=75 PTA=75.0 ok=True status=Completed picks=2 tags=[]
+  FAR_PICK                 SA-1020570 08pPb000009DhpxIAC Tow Pick-Up created 09:52 assign 10:58 by Platform Integration User (AR:Platform Integration User) -> Shawn Daniels 076DO open=0 dist=12.2 closest=Raymond Rohauer 076DO@2.0 resp=97 PTA=80.0 ok=False status=Completed picks=4 tags=['OPTIMIZER_CHURN']
+  GOOD                     SA-1020086 08pPb000009DTmzIAG Tire     created 00:55 assign 01:04 by Tyler LaFave (AR:Tyler LaFave) -> Bryan Mccarthy 076DO open=1 dist=22.4 closest=Bryan Mccarthy 076DO@22.4 resp=119 PTA=180.0 ok=True status=Unable to Complete picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'SLOW_RELEASE', 'SKILL_MISMATCH']
+  GOOD                     SA-1020109 08pPb000009DWPtIAO Tow Pick-Up created 05:25 assign 05:25 by IT System User (AR:IT System User) -> Raymond Rohauer 076DO open=0 dist=10.0 closest=Raymond Rohauer 076DO@10.0 resp=33 PTA=180.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD                     SA-1020131 08pPb000009DXqbIAG Tow Pick-Up created 06:49 assign 06:50 by IT System User (AR:IT System User) -> Raymond Rohauer 076DO open=0 dist=10.0 closest=Raymond Rohauer 076DO@10.0 resp=27 PTA=60.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD_NO_ARRIVAL          SA-1020083 08pPb000009DTlNIAW Tow Pick-Up created 00:49 assign 00:49 by IT System User (AR:None) -> Bryan Mccarthy 076DO open=0 dist=19.5 closest=Bryan Mccarthy 076DO@19.5 resp=- PTA=180.0 ok=None status=Cancel Call - Service Not En Route picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD_NO_ARRIVAL          SA-1020199 08pPb000009DZpBIAW Tow Pick-Up created 08:00 assign 08:00 by IT System User (AR:None) -> Raymond Rohauer 076DO open=0 dist=14.9 closest=Adam Lucas 076DO@11.4 resp=- PTA=75.0 ok=None status=Cancel Call - Service Not En Route picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD_NO_ARRIVAL          SA-1020871 08pPb000009DqQDIA0 Tow Pick-Up created 11:07 assign 11:21 by Todd Kryszak (AR:None) -> Jett Malczewski 076DO open=1 dist=2.6 closest=Daniel Brusie 076DO@0.2 resp=- PTA=120.0 ok=None status=Cancel Call - Service Not En Route picks=3 tags=['OPTIMIZER_CHURN']
+  INBOUND_CASCADE          SA-1020093 08pPb000009DUBBIA4 Fuel / Miscellaneous created 01:51 assign 06:09 by Tyler LaFave (AR:Tyler LaFave) -> William Bundschuh 076DO open=0 dist=28.2 closest=Connor Kurdziel 076DO@20.8 resp=311 PTA=60.0 ok=False status=Unable to Complete picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'OPTIMIZER_CHURN', 'SKILL_MISMATCH']
+  INBOUND_CASCADE          SA-1020094 08pPb000009DUG1IAO Battery  created 01:57 assign 03:58 by Tyler LaFave (AR:None) -> Raymond Rohauer 076DO open=- dist=- closest=-@- resp=- PTA=60.0 ok=None status=Cancel Call - Service Not En Route picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'OPTIMIZER_CHURN', 'SLOW_RELEASE', 'SKILL_MISMATCH']
+  INBOUND_CASCADE          SA-1020103 08pPb000009DVs1IAG Tow Pick-Up created 04:41 assign 06:06 by Lynn Pilarski (AR:Lynn Pilarski) -> Raymond Rohauer 076DO open=0 dist=5.0 closest=Raymond Rohauer 076DO@5.0 resp=103 PTA=90.0 ok=False status=Unable to Complete picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  LATE_DESPITE_CAPACITY    SA-1020230 08pPb000009DaLRIA0 Tow Pick-Up created 08:09 assign 08:10 by IT System User (AR:IT System User) -> Adam Lucas 076DO open=1 dist=5.3 closest=David Tormey 076DO@3.4 resp=103 PTA=75.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  LATE_DESPITE_CAPACITY    SA-1020311 08pPb000009DbivIAC Tow Pick-Up created 08:35 assign 08:35 by IT System User (AR:IT System User) -> Michael Gemboys 076DO open=1 dist=20.7 closest=William Bundschuh 076DO@9.2 resp=120 PTA=75.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER', 'MISSED_REBALANCE']
+  LATE_DESPITE_CAPACITY    SA-1020415 08pPb000009DdrBIAS Tow Pick-Up created 09:11 assign 09:17 by Lynn Pilarski (AR:Lynn Pilarski) -> John Szpara 076DO open=1 dist=18.9 closest=William Bundschuh 076DO@5.2 resp=131 PTA=80.0 ok=False status=Completed picks=4 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'OPTIMIZER_CHURN', 'MISSED_REBALANCE']
+  LATE_EXECUTION           SA-1020155 08pPb000009DYrVIAW Battery  created 07:25 assign 07:25 by Mulesoft Integration (AR:Mulesoft Integration) -> Weston Thomas 076DO open=0 dist=16.1 closest=Connor Kurdziel 076DO@13.0 resp=68 PTA=60.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  LATE_EXECUTION           SA-1020512 08pPb000009DgU5IAK Battery  created 09:39 assign 09:40 by Todd Kryszak (AR:Platform Integration User) -> Connor Kurdziel 076DO open=0 dist=9.9 closest=Connor Kurdziel 076DO@9.9 resp=62 PTA=60.0 ok=False status=Completed picks=2 tags=[]
+  NOT_GRADED               SA-1020102 08pPb000009DVNNIA4 Battery  created 04:08 assign - by None (AR:None) -> None open=- dist=- closest=-@- resp=- PTA=180.0 ok=None status=Cancel Call - Service Not En Route picks=0 tags=[]
+  STACKED                  SA-1020203 08pPb000009DZsPIAW Tow Pick-Up created 08:00 assign 08:00 by IT System User (AR:IT System User) -> William Bundschuh 076DO open=1 dist=4.1 closest=Thomas Shultz 076DO@1.0 resp=51 PTA=75.0 ok=True status=Unable to Complete picks=1 tags=['BYPASSED_OPTIMIZER', 'MISSED_REBALANCE']
+  STACKED                  SA-1020212 08pPb000009Da25IAC Tow Pick-Up created 08:02 assign 08:14 by Lynn Pilarski (AR:Lynn Pilarski) -> Dawn Wilder 076DO open=1 dist=7.7 closest=John Szpara 076DO@2.8 resp=102 PTA=75.0 ok=False status=Completed picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  STACKED                  SA-1020277 08pPb000009Db7pIAC Tow Pick-Up created 08:26 assign 08:26 by IT System User (AR:IT System User) -> Raymond Rohauer 076DO open=1 dist=32.7 closest=Thomas Shultz 076DO@8.6 resp=62 PTA=75.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  UNVERIFIABLE             SA-1020464 08pPb000009DewvIAC Tow Pick-Up created 09:25 assign 09:25 by IT System User (AR:IT System User) -> Adam Lucas 076DO open=- dist=- closest=-@- resp=146 PTA=80.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  UNVERIFIABLE             SA-1021015 08pPb000009Dv1hIAC Tow Pick-Up created 11:47 assign 11:57 by Todd Kryszak (AR:IT System User) -> Anthony Mickiewicz 076DO open=- dist=- closest=-@- resp=68 PTA=120.0 ok=True status=Completed picks=2 tags=['SKILL_MISMATCH']
+
+BY HOUR (ET): calls created, on-shift drivers avg, PTA met, verdict mix
+  00 calls=2 drivers_on=1.2 PTA=1/1 {'GOOD_NO_ARRIVAL': 1, 'GOOD': 1}
+  01 calls=3 drivers_on=1 PTA=0/1 {'BOUNCED': 1, 'INBOUND_CASCADE': 2}
+  04 calls=2 drivers_on=1 PTA=0/1 {'NOT_GRADED': 1, 'INBOUND_CASCADE': 1}
+  05 calls=1 drivers_on=0.8 PTA=1/1 {'GOOD': 1}
+  06 calls=2 drivers_on=2.7 PTA=2/2 {'GOOD': 2}
+  07 calls=11 drivers_on=7.8 PTA=7/10 {'GOOD': 5, 'BOUNCED': 5, 'LATE_EXECUTION': 1}
+  08 calls=18 drivers_on=10.2 PTA=9/17 {'GOOD_NO_ARRIVAL': 1, 'STACKED': 3, 'GOOD': 5, 'BOUNCED': 4, 'LATE_DESPITE_CAPACITY': 2, 'CAPACITY_SHORT': 1, 'FAR_PICK': 2}
+  09 calls=19 drivers_on=13 PTA=7/19 {'GOOD': 7, 'BOUNCED': 2, 'LATE_DESPITE_CAPACITY': 5, 'UNVERIFIABLE': 1, 'STACKED': 1, 'LATE_EXECUTION': 1, 'FAR_PICK': 1, 'CAPACITY_SHORT': 1}
+  10 calls=13 drivers_on=14.8 PTA=6/13 {'GOOD': 4, 'INBOUND_CASCADE': 1, 'LATE_DESPITE_CAPACITY': 3, 'FAR_PICK': 1, 'STACKED': 2, 'CAPACITY_SHORT': 2}
+  11 calls=15 drivers_on=18 PTA=8/14 {'GOOD': 7, 'GOOD_NO_ARRIVAL': 1, 'LATE_DESPITE_CAPACITY': 3, 'CAPACITY_SHORT': 2, 'FAR_PICK': 1, 'UNVERIFIABLE': 1}
+  12 calls=16 drivers_on=19.3 PTA=13/14 {'BOUNCED': 3, 'STACKED': 3, 'GOOD': 7, 'FAR_PICK': 2, 'GOOD_NO_ARRIVAL': 1}
+  13 calls=16 drivers_on=20.3 PTA=9/15 {'GOOD': 3, 'FAR_PICK': 3, 'LATE_DESPITE_CAPACITY': 1, 'INBOUND_CASCADE': 1, 'BOUNCED': 5, 'STACKED': 3}
+  14 calls=17 drivers_on=19.3 PTA=14/16 {'GOOD': 9, 'STACKED': 1, 'GOOD_NO_ARRIVAL': 1, 'BOUNCED': 4, 'INBOUND_CASCADE': 1, 'FAR_PICK': 1}
+  15 calls=15 drivers_on=19 PTA=9/14 {'FAR_PICK': 3, 'STACKED': 6, 'BOUNCED': 3, 'GOOD': 3}
+  16 calls=16 drivers_on=16.2 PTA=9/13 {'GOOD': 8, 'GOOD_NO_ARRIVAL': 3, 'CAPACITY_SHORT': 1, 'LATE_DESPITE_CAPACITY': 2, 'INBOUND_CASCADE': 1, 'BOUNCED': 1}
+  17 calls=8 drivers_on=12.3 PTA=4/7 {'BOUNCED': 1, 'LATE_DESPITE_CAPACITY': 1, 'GOOD': 4, 'GOOD_NO_ARRIVAL': 1, 'CAPACITY_SHORT': 1}
+  18 calls=10 drivers_on=13.2 PTA=7/8 {'FAR_PICK': 1, 'GOOD': 4, 'STACKED': 3, 'INBOUND_CASCADE': 1, 'BOUNCED': 1}
+  19 calls=9 drivers_on=10.2 PTA=7/7 {'GOOD': 4, 'GOOD_NO_ARRIVAL': 1, 'STACKED': 2, 'BOUNCED': 1, 'INBOUND_CASCADE': 1}
+  20 calls=5 drivers_on=8 PTA=4/5 {'GOOD': 1, 'STACKED': 2, 'BOUNCED': 2}
+  21 calls=4 drivers_on=6 PTA=3/3 {'GOOD': 3, 'BOUNCED': 1}
+  22 calls=3 drivers_on=5 PTA=3/3 {'INBOUND_CASCADE': 1, 'GOOD': 1, 'BOUNCED': 1}
+  23 calls=3 drivers_on=2.7 PTA=1/1 {'GOOD_NO_ARRIVAL': 2, 'GOOD': 1}
+
+QUALIFIED-AVAILABLE-NOT-PICKED (final decision time; on truck, not absent, GPS<=30m)
+  [final] skills=strict graded=195  >=1 qualified closer(by>0.5mi)=0  closer AND less loaded=0  closer AND idle=0
+  [final] skills=any    graded=195  >=1 qualified closer(by>0.5mi)=20  closer AND less loaded=4  closer AND idle=6
+  [final] skills=combo  graded=195  >=1 qualified closer(by>0.5mi)=132  closer AND less loaded=34  closer AND idle=65
+  [final] skills=none   graded=195  >=1 qualified closer(by>0.5mi)=150  closer AND less loaded=47  closer AND idle=93
+     example(combo) SA, picked, pick_mi, pick_open, alt, alt_mi, alt_open: ('SA-1020203', 'William Bundschuh 076DO', 4.1, 1, 'John Szpara 076DO', 1.1, 0)
+     example(combo) SA, picked, pick_mi, pick_open, alt, alt_mi, alt_open: ('SA-1020212', 'Dawn Wilder 076DO', 7.7, 1, 'John Szpara 076DO', 2.8, 0)
+     example(combo) SA, picked, pick_mi, pick_open, alt, alt_mi, alt_open: ('SA-1020277', 'Raymond Rohauer 076DO', 32.7, 1, 'John Szpara 076DO', 25.1, 0)
+  [first] skills=strict graded=187  >=1 qualified closer(by>0.5mi)=0  closer AND less loaded=0  closer AND idle=0
+  [first] skills=any    graded=187  >=1 qualified closer(by>0.5mi)=22  closer AND less loaded=2  closer AND idle=3
+  [first] skills=combo  graded=187  >=1 qualified closer(by>0.5mi)=130  closer AND less loaded=43  closer AND idle=63
+  [first] skills=none   graded=187  >=1 qualified closer(by>0.5mi)=150  closer AND less loaded=56  closer AND idle=86
+FSL_ENGINE final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 45 of 45
+INTEGRATION final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 70 of 70
+HUMAN final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 41 of 45
+FSL_ENGINE final picks meeting strict WOLI skills: 0 of 45
+GPS coverage: on-shift driver-minutes with fix <=30m: 2636/2689 = 98%

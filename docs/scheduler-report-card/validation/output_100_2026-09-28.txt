@@ -1,0 +1,115 @@
+N SA (non drop-off) 90 Counter({'Fleet Driver': 90})
+AR.CreatedBy == last pick creator: 57 of 82
+AR.CreatedBy source: Counter({'INTEGRATION': 54, 'HUMAN': 21, None: 8, 'FSL_ENGINE': 7})
+FINAL decision source (last ERS_Assigned_Resource__c actor): Counter({'INTEGRATION': 39, 'HUMAN': 31, 'FSL_ENGINE': 20})
+pullbacks (Dispatched/Accepted/EnRoute -> Spotted) SAs: 13
+cross: AR src vs final src Counter({('INTEGRATION', 'FSL_ENGINE'): 11, ('INTEGRATION', 'HUMAN'): 9, (None, 'INTEGRATION'): 4, (None, 'HUMAN'): 3, ('HUMAN', 'FSL_ENGINE'): 2, (None, 'FSL_ENGINE'): 1, ('FSL_ENGINE', 'HUMAN'): 1, ('HUMAN', 'INTEGRATION'): 1})
+first-pick source: Counter({'INTEGRATION': 75, 'FSL_ENGINE': 8, 'HUMAN': 7})
+optimizer touched any pick: 31
+AR creators: Counter({'Replicant Integration User': 28, 'Mulesoft Integration': 26, 'Paige White': 20, None: 8, 'Platform Integration User': 7, 'Lynn Pilarski': 1})
+ActualStartTime vs SAHist OnLoc minutes diff: n 80 median 0.0 max abs 11.95
+ActualStart present w/o OnLoc hist 2 OnLoc w/o ActualStart 0
+ALL: n=90 arrived=82 median_resp=40 mean=50 PTA_met=65/82=79%
+PTA due vs created+PTA disagreements 0
+final=FSL_ENGINE: n=20 arrived=19 median_resp=48 mean=55 PTA_met=13/19=68%
+final=INTEGRATION: n=39 arrived=35 median_resp=37 mean=42 PTA_met=31/35=89%
+final=HUMAN: n=31 arrived=28 median_resp=52 mean=56 PTA_met=21/28=75%
+first=FSL_ENGINE: n=8 arrived=8 median_resp=55 mean=65 PTA_met=5/8=62%
+first=INTEGRATION: n=75 arrived=69 median_resp=40 mean=48 PTA_met=56/69=81%
+first=HUMAN: n=7 arrived=5 median_resp=27 mean=44 PTA_met=4/5=80%
+opt-touched: n=31 arrived=29 median_resp=51 mean=57 PTA_met=20/29=69% | never-opt: n=59 arrived=53 median_resp=40 mean=45 PTA_met=45/53=85%
+garage bounces SAs 7 Counter({('053 - MICHAEL BELLRENG', '100 - WESTERN NEW YORK FLEET'): 5, ('063 - BISON AUTOMOTIVE', '100 - WESTERN NEW YORK FLEET'): 1, ('LS - LOCKSMITH REQUIRED', '100 - WESTERN NEW YORK FLEET'): 1})
+post-dispatch driver reassign SAs 12 pre-dispatch picks/SA Counter({1: 54, 2: 21, 3: 9, 4: 3, 7: 2, 5: 1})
+distinct drivers per SA Counter({1: 48, 2: 28, 3: 12, 5: 1, 4: 1})
+final driver lacks strict WOLI skills: 76 of 90 Counter({frozenset({'Battery Service'}): 45, frozenset({'Tire'}): 20, frozenset({'Lockout'}): 10, frozenset({'Locksmith'}): 1})
+final driver has NONE of required skills: 11
+Platform Integration User assignment events within -1..+3 min of an In-Day/RSO request for this territory/its drivers: 48 of 48
+
+DRIVER-DAY
+{'d': 'Antonio Hatch Jr. 100', 'onshift_h': 7.0, 'assigned': 10, 'completed': 9, 'busy_h': 7.6, 'idle_h': 0.0, 'max_conc': 2, 'stack_min': 221, 'jph': 1.42, 'shifts': [('13:49', '21:23')], 'util': 1.0, 'asg_offshift': 0}
+{'d': 'Marcus Gibson 100', 'onshift_h': 5.8, 'assigned': 10, 'completed': 5, 'busy_h': 5.9, 'idle_h': 0.7, 'max_conc': 2, 'stack_min': 58, 'jph': 1.73, 'shifts': [('08:17', '15:31')], 'util': 0.88, 'asg_offshift': 1}
+{'d': 'Mike Klotz 100', 'onshift_h': 7.6, 'assigned': 10, 'completed': 7, 'busy_h': 4.7, 'idle_h': 2.9, 'max_conc': 3, 'stack_min': 98, 'jph': 1.32, 'shifts': [('15:05', '23:11')], 'util': 0.62, 'asg_offshift': 0}
+{'d': 'Arthur Yates Jr. 100', 'onshift_h': 7.2, 'assigned': 9, 'completed': 8, 'busy_h': 6.7, 'idle_h': 1.0, 'max_conc': 2, 'stack_min': 116, 'jph': 1.26, 'shifts': [('07:09', '14:48')], 'util': 0.86, 'asg_offshift': 0}
+{'d': 'Frankie Giordano 100', 'onshift_h': 7.4, 'assigned': 9, 'completed': 5, 'busy_h': 5.3, 'idle_h': 2.5, 'max_conc': 2, 'stack_min': 124, 'jph': 1.22, 'shifts': [('14:56', '22:56')], 'util': 0.66, 'asg_offshift': 1}
+{'d': 'Benjamin Hailand-Vanlieu 100', 'onshift_h': 7.5, 'assigned': 8, 'completed': 7, 'busy_h': 6.1, 'idle_h': 1.9, 'max_conc': 2, 'stack_min': 111, 'jph': 1.07, 'shifts': [('15:01', '23:01')], 'util': 0.75, 'asg_offshift': 0}
+{'d': 'Isaiah Carter-Faires 100', 'onshift_h': 7.6, 'assigned': 7, 'completed': 7, 'busy_h': 6.8, 'idle_h': 1.1, 'max_conc': 2, 'stack_min': 128, 'jph': 0.92, 'shifts': [('07:40', '15:45')], 'util': 0.86, 'asg_offshift': 1}
+{'d': 'Kenneth Kirkendoll 100', 'onshift_h': 5.1, 'assigned': 7, 'completed': 6, 'busy_h': 4.1, 'idle_h': 1.3, 'max_conc': 2, 'stack_min': 134, 'jph': 1.36, 'shifts': [('17:27', '22:35')], 'util': 0.74, 'asg_offshift': 2}
+{'d': 'Jacob Schaich 100', 'onshift_h': 7.3, 'assigned': 6, 'completed': 5, 'busy_h': 8.1, 'idle_h': 0.1, 'max_conc': 2, 'stack_min': 248, 'jph': 0.82, 'shifts': [('14:41', '22:53')], 'util': 0.98, 'asg_offshift': 2}
+{'d': 'Jarron Wiggins 100', 'onshift_h': 7.2, 'assigned': 5, 'completed': 3, 'busy_h': 6.7, 'idle_h': 1.4, 'max_conc': 2, 'stack_min': 5, 'jph': 0.69, 'shifts': [('07:49', '15:34')], 'util': 0.8, 'asg_offshift': 1}
+{'d': 'Marquan Gates 100', 'onshift_h': 5.0, 'assigned': 5, 'completed': 2, 'busy_h': 3.3, 'idle_h': 1.7, 'max_conc': 3, 'stack_min': 87, 'jph': 1.0, 'shifts': [('11:33', '16:33')], 'util': 0.66, 'asg_offshift': 0}
+{'d': 'Ernest Patterson 100', 'onshift_h': 6.5, 'assigned': 4, 'completed': 4, 'busy_h': 5.9, 'idle_h': 0.6, 'max_conc': 2, 'stack_min': 96, 'jph': 0.61, 'shifts': [('08:28', '15:30')], 'util': 0.9, 'asg_offshift': 0}
+drivers on shift>=1h 12 calls/driver median 7.5 max 10 top/median 1.33
+jobs/onshift-hour median 1.145 min 0.61 max 1.73
+drivers with max_conc>=2 12 max overall 3 total stacked driver-min 1426
+idle driver-hours while a call waited >=10m AND idle driver within 15 mi of it (GPS): 7.8 h
+idle driver-hours while >=1 call waited >=10m: 8.6 h over 269 clock-minutes; matched (min(idle,waiting)) 6.2 h
+queue wait final-assign -> En Route: n 82 median 14 p90 55
+final-assign -> Dispatched median 0.7
+created -> first pick median min 0.2
+
+CLOSEST (skill mode=combo, stale<=30m, at final-assign time): graded 87/90; ungraded reasons Counter({'no GPS for assigned driver': 3})
+ closest FREE picked 36 of 43  extra_free>FAR 0 extra_free>2 1
+ closest picked 38 44%  extra miles total 129.2 median extra when not closest 2.2
+ within 2mi of closest 59
+ assigned driver had other open job at assign 47  ...and an idle qualified driver was closer 0
+  final=FSL_ENGINE: n=20 closest=7 (35%) extra_mi_sum=30.2
+  final=INTEGRATION: n=39 closest=18 (46%) extra_mi_sum=44.9
+  final=HUMAN: n=28 closest=13 (46%) extra_mi_sum=54.1
+ simulate_day-replica (no truck gate, no staleness, first-pick time, WorkType skills=none): closest 19/88 = 22%; closest-candidate GPS age >60m in 36 SAs
+
+VERDICTS Counter({'GOOD': 54, 'CAPACITY_SHORT': 10, 'BOUNCED': 7, 'INBOUND_CASCADE': 7, 'GOOD_NO_ARRIVAL': 6, 'LATE_DESPITE_CAPACITY': 2, 'LATE_EXECUTION': 2, 'UNVERIFIABLE': 2})
+TAGS Counter({'BYPASSED_OPTIMIZER': 70, 'HUMAN_FINAL': 31, 'OPTIMIZER_CHURN': 15, 'SLOW_RELEASE': 12, 'SKILL_MISMATCH': 3, 'MISSED_REBALANCE': 2})
+  BOUNCED                  SA-1074741 08pPb000009eiGTIAY Lockout  created 14:01 assign 14:41 by Paige White (AR:Lynn Pilarski) -> Marcus Gibson 100 open=0 dist=5.1 closest=Arthur Yates Jr. 100@2.3 resp=83 PTA=75.0 ok=False status=Completed picks=6 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  BOUNCED                  SA-1074927 08pPb000009eonJIAQ Battery  created 14:58 assign 15:18 by Paige White (AR:Paige White) -> Antonio Hatch Jr. 100 open=1 dist=2.8 closest=Jacob Schaich 100@2.7 resp=39 PTA=75.0 ok=True status=Completed picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  BOUNCED                  SA-1075074 08pPb000009euMTIAY Battery  created 15:48 assign 16:20 by Paige White (AR:None) -> Antonio Hatch Jr. 100 open=- dist=- closest=-@- resp=- PTA=75.0 ok=None status=Cancel Call - Service En Route picks=4 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  CAPACITY_SHORT           SA-1073632 08pPb000009e7gjIAA Tire     created 08:18 assign 08:18 by Replicant Integration User (AR:Replicant Integration User) -> Isaiah Carter-Faires 100 open=1 dist=3.2 closest=Isaiah Carter-Faires 100@3.2 resp=64 PTA=60.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  CAPACITY_SHORT           SA-1074304 08pPb000009eT1JIAU Battery  created 11:44 assign 11:50 by Platform Integration User (AR:Mulesoft Integration) -> Isaiah Carter-Faires 100 open=1 dist=3.6 closest=Marquan Gates 100@2.3 resp=94 PTA=60.0 ok=False status=Completed picks=3 tags=['OPTIMIZER_CHURN']
+  CAPACITY_SHORT           SA-1074449 08pPb000009eXT7IAM Battery  created 12:20 assign 12:20 by Replicant Integration User (AR:Replicant Integration User) -> Arthur Yates Jr. 100 open=1 dist=1.9 closest=Marcus Gibson 100@1.9 resp=66 PTA=60.0 ok=False status=Completed picks=1 tags=['BYPASSED_OPTIMIZER', 'SLOW_RELEASE']
+  GOOD                     SA-1073520 08pPb000009e5a5IAA Tire     created 07:34 assign 07:34 by Mulesoft Integration (AR:Mulesoft Integration) -> Arthur Yates Jr. 100 open=0 dist=8.3 closest=Arthur Yates Jr. 100@8.3 resp=34 PTA=60.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD                     SA-1073522 08pPb000009e5gXIAQ Battery  created 07:35 assign 07:35 by Mulesoft Integration (AR:Mulesoft Integration) -> Arthur Yates Jr. 100 open=1 dist=6.5 closest=Arthur Yates Jr. 100@6.5 resp=58 PTA=60.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD                     SA-1073550 08pPb000009e67xIAA Battery  created 07:47 assign 07:47 by Replicant Integration User (AR:Replicant Integration User) -> Isaiah Carter-Faires 100 open=0 dist=3.9 closest=Arthur Yates Jr. 100@1.1 resp=40 PTA=60.0 ok=True status=Completed picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD_NO_ARRIVAL          SA-1074161 08pPb000009eLOkIAM Battery  created 10:55 assign 10:56 by Replicant Integration User (AR:None) -> Marcus Gibson 100 open=0 dist=3.5 closest=Marcus Gibson 100@3.5 resp=- PTA=60.0 ok=None status=Cancel Call - Service Not En Route picks=1 tags=['BYPASSED_OPTIMIZER']
+  GOOD_NO_ARRIVAL          SA-1074252 08pPb000009eQoDIAU Tire     created 11:27 assign 11:33 by Platform Integration User (AR:None) -> Marquan Gates 100 open=0 dist=4.2 closest=Isaiah Carter-Faires 100@3.8 resp=- PTA=60.0 ok=None status=Cancel Call - Service En Route picks=3 tags=['OPTIMIZER_CHURN']
+  GOOD_NO_ARRIVAL          SA-1075312 08pPb000009f3b3IAA Tire     created 17:19 assign 17:23 by Paige White (AR:None) -> Mike Klotz 100 open=2 dist=3.7 closest=Benjamin Hailand-Vanlieu 100@2.8 resp=- PTA=75.0 ok=None status=Cancel Call - Service Not En Route picks=1 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'SLOW_RELEASE']
+  INBOUND_CASCADE          SA-1074934 08pPb000009eoybIAA Battery  created 14:59 assign 15:48 by Paige White (AR:Paige White) -> Mike Klotz 100 open=0 dist=0.9 closest=Mike Klotz 100@0.9 resp=56 PTA=120.0 ok=True status=Unable to Complete picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  INBOUND_CASCADE          SA-1075021 08pPb000009esNtIAI Battery  created 15:32 assign 16:21 by Paige White (AR:Paige White) -> Jacob Schaich 100 open=0 dist=3.1 closest=Frankie Giordano 100@1.3 resp=69 PTA=120.0 ok=True status=Completed picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  INBOUND_CASCADE          SA-1075125 08pPb000009ewUjIAI Battery  created 16:06 assign 16:08 by Paige White (AR:Paige White) -> Mike Klotz 100 open=0 dist=0.9 closest=Mike Klotz 100@0.9 resp=24 PTA=120.0 ok=True status=Completed picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL']
+  LATE_DESPITE_CAPACITY    SA-1074458 08pPb000009eXw9IAE Battery  created 12:25 assign 12:30 by Platform Integration User (AR:Platform Integration User) -> Ernest Patterson 100 open=1 dist=7.3 closest=Marcus Gibson 100@4.5 resp=146 PTA=60.0 ok=False status=Completed picks=1 tags=['SLOW_RELEASE', 'MISSED_REBALANCE']
+  LATE_DESPITE_CAPACITY    SA-1075605 08pPb000009fCODIA2 Battery  created 20:12 assign 20:15 by Platform Integration User (AR:Mulesoft Integration) -> Jacob Schaich 100 open=1 dist=3.8 closest=Antonio Hatch Jr. 100@1.7 resp=112 PTA=75.0 ok=False status=Completed picks=2 tags=['MISSED_REBALANCE']
+  LATE_EXECUTION           SA-1074531 08pPb000009eaafIAA Tire     created 12:48 assign 12:50 by Platform Integration User (AR:Replicant Integration User) -> Jarron Wiggins 100 open=0 dist=6.4 closest=Marcus Gibson 100@4.7 resp=65 PTA=60.0 ok=False status=Completed picks=2 tags=[]
+  LATE_EXECUTION           SA-1074664 08pPb000009efAXIAY Battery  created 13:30 assign 13:35 by Platform Integration User (AR:Replicant Integration User) -> Arthur Yates Jr. 100 open=0 dist=6.5 closest=Marquan Gates 100@0.4 resp=65 PTA=60.0 ok=False status=Completed picks=2 tags=[]
+  UNVERIFIABLE             SA-1075259 08pPb000009f0y9IAA Battery  created 16:50 assign 17:11 by Paige White (AR:Replicant Integration User) -> Kenneth Kirkendoll 100 open=- dist=- closest=-@- resp=73 PTA=75.0 ok=True status=Completed picks=2 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'SKILL_MISMATCH']
+  UNVERIFIABLE             SA-1075278 08pPb000009f1nlIAA Lockout  created 17:01 assign 17:11 by Paige White (AR:Replicant Integration User) -> Kenneth Kirkendoll 100 open=- dist=- closest=-@- resp=45 PTA=75.0 ok=True status=Completed picks=3 tags=['BYPASSED_OPTIMIZER', 'HUMAN_FINAL', 'OPTIMIZER_CHURN', 'SKILL_MISMATCH']
+
+BY HOUR (ET): calls created, on-shift drivers avg, PTA met, verdict mix
+  07 calls=3 drivers_on=1.2 PTA=3/3 {'GOOD': 3}
+  08 calls=6 drivers_on=4.2 PTA=5/6 {'GOOD': 5, 'CAPACITY_SHORT': 1}
+  09 calls=4 drivers_on=5 PTA=4/4 {'GOOD': 4}
+  10 calls=4 drivers_on=5 PTA=3/3 {'GOOD': 3, 'GOOD_NO_ARRIVAL': 1}
+  11 calls=10 drivers_on=5.3 PTA=8/9 {'GOOD': 8, 'GOOD_NO_ARRIVAL': 1, 'CAPACITY_SHORT': 1}
+  12 calls=6 drivers_on=5.8 PTA=3/6 {'GOOD': 3, 'CAPACITY_SHORT': 1, 'LATE_DESPITE_CAPACITY': 1, 'LATE_EXECUTION': 1}
+  13 calls=5 drivers_on=5.3 PTA=4/5 {'GOOD': 4, 'LATE_EXECUTION': 1}
+  14 calls=8 drivers_on=5.5 PTA=6/8 {'BOUNCED': 2, 'CAPACITY_SHORT': 1, 'GOOD': 4, 'INBOUND_CASCADE': 1}
+  15 calls=4 drivers_on=7.3 PTA=3/3 {'GOOD': 2, 'INBOUND_CASCADE': 1, 'BOUNCED': 1}
+  16 calls=12 drivers_on=5.7 PTA=9/12 {'INBOUND_CASCADE': 4, 'GOOD': 5, 'CAPACITY_SHORT': 2, 'UNVERIFIABLE': 1}
+  17 calls=7 drivers_on=5.5 PTA=5/6 {'UNVERIFIABLE': 1, 'GOOD': 3, 'GOOD_NO_ARRIVAL': 1, 'BOUNCED': 2}
+  18 calls=9 drivers_on=5.5 PTA=6/7 {'GOOD_NO_ARRIVAL': 1, 'GOOD': 6, 'INBOUND_CASCADE': 1, 'CAPACITY_SHORT': 1}
+  19 calls=5 drivers_on=4.5 PTA=1/4 {'CAPACITY_SHORT': 3, 'GOOD_NO_ARRIVAL': 1, 'GOOD': 1}
+  20 calls=4 drivers_on=5.3 PTA=2/3 {'BOUNCED': 2, 'GOOD_NO_ARRIVAL': 1, 'LATE_DESPITE_CAPACITY': 1}
+  21 calls=3 drivers_on=5.2 PTA=3/3 {'GOOD': 3}
+
+QUALIFIED-AVAILABLE-NOT-PICKED (final decision time; on truck, not absent, GPS<=30m)
+  [final] skills=strict graded=80  >=1 qualified closer(by>0.5mi)=6  closer AND less loaded=0  closer AND idle=1
+  [final] skills=any    graded=80  >=1 qualified closer(by>0.5mi)=38  closer AND less loaded=0  closer AND idle=3
+  [final] skills=combo  graded=80  >=1 qualified closer(by>0.5mi)=41  closer AND less loaded=0  closer AND idle=3
+  [final] skills=none   graded=80  >=1 qualified closer(by>0.5mi)=41  closer AND less loaded=0  closer AND idle=3
+  [first] skills=strict graded=77  >=1 qualified closer(by>0.5mi)=9  closer AND less loaded=1  closer AND idle=0
+  [first] skills=any    graded=77  >=1 qualified closer(by>0.5mi)=36  closer AND less loaded=4  closer AND idle=3
+  [first] skills=combo  graded=77  >=1 qualified closer(by>0.5mi)=38  closer AND less loaded=5  closer AND idle=3
+  [first] skills=none   graded=77  >=1 qualified closer(by>0.5mi)=38  closer AND less loaded=5  closer AND idle=3
+FSL_ENGINE final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 20 of 20
+INTEGRATION final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 39 of 39
+HUMAN final picks meeting WOLI skills vs (SR skills + logged-in truck caps): 28 of 31
+FSL_ENGINE final picks meeting strict WOLI skills: 1 of 20
+GPS coverage: on-shift driver-minutes with fix <=30m: 954/975 = 98%
+AR est travel distance / GPS haversine at final assign: n 78 median 1.42 p25 1.22 p75 1.67
