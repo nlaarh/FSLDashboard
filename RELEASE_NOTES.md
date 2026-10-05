@@ -17,6 +17,34 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.6 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.6` |
+| Commit | `0172cc7` |
+| Bundle | `index-D1eUy0f5.js` |
+| Deploy | GitHub Actions run `37278303259`, 2026-10-05, success |
+| Roll back to | `release/v1.5` = `4df825c` (bundle `index-BTWZobhZ.js`) |
+
+**Changed** (frontend only)
+- Menu: "Report Card" removed, "Replay" kept. The `/report-card` page still exists by address.
+
+## v1.5 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.5` |
+| Commit | `4df825c` |
+| Bundle | `index-BTWZobhZ.js` |
+| Deploy | GitHub Actions run `37277828356`, 2026-10-05, success |
+| Roll back to | `release/v1.4` = `56c6964` (bundle `index-DJ96HwED.js`) |
+
+**Changed** (frontend only)
+- Contractor screens show one clear message ("No garages are assigned to your account yet") for a contractor account with no garages, instead of a raw HTTP 400.
+
+---
+
 ## v1.4 — 2026-10-05
 
 | | |
