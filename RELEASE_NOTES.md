@@ -17,6 +17,40 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.8 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.8` |
+| Commit | `a3437cb` |
+| Bundle | `index-Co5Cta7c.js` |
+| Deploy | GitHub Actions run `37280726832`, 2026-10-05, success, 55 s |
+| Roll back to | `release/v1.7` = `37fbf1b` (bundle `index-DN23C1I7.js`) |
+
+**Changed**
+- Server compresses text answers (gzip): main script 2.2 MB to 576 KB (-74%), day data 398 KB to 27 KB (-93%). Hashed build files are cached for a year. Downloads (photos, exports, DB dumps) are excluded. (`backend/compression.py`)
+- Replay: picking a garage and day that is not built starts the build by itself and opens the data when ready. No Build button. Tested on production: unbuilt day opened with 0 clicks, 1 build, ~35 s.
+- First work order on production: 2.28 s to 1.91 s (repeat visit 1.46 s).
+
+## v1.7 — 2026-10-05
+
+| | |
+|---|---|
+| Tag | `release/v1.7` |
+| Commit | `37fbf1b` |
+| Bundle | `index-DN23C1I7.js` |
+| Deploy | GitHub Actions run `37280221950`, 2026-10-05, success, 56 s (was 215 s) |
+| Roll back to | `release/v1.6` = `0172cc7` (bundle `index-D1eUy0f5.js`) |
+
+**Changed**
+- Survey score (NPS x10) and result on every SA in the Replay list, a reason when there is none, and "Score below 80 / 80 and above" filters.
+- Replay list shows as soon as the day data arrives; replay and survey requests start in parallel.
+- Hot screens (queue, command center, garages, watch list) are warmed once after a restart.
+- Pipeline polls Azure's deployment status instead of a fixed 180 s sleep: 215 s to 56 s.
+- Tests: fixed the 5 old failing tests and the unloadable test file; backend suite 444 passing.
+
+---
+
 ## v1.6 — 2026-10-05
 
 | | |
