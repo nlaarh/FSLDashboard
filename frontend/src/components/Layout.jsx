@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef, useCallback } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { PlayCircle, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, Loader2, DollarSign, BrainCircuit, FileText, Sun, Moon, ClipboardCheck, X as XIcon } from 'lucide-react'
+import { PlayCircle, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, ArrowRightLeft, Truck, Navigation, Settings, HelpCircle, LogOut, Bug, Search, Loader2, DollarSign, BrainCircuit, FileText, Sun, Moon, X as XIcon } from 'lucide-react'
 import FloatingChat from './FloatingChat'
 import { fetchFeatures, searchQuery } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
@@ -349,14 +349,6 @@ export default function Layout() {
                 pathname === '/reporting' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}>
               <FileText className="w-4 h-4 inline mr-1.5 -mt-0.5" />Reporting
-            </Link>
-            )}
-            {features.scheduler_report_card === true && userFeatures.includes('scheduler.report_card') && (
-            <Link to="/report-card"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                pathname === '/report-card' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}>
-              <ClipboardCheck className="w-4 h-4 inline mr-1.5 -mt-0.5" />Report Card
             </Link>
             )}
             {features.scheduler_report_card === true && userFeatures.includes('scheduler.replay') && (
