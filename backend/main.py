@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from compression import SelectiveGZipMiddleware, ImmutableStaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
@@ -35,6 +36,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Compress text/JSON/JS/CSS answers (the 2.1 MB main script was going out uncompressed); downloads are excluded
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024)
 
 
 # ── Pool exhaustion handler — return 503 with Retry-After instead of 500 ────
@@ -568,7 +573,7 @@ _static_dir = Path(__file__).resolve().parent / "static"
 if _static_dir.is_dir():
     _assets_dir = _static_dir / "assets"
     if _assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+        app.mount("/assets", ImmutableStaticFiles(directory=_assets_dir), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
