@@ -6,6 +6,7 @@
   GET  /api/report-card/{territory_id}/{date}/status   build status
   GET  /api/report-card/{territory_id}/{date}/findings AI findings from the fact sheet (template without a key)
   GET  /api/report-card/{territory_id}/{date}/replay   driver tracks and call holds for the Day replay tab
+  GET  /api/report-card/{territory_id}/{date}/call-flags   RAP / out of territory / coverage / member-text flags per call
 
 Gates (architecture.md section 9): feature flag `scheduler_report_card` (404 when off, default off),
 permission `scheduler.report_card` (403; contractors never have it), territory access check.
@@ -219,6 +220,7 @@ def get_replay(territory_id: str, service_date: str, request: Request):
     """Positions and call holds from the saved snapshot. No SF, no Postgres."""
     from report_card_replay import replay_view
     _gate(request, territory_id, service_date)
+    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
     snap = store.load_snapshot(territory_id, service_date)
     if snap is None:
         return _not_ready(territory_id, service_date)
@@ -228,6 +230,24 @@ def get_replay(territory_id: str, service_date: str, request: Request):
         view = replay_view(snap)
         cache.put(key, view, ttl=600)
     return view
+
+
+@router.get('/api/report-card/{territory_id}/{service_date}/call-flags')
+def get_call_flags(territory_id: str, service_date: str, request: Request):
+    """Icons and filters for the Replay work-order list. Two read-only SELECTs, cached against the snapshot."""
+    from report_card_build import Puller
+    from report_card_flags import pull_flags
+    _gate(request, territory_id, service_date)
+    require_feature('scheduler.replay', request)
+    snap = store.load_snapshot(territory_id, service_date)
+    if snap is None:
+        return _not_ready(territory_id, service_date)
+    key = f"report_card_flags:{territory_id}:{service_date}:{snap['built_at']}"
+    flags = cache.get(key)
+    if flags is None:
+        flags = pull_flags([s for s in snap['sas'] if not s['is_drop_off']], Puller(max_calls=8))
+        cache.put(key, flags, ttl=86400)   # a past day never changes
+    return {'flags': flags}
 
 
 def _run_build(territory_id: str, service_date: str, started: str):

@@ -1,0 +1,70 @@
+"""Work-order flags for the Garage Replay list: RAP, out of territory, coverage level and member texts.
+
+Read-only. Three sequential SELECTs per garage-day (WOLI -> work order, work order fields, text log), cached by the route.
+A member "got no text" only when no text TO THE MEMBER was sent; opt-in confirmations, surveys and dispatcher
+notifications don't count. Why there was none: opted out (not a problem) vs opted in and still nothing (the problem).
+"""
+
+from call_story_config import CS1 as CONFIG
+from call_story_sms import label
+from utils import parse_dt
+
+LOG_START = CONFIG['sms']['log_start_utc']
+NOT_TO_MEMBER = {'Opt_in_Confirmation', 'Survey_IC_SMS', *CONFIG['sms']['exclude_definitions']}
+COVERAGE = {'B': 'Basic', 'PLUS': 'Plus', 'PLRV': 'Plus RV', 'PREMIER': 'Premier', 'PMRV': 'Premier RV'}
+
+
+def text_state(wo: dict, logs: list) -> dict:
+    """state: ok | opted_out | missing (opted in, none sent: the problem) | no_data (before the log existed)."""
+    made = parse_dt(wo.get('CreatedDate'))
+    if made and made < parse_dt(LOG_START):
+        return {'state': 'no_data', 'sent': 0, 'tip': 'Text log starts 1 Sep 2026: no text data for this day'}
+    member = [r for r in logs if (r.get('Message_Definition__c') or '') not in NOT_TO_MEMBER]
+    sent = [r for r in member if r.get('Outcome__c') == 'Sent']
+    if sent:
+        return {'state': 'ok', 'sent': len(sent), 'tip': f"{len(sent)} text(s) sent: " + ', '.join(dict.fromkeys(label(r['Message_Definition__c']) for r in sent))}
+    if wo.get('SMS_Opt_In__c') is False:
+        return {'state': 'opted_out', 'sent': 0, 'tip': 'No texts: member is not opted in to texts'}
+    skipped = [r for r in member if r.get('Outcome__c')]
+    why = ('; '.join(dict.fromkeys(f"{label(r.get('Message_Definition__c'))}: {r.get('Error_Message__c') or r['Outcome__c']}" for r in skipped))
+           if skipped else 'no text was even attempted')
+    return {'state': 'missing', 'sent': 0, 'tip': f'Opted in but got no text: {why}'}
+
+
+def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict) -> dict:
+    out = {}
+    for sa in sas:
+        wo = wos.get(woli_to_wo.get(sa.get('woli_id')))
+        if not wo:
+            continue
+        out[sa['id']] = {
+            'rap': wo.get('Type__c') == 'RAP' or wo.get('Source__c') == 'RAP',
+            'out_of_territory': bool(wo.get('Out_of_Territory__c')),
+            'opted_in': wo.get('SMS_Opt_In__c'),
+            'coverage': COVERAGE.get(wo.get('Coverage__c'), wo.get('Coverage__c')),
+            'text': text_state(wo, logs_by_wo.get(wo['Id'], [])),
+        }
+    return out
+
+
+def pull_flags(sas: list, puller) -> dict:
+    """sas: snapshot SA records (non-drop-off). puller: report_card_build.Puller (one query at a time).
+    Cost per garage-day: 1 query for all work orders (parent fields read through the line item) + 1 for the text log,
+    and none for the log when every call predates it. Rows are filtered in SOQL, only needed columns are read."""
+    woli_ids = sorted({s['woli_id'] for s in sas if s.get('woli_id')})
+    woli_to_wo, wos = {}, {}
+    for r in puller.batched(
+            "SELECT Id, WorkOrderId, WorkOrder.CreatedDate, WorkOrder.Type__c, WorkOrder.Source__c, "
+            "WorkOrder.Out_of_Territory__c, WorkOrder.Coverage__c, WorkOrder.SMS_Opt_In__c "
+            "FROM WorkOrderLineItem WHERE Id IN ({ids})", woli_ids, size=200):
+        w = r.get('WorkOrder') or {}
+        woli_to_wo[r['Id']] = r['WorkOrderId']
+        wos[r['WorkOrderId']] = {'Id': r['WorkOrderId'], **{k: v for k, v in w.items() if k != 'attributes'}}
+    cutoff = parse_dt(LOG_START)
+    log_ids = [i for i, w in wos.items() if (parse_dt(w.get('CreatedDate')) or cutoff) >= cutoff]
+    skip = ','.join(f"'{d}'" for d in sorted(NOT_TO_MEMBER))
+    logs_by_wo = {}
+    for r in puller.batched("SELECT Work_Order__c, Message_Definition__c, Outcome__c FROM SMS_Send_Log__c "
+                            f"WHERE Work_Order__c IN ({{ids}}) AND Message_Definition__c NOT IN ({skip})", log_ids, size=200):
+        logs_by_wo.setdefault(r['Work_Order__c'], []).append(r)
+    return compose(sas, woli_to_wo, wos, logs_by_wo)
