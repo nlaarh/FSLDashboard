@@ -13,6 +13,7 @@ from sf_client import sf_query_all, sf_parallel
 from sf_batch import batch_soql_query
 from dispatch_utils import parse_assign_events, classify_dispatch
 import cache
+from cache import DASHBOARD_TTL
 
 router = APIRouter()
 
@@ -341,4 +342,4 @@ def scheduler_insights():
             'sas_excluded_creator': 0,  # all SAs now included
         }
 
-    return cache.cached_query('scheduler_insights_today', _fetch, ttl=60)
+    return cache.cached_query('scheduler_insights_today', _fetch, ttl=DASHBOARD_TTL)

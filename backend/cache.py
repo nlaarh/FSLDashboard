@@ -17,6 +17,9 @@ import time, logging, os, json
 from threading import Lock, Event, Thread
 from pathlib import Path
 
+import functools
+import threading
+
 log = logging.getLogger('cache')
 
 # ── Cache version — bump this when response shapes change to auto-invalidate ──
@@ -26,6 +29,33 @@ _store = {}
 _lock = Lock()
 _pending = {}  # key -> Event (prevents duplicate fetches)
 DEFAULT_TTL = 300  # 5 minutes
+DASHBOARD_TTL = 300  # Command Center / Ops Brief / Scheduler Insights / Ops Territories: up to 5 minutes old (agreed)
+
+# ── Who is actually looking? ────────────────────────────────────────────────
+# The background refresher keeps dashboards warm. Refreshing a screen nobody has opened costs Salesforce calls for
+# nothing (about 95 a minute, round the clock), so every read made on behalf of a USER is remembered here and the
+# refresher only refreshes keys somebody read recently. Reads by the refresher itself never count.
+_tls = threading.local()
+_last_read: dict = {}
+
+
+def set_system_thread(on: bool = True):
+    """Mark the current thread as the refresher (or another system job): its cache reads are not 'someone looking'."""
+    _tls.system = on
+
+
+def recently_read(key: str, within_s: float) -> bool:
+    return time.time() - _last_read.get(key, 0.0) <= within_s
+
+
+def _reads(fn):
+    """Remember that a user read `key` (first argument), unless the reader is a system thread."""
+    @functools.wraps(fn)
+    def wrapper(key, *a, **k):
+        if not getattr(_tls, 'system', False):
+            _last_read[key] = time.time()
+        return fn(key, *a, **k)
+    return wrapper
 
 
 def _vkey(key: str) -> str:
@@ -35,6 +65,7 @@ def _vkey(key: str) -> str:
 
 # ── L1: In-process memory cache ─────────────────────────────────────────────
 
+@_reads
 def get(key: str):
     with _lock:
         entry = _store.get(key)
@@ -43,6 +74,7 @@ def get(key: str):
     return None
 
 
+@_reads
 def get_stale(key: str):
     """Return cached data even if expired (for graceful degradation)."""
     with _lock:
@@ -143,6 +175,7 @@ def disk_invalidate(key: str):
 
 # ── Multi-layer read (L1 → L2 → stale) ──────────────────────────────────────
 
+@_reads
 def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
     """Try every cache layer. Returns data or None. Never calls SF."""
     result = get(key)
@@ -164,6 +197,7 @@ def get_from_any_layer(key: str, ttl: int = DEFAULT_TTL):
 
 # ── Stale-while-revalidate: serve instantly, refresh in background ──────────
 
+@_reads
 def stale_while_revalidate(key: str, compute_fn, ttl: int = 3600, stale_ttl: int = 86400):
     """Always serve cached data immediately. Refresh in background if stale.
 
@@ -233,6 +267,7 @@ def _background_refresh(key: str, compute_fn, ttl: int):
         return
 
     def _do_refresh():
+        set_system_thread(True)      # a background refresh is not a user read
         try:
             log.info(f"SWR '{key}': background refresh started")
             result = compute_fn()
@@ -251,6 +286,7 @@ def _background_refresh(key: str, compute_fn, ttl: int):
 
 # ── User-facing cache query (stale-while-revalidate) ────────────────────────
 
+@_reads
 def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
     """Serve from cache with background re-fetch when expired.
 
@@ -310,6 +346,7 @@ def cached_query(key: str, query_fn, ttl: int = DEFAULT_TTL):
             evt.set()
 
 
+@_reads
 def cached_query_persistent(key: str, query_fn, ttl: int = 86400, max_stale_hours: int = 0):
     """Like cached_query but persists to L2 SQLite. Survives restarts.
 

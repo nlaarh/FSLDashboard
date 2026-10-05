@@ -12,6 +12,7 @@ from collections import defaultdict
 from utils import _ET, parse_dt as _parse_dt, minutes_since as _minutes_since
 from sf_client import sf_query_all, sf_parallel, sanitize_soql, get_towbook_on_location
 import cache
+from cache import DASHBOARD_TTL
 
 
 def _calc_ata(sa, towbook_on_location=None):
@@ -363,7 +364,7 @@ def get_ops_territories():
             },
         }
 
-    return cache.cached_query('ops_territories', _fetch, ttl=120)
+    return cache.cached_query('ops_territories', _fetch, ttl=DASHBOARD_TTL)
 
 
 def get_ops_territory_detail(territory_id: str):

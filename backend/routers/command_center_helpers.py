@@ -58,12 +58,30 @@ def build_driver_availability(cc_trucks, driver_members, busy_ar, now):
     return drivers_by_territory, drivers_by_territory_tier, driver_tier_map, logged_in_ids, busy_driver_ids_set
 
 
+def completed_towbook_ids(by_territory) -> list:
+    """Ids of every completed Towbook appointment across all garages (drop-offs excluded), for one arrival lookup."""
+    ids = []
+    for sa_list_raw in by_territory.values():
+        st = (sa_list_raw[0].get('ServiceTerritory') or {})
+        if not st.get('Latitude') or not st.get('Longitude'):
+            continue                      # such a garage is skipped below, so its calls are not needed
+        for s in sa_list_raw:
+            if ('drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()
+                    and s.get('Status') == 'Completed' and (s.get('ERS_Dispatch_Method__c') or '').lower() == 'towbook'):
+                ids.append(s['Id'])
+    return ids
+
+
 def build_territory_data(by_territory, now_utc, drivers_by_territory, drivers_by_territory_tier):
     """Build territory summary list from grouped SAs.
 
     Returns list of territory dicts ready for the response.
     """
     territories = []
+    # ONE history lookup for every garage. This used to run inside the loop below, once per garage (about 55 separate
+    # Salesforce queries returning a handful of rows each) on every refresh.
+    all_ids = completed_towbook_ids(by_territory)
+    towbook_on_loc_all = get_towbook_on_location(all_ids) if all_ids else {}
     for tid, sa_list_raw in by_territory.items():
         st = (sa_list_raw[0].get('ServiceTerritory') or {})
         t_lat = st.get('Latitude')
@@ -83,9 +101,7 @@ def build_territory_data(by_territory, now_utc, drivers_by_territory, drivers_by
                                                 'Unable to Complete', 'No-Show')]
 
         response_times = []
-        towbook_ids_terr = [s['Id'] for s in completed_list
-                            if (s.get('ERS_Dispatch_Method__c') or '').lower() == 'towbook']
-        towbook_on_loc_terr = get_towbook_on_location(towbook_ids_terr) if towbook_ids_terr else {}
+        towbook_on_loc_terr = towbook_on_loc_all          # arrival times for all garages, looked up once above
         for s in completed_list:
             wt_name = (s.get('WorkType') or {}).get('Name', '') or ''
             if 'drop' in wt_name.lower():
