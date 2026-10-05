@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Compass, MessageSquareOff } from 'lucide-react'
-import { fetchReportCardReplay, fetchReportCardCallFlags } from '../../api'
+import { loadReplay, loadCallFlags } from './prefetch'
 import useReplayClock from '../replay/useReplayClock'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
 import ReplayPlayer from '../replay/ReplayPlayer'
@@ -10,30 +10,42 @@ import DayGantt from './DayGantt'
 import ReplayPanel from '../woreplay/ReplayPanel'
 import { verdictColour } from './reportCardStyles'
 
-/** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock. */
+/** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock.
+ *  The work-order list shows as soon as the day data is here; the map side fills in when the replay arrives. */
 export default function GarageReplay({ data, garage, date, selectedSa, onSelectSa, callStory }) {
   const [state, setState] = useState({ phase: 'loading' })
   useEffect(() => {
     let live = true
     setState({ phase: 'loading' })
-    fetchReportCardReplay(garage, date)
+    loadReplay(garage, date)
       .then(({ status, data: d }) => live && setState(status === 200 ? { phase: 'ready', replay: d } : { phase: 'error', error: d?.detail || d?.error || `Replay unavailable (${status})` }))
       .catch(e => live && setState({ phase: 'error', error: e.message }))
     return () => { live = false }
   }, [garage, date])
 
-  if (state.phase === 'loading') return <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>
-  if (state.phase === 'error') return <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>
-  return <ReplayBody key={`${garage}:${date}`} garage={garage} date={date} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />
-}
-
-function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callStory }) {
-  const [flags, setFlags] = useState({})   // RAP / out of territory / coverage / texts per call; the list works without them
+  const [flags, setFlags] = useState({})   // RAP / out of territory / coverage / texts / survey per call; the list works without them
   useEffect(() => {
     let live = true
-    fetchReportCardCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
+    setFlags({})
+    loadCallFlags(garage, date).then(({ status, data: d }) => live && status === 200 && setFlags(d.flags || {})).catch(() => {})
     return () => { live = false }
   }, [garage, date])
+
+  const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
+  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
+  return (
+    <div className="flex gap-3 items-start">
+      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} />
+      <div className="flex-1 min-w-0">
+        {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
+        {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
+        {state.phase === 'ready' && <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />}
+      </div>
+    </div>
+  )
+}
+
+function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
   // The day's ACTIVE hours only: from 15 min before the first call to 15 min after the last one clears (not midnight to midnight).
   const win = useMemo(() => {
     const made = replay.calls.map(c => c.created).filter(Boolean), done = replay.calls.map(c => c.end).filter(Boolean)
@@ -64,12 +76,8 @@ function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callSt
   const roster = frame.drivers.filter(d => d.pos || ['en_route', 'on_scene', 'assigned', 'idle'].includes(d.status.key)).sort((a, b) => (ORDER[a.status.key] ?? 9) - (ORDER[b.status.key] ?? 9) || a.name.localeCompare(b.name))
   const counts = roster.reduce((o, d) => ({ ...o, [d.status.key]: (o[d.status.key] || 0) + 1 }), {})
 
-  const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
-  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
   return (
-    <div className="flex gap-3 items-start">
-    <CallList calls={calls} names={names} flags={flags} selected={selected} onSelect={onSelectSa} />
-    <div className="space-y-3 flex-1 min-w-0">
+    <div className="space-y-3 min-w-0">
       {selected && callStory && <div ref={panelRef}><ReplayPanel q={sasById[selected].number} /></div>}
       <ReplayPlayer clock={clock} start={win[0]} end={win[1]} density={density}>
         <span className="text-[11px] text-slate-400">{frame.open.length} open · {frame.late.length} past promise</span>
@@ -115,7 +123,6 @@ function ReplayBody({ garage, date, replay, data, selectedSa, onSelectSa, callSt
       <DayGantt data={data} selectedSa={selected} onSelect={onSelectSa} clockMs={clock.t * 1000}
         onSeek={ms => clock.setT(ms / 1000)} onSelectDriver={setDriverId} selectedDriver={driverId} />
     </div>
-    </div>
   )
 }
 
@@ -123,6 +130,14 @@ const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'Ameri
 
 const NONE = { rap: false, ooT: false, text: false, late: false, job: '', cover: '', survey: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
+// Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
+const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
+  : mode === 'totally' ? sv.totally : mode === 'not' ? !sv.totally
+  : mode === 'low' ? sv.score != null && sv.score < 80 : mode === 'high' ? sv.score != null && sv.score >= 80 : true
+const scoreColour = n => (n == null ? 'text-slate-400' : n >= 80 ? 'text-emerald-400' : n >= 60 ? 'text-amber-400' : 'text-rose-400')
+// Why an SA has no survey, so a blank never looks like a missing feature
+const noSurveyWhy = (c, x) => c.status !== 'Completed' ? 'Survey: after the call is completed'
+  : x.opted_in === false ? 'Survey: none (member not opted in to texts)' : 'Survey: none yet (no response)'
 const SURVEY_COLOUR = { 'totally satisfied': 'text-emerald-400', satisfied: 'text-lime-400', 'neither satisfied nor dissatisfied': 'text-amber-400', dissatisfied: 'text-orange-400', 'totally dissatisfied': 'text-rose-400' }
 
 /** The garage's calls for the day, earliest first, with RAP / out-of-territory / no-text icons and filters. Click one to replay it. */
@@ -134,7 +149,7 @@ function CallList({ calls, names, flags, selected, onSelect }) {
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
       && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c))
-      && (!f.survey || (f.survey === 'none' ? !x.survey : f.survey === 'totally' ? x.survey?.totally : x.survey && !x.survey.totally))
+      && (!f.survey || surveyMatch(f.survey, x.survey))
   })
   const on = f.rap || f.ooT || f.text || f.late || f.job || f.cover || f.survey
   const surveyed = Object.values(flags).filter(x => x.survey)
@@ -171,7 +186,8 @@ function CallList({ calls, names, flags, selected, onSelect }) {
             <select value={f.survey} onChange={e => setF({ ...f, survey: e.target.value })}
               className="bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 px-1.5 py-0.5 flex-1">
               <option value="">Survey: all</option><option value="totally">Totally satisfied</option>
-              <option value="not">Not totally satisfied</option><option value="none">No survey</option>
+              <option value="not">Not totally satisfied</option><option value="low">Score below 80</option>
+              <option value="high">Score 80 and above</option><option value="none">No survey</option>
             </select>
             {tsPct != null && <span title={`${surveyed.length} surveys on this day`} className={`text-[11px] font-semibold ${tsPct < 80 ? 'text-rose-400' : 'text-emerald-400'}`}>{tsPct}% totally satisfied</span>}
           </div>
@@ -192,7 +208,10 @@ function CallList({ calls, names, flags, selected, onSelect }) {
                 {c.city ? <span className="block text-[11px] text-slate-500 truncate">{c.city}{c.postal_code ? ` ${c.postal_code}` : ''}</span>
                   : <span className="block text-[11px] text-amber-400">No address on this call</span>}
                 {x && x.opted_in != null && <span className={`block text-[11px] ${x.opted_in ? 'text-emerald-400' : 'text-slate-500'}`}>SMS: {x.opted_in ? 'opted in' : 'not opted in'}</span>}
-                {x?.survey && <span className={`block text-[11px] ${SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}`}>Survey: {x.survey.overall || 'no answer'}</span>}
+                {x && (x.survey
+                  ? <span className="block text-[11px]"><span className={SURVEY_COLOUR[(x.survey.overall || '').toLowerCase()] || 'text-slate-400'}>Survey: {x.survey.overall || 'no answer'}</span>
+                      {x.survey.score != null && <span className={`font-semibold ${scoreColour(x.survey.score)}`} title="Likelihood to recommend, 0-10, shown out of 100"> · score {x.survey.score}</span>}</span>
+                  : <span className="block text-[11px] text-slate-600">{noSurveyWhy(c, x)}</span>)}
               </span>
               {x && (
                 <span className="flex items-center gap-1 shrink-0 mt-0.5">

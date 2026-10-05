@@ -66,7 +66,7 @@ jobs:
         echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
         chmod 600 /tmp/.netrc
 
-        RESPONSE=$(curl -s -w "\n%{http_code}" \
+        RESPONSE=$(curl -s -D /tmp/deploy_headers.txt -w "\n%{http_code}" \
           -X POST \
           "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy?isAsync=true" \
           --netrc-file /tmp/.netrc \
@@ -74,7 +74,7 @@ jobs:
           -H "Content-Type: application/octet-stream" \
           --max-time 300)
 
-        rm -f /tmp/.netrc
+        # /tmp/.netrc is kept for the next step (it polls the deployment) and removed there.
 
         HTTP_CODE=$(echo "$RESPONSE" | tail -1)
         BODY=$(echo "$RESPONSE" | sed '$d')
@@ -88,16 +88,38 @@ jobs:
           exit 1
         fi
 
-    - name: Wait for Oryx build and verify
+    - name: Wait for Azure build (poll) and verify
       run: |
-        echo "Waiting 180 seconds for Oryx build + app startup..."
-        sleep 180
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-          --max-time 15 \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health")
-        echo "Health check: HTTP $STATUS"
-        if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "302" ]; then
-          echo "App is live! (HTTP $STATUS)"
-        else
-          echo "Warning: App returned $STATUS (Oryx build may still be running)"
+        # Poll Kudu's deployment status instead of a fixed sleep: finish the moment Azure does,
+        # fail loudly if the build fails or never completes.
+        SITE="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        LOC=$(grep -i '^location:' /tmp/deploy_headers.txt | tr -d '\r' | awk '{print $2}')
+        if [ -z "$LOC" ]; then
+          LOC="https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/deployments/latest"
+          echo "No Location header; polling $LOC"
         fi
+        START=$(date +%s)
+        # Kudu status: 0 pending, 1 building, 2 deploying, 3 failed, 4 success
+        while true; do
+          ELAPSED=$(( $(date +%s) - START ))
+          BODY=$(curl -s --max-time 20 --netrc-file /tmp/.netrc "$LOC" || true)
+          STATUS=$(echo "$BODY" | jq -r '.status // empty' 2>/dev/null || true)
+          echo "[${ELAPSED}s] Azure deployment status: ${STATUS:-unknown}"
+          if [ "$STATUS" = "4" ]; then break; fi
+          if [ "$STATUS" = "3" ]; then
+            echo "Azure build FAILED:"; echo "$BODY" | jq -r '.status_text // .' ; rm -f /tmp/.netrc; exit 1
+          fi
+          if [ "$ELAPSED" -ge 600 ]; then
+            echo "Timed out after 10 minutes waiting for Azure"; rm -f /tmp/.netrc; exit 1
+          fi
+          sleep 10
+        done
+        rm -f /tmp/.netrc
+        # The app restarts after the build: wait for a healthy answer (up to 3 minutes)
+        for i in $(seq 1 18); do
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$SITE/api/health" || true)
+          echo "Health check $i: HTTP $CODE"
+          if [ "$CODE" = "200" ]; then echo "App is live."; exit 0; fi
+          sleep 10
+        done
+        echo "App did not become healthy after the build"; exit 1

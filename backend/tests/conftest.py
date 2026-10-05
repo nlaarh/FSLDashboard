@@ -63,7 +63,7 @@ if "core_users" in sys.modules:
 
 @pytest.fixture
 def sqlite_db(monkeypatch):
-    """In-memory SQLite database with users and password_reset_tokens tables.
+    """In-memory SQLite database with users, user_garages and password_reset_tokens tables.
     Also routes db_adapter (used by repositories) to SQLite so all repo calls
     hit the in-memory DB without touching Postgres."""
     import db_adapter
@@ -98,6 +98,16 @@ def sqlite_db(monkeypatch):
             validation_expires_at REAL,
             attempts INTEGER DEFAULT 0,
             created_at REAL DEFAULT (strftime('%s', 'now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE user_garages (
+            username TEXT NOT NULL,
+            garage_id TEXT NOT NULL,
+            garage_name TEXT DEFAULT '',
+            PRIMARY KEY (username, garage_id)
         )
         """
     )

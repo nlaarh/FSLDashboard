@@ -36,8 +36,10 @@ def survey_of(rows: list) -> dict | None:
     if not rows:
         return None
     r = max(rows, key=lambda x: x.get('ERS_Survey_Completed_Date__c') or '')
+    nps = r.get('ERS_NPS__c')   # 0-10 "how likely to recommend"; x10 gives the 0-100 survey score
     return {'overall': r.get('ERS_Overall_Satisfaction__c'), 'response': r.get('ERS_Response_Time_Satisfaction__c'),
-            'tech': r.get('ERS_Technician_Satisfaction__c'),
+            'tech': r.get('ERS_Technician_Satisfaction__c'), 'nps': nps,
+            'score': None if nps is None else round(float(nps) * 10),
             'totally': (r.get('ERS_Overall_Satisfaction__c') or '').lower() == 'totally satisfied'}
 
 
@@ -81,7 +83,7 @@ def pull_flags(sas: list, puller) -> dict:
     done = {woli_to_wo[s['woli_id']] for s in sas if s.get('status') == 'Completed' and s.get('woli_id') in woli_to_wo}
     surveys_by_wo = {}
     for r in puller.batched("SELECT ERS_Work_Order__c, ERS_Overall_Satisfaction__c, ERS_Response_Time_Satisfaction__c, "
-                            "ERS_Technician_Satisfaction__c, ERS_Survey_Completed_Date__c FROM Survey_Result__c "
+                            "ERS_Technician_Satisfaction__c, ERS_NPS__c, ERS_Survey_Completed_Date__c FROM Survey_Result__c "
                             "WHERE ERS_Work_Order__c IN ({ids})", sorted(done), size=200):
         surveys_by_wo.setdefault(r['ERS_Work_Order__c'], []).append(r)
     return compose(sas, woli_to_wo, wos, logs_by_wo, surveys_by_wo)

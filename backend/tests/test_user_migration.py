@@ -114,6 +114,16 @@ def sqlite_db(monkeypatch):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE user_garages (
+            username TEXT NOT NULL,
+            garage_id TEXT NOT NULL,
+            garage_name TEXT DEFAULT '',
+            PRIMARY KEY (username, garage_id)
+        )
+        """
+    )
     conn.commit()
 
     @contextmanager
