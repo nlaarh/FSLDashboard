@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from sf_client import sf_query_all, sf_parallel
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel
 from utils import (
     _ET, parse_dt as _parse_dt,
 )

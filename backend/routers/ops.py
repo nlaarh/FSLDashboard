@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel, sanitize_soql
 from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
     is_fleet_territory, haversine,

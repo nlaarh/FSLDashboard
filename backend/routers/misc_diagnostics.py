@@ -9,8 +9,7 @@ from utils import (
     _ET, parse_dt as _parse_dt,
     haversine,
 )
-from sf_client import sf_query_all, sf_parallel
-from sf_batch import batch_soql_query
+from sf_client import sf_query_all_shared as sf_query_all, sf_parallel
 from dispatch_utils import parse_assign_events, classify_dispatch
 import cache
 from cache import DASHBOARD_TTL
@@ -164,14 +163,10 @@ def scheduler_insights():
 
         # 2) Batch query ServiceAppointmentHistory for assignment changes
         dispatched_by = {}
-        all_hist_rows = batch_soql_query("""
-                SELECT ServiceAppointmentId, NewValue,
-                       CreatedBy.Name, CreatedBy.Profile.Name
-                FROM ServiceAppointmentHistory
-                WHERE ServiceAppointmentId IN ('{id_list}')
-                  AND Field = 'ERS_Assigned_Resource__c'
-                ORDER BY CreatedDate ASC
-            """, sa_ids, chunk_size=150)
+        # The shared history copy (one small update per refresh) instead of ~8 batched Salesforce queries.
+        import sa_history
+        all_hist_rows = sa_history.rows_for('ERS_Assigned_Resource__c', sa_ids,
+                                            {i: s.get('CreatedDate') for i, s in sa_by_id.items()})
         _assign_events = parse_assign_events(all_hist_rows, set(sa_ids))
         _dispatch_class = classify_dispatch(_assign_events)
         history_sa_ids = {r.get('ServiceAppointmentId') for r in all_hist_rows if r.get('ServiceAppointmentId')}

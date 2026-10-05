@@ -58,8 +58,9 @@ def build_driver_availability(cc_trucks, driver_members, busy_ar, now):
     return drivers_by_territory, drivers_by_territory_tier, driver_tier_map, logged_in_ids, busy_driver_ids_set
 
 
-def completed_towbook_ids(by_territory) -> list:
-    """Ids of every completed Towbook appointment across all garages (drop-offs excluded), for one arrival lookup."""
+def completed_towbook_ids(by_territory, created: dict | None = None) -> list:
+    """Ids of every completed Towbook appointment across all garages (drop-offs excluded), for one arrival lookup.
+    If `created` is given it is filled with {id: CreatedDate} for those appointments."""
     ids = []
     for sa_list_raw in by_territory.values():
         st = (sa_list_raw[0].get('ServiceTerritory') or {})
@@ -69,6 +70,8 @@ def completed_towbook_ids(by_territory) -> list:
             if ('drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()
                     and s.get('Status') == 'Completed' and (s.get('ERS_Dispatch_Method__c') or '').lower() == 'towbook'):
                 ids.append(s['Id'])
+                if created is not None:
+                    created[s['Id']] = s.get('CreatedDate')
     return ids
 
 
@@ -80,8 +83,9 @@ def build_territory_data(by_territory, now_utc, drivers_by_territory, drivers_by
     territories = []
     # ONE history lookup for every garage. This used to run inside the loop below, once per garage (about 55 separate
     # Salesforce queries returning a handful of rows each) on every refresh.
-    all_ids = completed_towbook_ids(by_territory)
-    towbook_on_loc_all = get_towbook_on_location(all_ids) if all_ids else {}
+    created = {}
+    all_ids = completed_towbook_ids(by_territory, created)
+    towbook_on_loc_all = get_towbook_on_location(all_ids, created) if all_ids else {}
     for tid, sa_list_raw in by_territory.items():
         st = (sa_list_raw[0].get('ServiceTerritory') or {})
         t_lat = st.get('Latitude')

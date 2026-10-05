@@ -24,7 +24,7 @@ def test_completed_towbook_ids_cover_every_garage_and_skip_the_rest():
 def test_arrival_times_are_looked_up_once_however_many_garages_there_are(monkeypatch):
     calls = []
     arrival = (NOW - timedelta(hours=2, minutes=30)).strftime('%Y-%m-%dT%H:%M:%S.000+0000')
-    monkeypatch.setattr(h, 'get_towbook_on_location', lambda ids: calls.append(list(ids)) or {i: arrival for i in ids})
+    monkeypatch.setattr(h, 'get_towbook_on_location', lambda ids, created=None: calls.append(list(ids)) or {i: arrival for i in ids})
     by = {f'T{n}': [_sa(n, n)] for n in range(1, 31)}                                    # 30 garages, one Towbook call each
     out = h.build_territory_data(by, NOW, {}, {})
     assert len(calls) == 1 and len(calls[0]) == 30                                       # was 30 separate lookups
@@ -33,7 +33,7 @@ def test_arrival_times_are_looked_up_once_however_many_garages_there_are(monkeyp
 
 def test_garages_get_the_same_response_times_as_before(monkeypatch):
     arrival = (NOW - timedelta(hours=2, minutes=30)).strftime('%Y-%m-%dT%H:%M:%S.000+0000')     # 30 min after creation
-    monkeypatch.setattr(h, 'get_towbook_on_location', lambda ids: {i: arrival for i in ids})
+    monkeypatch.setattr(h, 'get_towbook_on_location', lambda ids, created=None: {i: arrival for i in ids})
     out = h.build_territory_data({'T1': [_sa(1, 1)]}, NOW, {}, {})
     row = out[0]
     assert row.get('avg_response') == 30 or row.get('avg_response_min') == 30 or 30 in [v for v in row.values() if isinstance(v, (int, float))]

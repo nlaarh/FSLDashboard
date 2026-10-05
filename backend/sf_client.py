@@ -6,6 +6,7 @@ Protects the production Salesforce org from being overwhelmed by FSLAPP:
 3. Connection pooling: reuse TCP connections across 25+ dispatchers
 """
 
+import copy
 import os, threading, time as _time, logging, re, requests
 from collections import deque
 from datetime import datetime, timezone
@@ -451,6 +452,44 @@ def sf_parallel(**fns) -> dict:
     return results
 
 
+# ── Shared reads (dashboards) ────────────────────────────────────────────────
+# The dashboards (Command Center, Ops Brief, Scheduler Insights, Ops Territories) each read the same Salesforce data:
+# truck logins four times, garage membership and drivers three or four times, today's appointments five times.
+# A shared read makes identical queries made within `ttl` seconds, by different screens, cost ONE Salesforce read.
+_shared: dict = {}
+_shared_locks: dict = {}
+_shared_guard = threading.Lock()
+_SHARED_MAX = 300
+
+
+def sf_query_all_shared(soql: str, ttl: int = 300) -> list[dict]:
+    """sf_query_all for dashboards: identical queries within `ttl` seconds share one read (results may be up to `ttl`
+    seconds old). Every caller gets its own private copy, so one screen can never alter another's data.
+    A failed read is not remembered. Single-flight: concurrent identical queries wait for one read."""
+    with _shared_guard:
+        hit = _shared.get(soql)
+        if hit and hit['expires'] > _time.time():
+            with _stats_lock:
+                _stats['shared_hits'] = _stats.get('shared_hits', 0) + 1
+            return copy.deepcopy(hit['rows'])
+        lock = _shared_locks.setdefault(soql, threading.Lock())
+    with lock:
+        with _shared_guard:
+            hit = _shared.get(soql)
+            if hit and hit['expires'] > _time.time():              # another thread just read it while we waited
+                with _stats_lock:
+                    _stats['shared_hits'] = _stats.get('shared_hits', 0) + 1
+                return copy.deepcopy(hit['rows'])
+        rows = sf_query_all(soql)
+        with _shared_guard:
+            _shared[soql] = {'rows': rows, 'expires': _time.time() + ttl}
+            if len(_shared) > _SHARED_MAX:                          # drop what has expired, then the oldest
+                for k in [k for k, v in _shared.items() if v['expires'] <= _time.time()] or [min(_shared, key=lambda k: _shared[k]['expires'])]:
+                    _shared.pop(k, None)
+                    _shared_locks.pop(k, None)
+        return copy.deepcopy(rows)
+
+
 def sf_query_all(soql: str) -> list[dict]:
     result = sf_query(soql)
     if isinstance(result, list) or 'records' not in result:
@@ -461,6 +500,8 @@ def sf_query_all(soql: str) -> list[dict]:
     page = 1
     while not result.get('done', True) and result.get('nextRecordsUrl'):
         page += 1
+        with _stats_lock:
+            _stats['pages'] = _stats.get('pages', 0) + 1     # every extra result page is another Salesforce API request
         _rate_limit_check()  # Each page counts against rate limit
         for attempt in range(2):
             try:
@@ -489,7 +530,7 @@ def sf_query_all(soql: str) -> list[dict]:
     return records
 
 
-def get_towbook_on_location(sa_ids: list[str]) -> dict[str, str]:
+def get_towbook_on_location(sa_ids: list[str], created: dict | None = None) -> dict[str, str]:
     """Fetch real arrival timestamps for Towbook SAs from ServiceAppointmentHistory.
 
     Towbook ActualStartTime is a fake future estimate. The REAL arrival is the
@@ -497,6 +538,8 @@ def get_towbook_on_location(sa_ids: list[str]) -> dict[str, str]:
 
     Args:
         sa_ids: List of ServiceAppointment IDs (Towbook SAs only)
+        created: optional {sa_id: CreatedDate}. When given, the dashboards' shared history copy answers (no per-batch
+                 Salesforce queries); without it, the original direct lookup is used.
 
     Returns:
         Dict mapping SA ID -> ISO datetime string of 'On Location' timestamp
@@ -505,6 +548,12 @@ def get_towbook_on_location(sa_ids: list[str]) -> dict[str, str]:
         return {}
 
     result = {}
+    if created is not None:
+        import sa_history
+        for r in sa_history.rows_for('Status', sa_ids, created):          # oldest first per appointment
+            if r.get('NewValue') == 'On Location' and r['ServiceAppointmentId'] not in result:
+                result[r['ServiceAppointmentId']] = r['CreatedDate']      # first On Location wins
+        return result
     # Process in batches of 200 to stay within SOQL IN clause limits
     for i in range(0, len(sa_ids), 200):
         batch = sa_ids[i:i + 200]
