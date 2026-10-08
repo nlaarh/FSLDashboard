@@ -38,7 +38,7 @@ WO_FIELDS = """Id, WorkOrderNumber, CreatedDate, ERS_Submitted_Date_Time__c, Sou
  Tow_Call__c, SMS_Opt_In__c, Trouble_Code__c, Resolution_Code__c, Clear_Code__c, Status_Reason__c, ERS_Call_Key__c,
  ERS_Source_Call_ID__c, Status"""
 SA_FIELDS = """Id, AppointmentNumber, Status, CreatedDate, ActualStartTime, ActualEndTime, WorkType.Name, RecordType.Name,
- ServiceTerritoryId, ServiceTerritory.Name, ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name, ParentRecordId,
+ ServiceTerritoryId, ServiceTerritory.Name, ServiceTerritory.Latitude, ServiceTerritory.Longitude, ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name, ParentRecordId,
  ERS_PTA__c, ERS_PTA_Due__c, ERS_Spotting_Datetime__c, ERS_Spotting_Number__c, ERS_Dispatch_Method__c,
  ERS_Dynamic_Priority__c, FSL__Duration_In_Minutes__c, FSL__Scheduling_Policy_Used__c, ERS_Facility_Decline_Reason__c,
  ERS_Rejection_Reason__c, ERS_Rejected_Datetime__c, ERS_Cancellation_Reason__c, Off_Platform_Driver__c,
@@ -182,7 +182,7 @@ def _pull_fast(p: Puller, q: str, kind: str, value: str, cfg: dict, now: datetim
     semi = "ServiceAppointmentId IN (SELECT Id FROM ServiceAppointment WHERE ERS_Work_Order__c = '@{wo.records[0].Id}')"
     got = p.composite({
         'wo': f"""SELECT {WO_FIELDS},
-            (SELECT {SA_FIELDS}, ServiceTerritory.Latitude, ServiceTerritory.Longitude FROM Service_Appointments_del__r ORDER BY CreatedDate),
+            (SELECT {SA_FIELDS} FROM Service_Appointments_del__r ORDER BY CreatedDate),
             (SELECT {SMS_FIELDS} FROM SMS_Send_Logs__r ORDER BY CreatedDate),
             (SELECT {SURVEY_FIELDS} FROM Work_Order_Survey_Results__r)
             FROM WorkOrder WHERE {_resolve_where(kind, v)} LIMIT 3""",

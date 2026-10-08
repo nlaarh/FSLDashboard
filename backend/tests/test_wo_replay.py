@@ -127,3 +127,10 @@ def test_placeholder_drivers_read_as_what_they_are():
     assert _driver('Towbook-630 630') == 'Towbook 630'
     assert _driver('000-ST Spot 000- ST') == 'SPOT queue (no driver)'
     assert _driver('Marquan Gates 100') == 'Marquan Gates' and _driver(None) == ''
+
+
+def test_header_where_is_passed_through_or_empty():
+    where = {'member': {'lat': 1.0, 'lon': 2.0}, 'garage': {'name': '100 - Fleet', 'lat': 3.0, 'lon': 4.0}}
+    assert build_replay(story(), where)['header']['where'] == where
+    assert build_replay(story())['header']['where'] == {'member': None, 'garage': None}
+    assert build_replay(story(events=[]), where)['header']['where'] == where

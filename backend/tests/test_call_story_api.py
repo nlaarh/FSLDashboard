@@ -81,6 +81,10 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(call_story, '_norms', lambda d, cfg: None)
     monkeypatch.setattr(call_story.cache, 'get', lambda k: store.get(k))
     monkeypatch.setattr(call_story.cache, 'put', lambda k, v, ttl=0: store.__setitem__(k, v))
+    disk = state['disk'] = {}
+    monkeypatch.setattr(call_story.cache, 'disk_get', lambda k: disk.get(k))        # never the real L2 cache (a database)
+    monkeypatch.setattr(call_story.cache, 'disk_put', lambda k, v, ttl=0: disk.__setitem__(k, (v, ttl)[0]))
+    state['store'] = store
     call_story._RATE.clear()
     app = FastAPI()
     app.include_router(call_story.router)
@@ -157,7 +161,8 @@ def test_replay_map_endpoint_is_gated_cached_and_reports_towbook(client, monkeyp
     c, state = client
     seen = []
 
-    def fake_pull_map(raw, puller=None):
+    def fake_pull_map(raw, puller=None, snapshot_for=None):
+        assert snapshot_for is not None                                    # the day snapshot is what makes most maps free
         seen.append(1)
         return {'wo': {'lat': 1.0, 'lon': 2.0}, 'garage': None, 'towbook': {'driver': None, 'truck': None}, 'drivers': [], 'notes': ['t'], 'window': None, 'sf_calls': 2}
     monkeypatch.setattr('wo_replay_map.pull_map', fake_pull_map)
@@ -169,3 +174,33 @@ def test_replay_map_endpoint_is_gated_cached_and_reports_towbook(client, monkeyp
     assert len(seen) == 1 and state['pulls'] == 1                          # the second call used the cached map and the cached pull
     state['flag'] = False
     assert c.get('/api/call-story/replay-map?q=05164342').status_code == 404
+
+
+def test_closed_call_map_is_kept_on_disk_and_a_restart_reads_it_back(client, monkeypatch):
+    from routers import call_story
+    c, state = client
+    seen = []
+    monkeypatch.setattr('wo_replay_map.pull_map', lambda raw, puller=None, snapshot_for=None: seen.append(1) or {'drivers': [], 'sf_calls': 0})
+    c.get('/api/call-story/replay-map?q=05164342')
+    assert list(state['disk']) == [f'cs_map:{towbook_cascade_raw()["wo"]["Id"]}']
+    state['store'].clear()                                       # the memory cache is gone, as after a restart
+    call_story._RATE.clear()
+    monkeypatch.setattr(call_story, 'pull_story', lambda *a, **k: towbook_cascade_raw())
+    assert c.get('/api/call-story/replay-map?q=05164342').json() == {'drivers': [], 'sf_calls': 0} and len(seen) == 1
+
+
+def test_open_call_map_is_never_written_to_disk(client, monkeypatch):
+    from routers import call_story
+    c, state = client
+    monkeypatch.setattr(call_story, 'pull_story', lambda *a, **k: {**towbook_cascade_raw(), 'closed': False})
+    monkeypatch.setattr('wo_replay_map.pull_map', lambda raw, puller=None, snapshot_for=None: {'drivers': [], 'sf_calls': 1})
+    assert c.get('/api/call-story/replay-map?q=05164342').status_code == 200 and state['disk'] == {}
+
+
+def test_replay_carries_where_and_meta(client):
+    c, _ = client
+    body = c.get('/api/call-story/replay?q=05164342').json()
+    assert set(body['header']['where']) == {'member', 'garage'}
+    assert body['meta']['cache'] == 'miss' and body['meta']['sf_calls'] == 8 and body['meta']['ms'] >= 0
+    again = c.get('/api/call-story/replay?q=05164342').json()
+    assert again['meta']['cache'] == 'hit' and again['meta']['sf_calls'] == 0
