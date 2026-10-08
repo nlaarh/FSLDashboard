@@ -79,7 +79,7 @@ export function createStageLayers(map, opts) {
         it.mk.setZIndexOffset(isAct ? 1000 : 0)
       }
       if (garagePt && it.el) {   // the garage tag is ~110 px wide, 25-40 px under the garage; the truck tag is ~120 x 40, 50-90 px under the truck
-        const q = map.latLngToLayerPoint([pos.lat, pos.lon]), clash = Math.abs(q.x - garagePt.x) < 115 && q.y < garagePt.y - 10 && q.y > garagePt.y - 65
+        const q = map.latLngToLayerPoint([pos.lat, pos.lon]), clash = Math.abs(q.x - garagePt.x) < 115 && q.y < garagePt.y + 20 && q.y > garagePt.y - 65
         if (clash !== it.above) { it.above = clash; it.el.querySelector('.rp-tag')?.classList.toggle('above', clash) }
       }
       if (isAct && !actingItem) { actingItem = it; actingPos = pos }

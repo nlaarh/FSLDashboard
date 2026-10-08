@@ -179,7 +179,7 @@ def test_phone_digits_takes_last_ten():
 
 
 def test_insight_names_drop_the_truck_number_like_the_garage_view():
-    assert [rx.short_driver_name(n) for n in ('Marcus Gibson 100', 'Ann Lee 12A', 'Jo Kim 118AB', 'Dee Roe')] == ['Marcus Gibson', 'Ann Lee', 'Jo Kim', 'Dee Roe']
+    assert [rx.short_driver_name(n) for n in ('Marcus Gibson 100', 'Ann Lee 12A', 'Jo Kim 118AB', 'Zack Felix 4652D', 'Dee Roe')] == ['Marcus Gibson', 'Ann Lee', 'Jo Kim', 'Zack Felix', 'Dee Roe']
     load = {'driver': 'Marcus Gibson 100', 'channel': 'fleet', 'current': None, 'after': [],
             'ahead': [{'given_at': '2026-10-07T15:00:00Z'}], 'given_at': '2026-10-07T15:00:00Z'}
     out = rx.build_insights([], [], load, None, None)

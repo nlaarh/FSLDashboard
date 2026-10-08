@@ -284,7 +284,7 @@ def _late(items: list, promise, key='ts') -> list:
 
 def short_driver_name(name: str) -> str:
     """Salesforce adds the garage's truck number to a driver's name ("Marcus Gibson 100"); people say "Marcus Gibson". Same rule as the Garage view."""
-    return re.sub(r'\s+\d{2,3}[A-Z]{0,2}$', '', name or '')
+    return re.sub(r'\s+\d{2,5}[A-Z]{0,2}$', '', name or '')
 
 
 def build_insights(calls: list, texts: list, load: dict | None, promise, on_location) -> list:
