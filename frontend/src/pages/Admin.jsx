@@ -322,6 +322,7 @@ export default function Admin({ role = '' }) {
                   { key: 'contractor_dispatch', label: 'Dispatch & Map', desc: 'Contractor live dispatch board & driver map' },
                   { key: 'scheduler_report_card', label: 'Report Card', desc: 'Scheduler Report Card: past garage-day Gantt and verdicts' },
                   { key: 'call_story', label: 'Call Story', desc: 'Type a call, see what happened and why' },
+                  { key: 'replay_member_contact', label: 'Replay: member contact', desc: 'Replay shows member calls, texts (with message text) and the driver\'s other jobs' },
                 ].map(m => {
                   const on = features[m.key] !== false
                   return (
