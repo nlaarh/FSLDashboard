@@ -34,10 +34,14 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
 
   const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
   const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
+  // The picked call's own map and animation do not depend on the whole day replay, so show it right away
+  // while the day replay is still loading (or has failed); once the day is ready, ReplayBody shows it.
+  const pickedNumber = state.phase !== 'ready' && callStory ? calls.find(x => x.id === selectedSa)?.number : null
   return (
     <div className="flex gap-3 items-start">
       <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-3">
+        {pickedNumber && <ReplayPanel q={pickedNumber} />}
         {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
         {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
         {state.phase === 'ready' && <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />}

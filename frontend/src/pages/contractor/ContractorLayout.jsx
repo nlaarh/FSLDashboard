@@ -211,7 +211,7 @@ export default function ContractorLayout() {
       .catch(() => {})
   }, [])
 
-  // Map is on-platform only. Off-platform (Towbook) vendors have no driver
+  // Map is on-platform only. Off-platform (Towbook) contractors have no driver
   // telemetry, so hide the link rather than let them reach a dead end.
   const [showMap, setShowMap] = useState(false)
   useEffect(() => {

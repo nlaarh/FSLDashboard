@@ -349,7 +349,7 @@ def contractor_dispatch(
 @router.get("/api/contractor/map/available")
 def contractor_map_available(request: Request):
     """Whether to offer the map at all, so the nav can hide it rather than
-    letting a vendor click through to a dead end. Never raises: any problem
+    letting a contractor click through to a dead end. Never raises: any problem
     resolving the caller's channel simply means 'do not offer it'."""
     try:
         _require_flag()
@@ -372,9 +372,9 @@ def contractor_map(request: Request):
     _require_flag()
     facility_ids = _require_contractor_facilities(request)
 
-    # The map is an on-platform feature. A Towbook / Phone / 3rd Party vendor
+    # The map is an on-platform feature. A Towbook / Phone / 3rd Party contractor
     # has no FSL driver telemetry at all, so rather than show them an empty or
-    # misleading map, tell them plainly that it does not apply. A vendor running
+    # misleading map, tell them plainly that it does not apply. A contractor running
     # both channels still gets a map — of their on-platform garages only.
     facility_ids = _on_platform_facilities(facility_ids)
     if not facility_ids:

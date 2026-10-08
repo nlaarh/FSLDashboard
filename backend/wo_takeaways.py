@@ -171,7 +171,7 @@ def takeaways(story: dict, steps: list) -> dict:
         bad(w.get('text') or 'A text that should have gone out did not.', 'bad', [], 'TXT2', code='TEXT_STILL_WORKING')
 
     wrong.sort(key=lambda x: SEV_WEIGHT.get(x['severity'], 3))
-    verdict = ('poor' if any(w['severity'] == 'bad' for w in wrong) and pta.get('margin_initial_min', 0) < 0
+    verdict = ('poor' if any(w['severity'] == 'bad' for w in wrong) and (pta.get('margin_initial_min') or 0) < 0
                else 'mixed' if wrong else 'good')
     head = {'good': 'This call went well.', 'mixed': 'The call got there, but with avoidable problems.', 'poor': 'This call went wrong for the member.'}[verdict]
     return {'verdict': verdict, 'headline': head, 'went_well': well, 'went_wrong': wrong, 'improve': _improve(levers)}

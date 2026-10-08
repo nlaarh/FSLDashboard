@@ -30,7 +30,7 @@ function Message({ icon: Icon = AlertTriangle, tone = 'text-slate-400', children
 export default function SchedulerReportCard({ view = 'report-card' }) {
   const isReplay = view === 'replay'
   const tabs = isReplay ? REPLAY_TABS : TABS
-  // Replay is for administrators and executives only: the server refuses everyone else, and this tells them why instead of showing an empty page
+  // Replay is for administrators, executives and ERS managers only: the server refuses everyone else, and this tells them why instead of showing an empty page
   const [canReplay, setCanReplay] = useState(null)   // null = still checking
   useEffect(() => {
     if (!isReplay) return
@@ -130,7 +130,7 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
     setUrl({ garage, date, sa: sa && sa.number !== saNumber ? sa.number : '' })
   }
 
-  if (isReplay && canReplay === false) return <div className="space-y-4"><Message icon={PlayCircle}>Replay is available to administrators and executives only.</Message></div>
+  if (isReplay && canReplay === false) return <div className="space-y-4"><Message icon={PlayCircle}>Replay is available to administrators, executives and ERS managers only.</Message></div>
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4">

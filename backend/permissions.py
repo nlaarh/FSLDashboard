@@ -10,8 +10,8 @@ FEATURE_ROLES = {
     # Never "contractor": the report card shows other drivers' workloads and dispatcher behaviour.
     "scheduler.report_card":       {"superadmin", "admin", "executive", "ers-director"},
     "scheduler.report_card_admin": {"superadmin", "admin"},
-    # Replay (garage and work order): administrators and executives only, not ers-director. Superadmin sits above admin.
-    "scheduler.replay":            {"superadmin", "admin", "executive"},
+    # Replay (garage and work order): administrators, executives and ERS managers; not ers-director. Superadmin sits above admin.
+    "scheduler.replay":            {"superadmin", "admin", "executive", "ers-manager"},
 }
 
 
@@ -23,8 +23,8 @@ def can_access(role: str, feature: str) -> bool:
     return role in FEATURE_ROLES.get(feature, set())
 
 
-def require_feature(feature: str, request) -> None:
-    """Raise 401/403 if request user lacks the feature. No-op if request is None (direct Python call)."""
+def require_feature(feature: str | tuple, request) -> None:
+    """Raise 401/403 if request user lacks the feature (or all of a tuple of features). No-op if request is None (direct Python call)."""
     if request is None:
         return
     from fastapi import HTTPException
@@ -36,5 +36,5 @@ def require_feature(feature: str, request) -> None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     username = payload.split(":")[0]
     role = (_users.get_user(username) or {}).get("role") or ""
-    if not can_access(role, feature):
+    if not any(can_access(role, f) for f in (feature if isinstance(feature, tuple) else (feature,))):
         raise HTTPException(status_code=403, detail="Access restricted")

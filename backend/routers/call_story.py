@@ -39,7 +39,7 @@ def _gate(request: Request):
     import feature_flags
     if not feature_flags.is_on('call_story'):
         raise HTTPException(status_code=404, detail='Not found')
-    require_feature('scheduler.report_card', request)
+    require_feature(('scheduler.report_card', 'scheduler.replay'), request)   # Replay users read the same day and story data
 
 
 def _user(request: Request) -> str:
@@ -143,7 +143,7 @@ def get_story(request: Request, q: str, sa: str | None = None, rules: str | None
 def get_replay_steps(request: Request, q: str):
     """The same story, as animation steps for the Work Order Replay (wo_replay.py). Same gates and Salesforce load."""
     from wo_replay import build_replay
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
     story = get_story(request, q)
     return build_replay(story) if isinstance(story, dict) else story
 
@@ -153,7 +153,7 @@ def get_replay_map(request: Request, q: str):
     """Locations for the replay (wo_replay_map.py), loaded after the animation because the GPS read is slow.
     Same gates as the story; the story's raw pull is reused from cache, so only the 2 to 3 location reads are new."""
     from wo_replay_map import pull_map
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
     story = get_story(request, q)
     if not isinstance(story, dict):
         return story

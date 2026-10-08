@@ -80,7 +80,7 @@ export default function DayReplayMap({ replay, frame, t, verdictById, selectedDr
     // Drivers and their held-call lines.
     const seen = new Set(), lineSeen = new Set()
     for (const d of frame.drivers) {
-      if (!d.pos) continue
+      if (!d.pos || d.status.key === 'off') continue   // off-shift drivers are not drawn on the day map
       seen.add(d.id)
       const sel = d.id === selectedDriver
       let mk = g.drivers.get(d.id)

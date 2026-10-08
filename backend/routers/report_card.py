@@ -67,7 +67,7 @@ def _gate(request: Request, territory_id: str, service_date: str):
     import feature_flags
     if not feature_flags.is_on('scheduler_report_card'):
         raise HTTPException(status_code=404, detail='Not found')
-    require_feature('scheduler.report_card', request)
+    require_feature(('scheduler.report_card', 'scheduler.replay'), request)   # Replay users read the same day and story data
     if not _ID.match(territory_id or ''):
         raise HTTPException(status_code=422, detail='Invalid territory id')
     _check_territory_access(request, territory_id)
@@ -221,7 +221,7 @@ def get_replay(territory_id: str, service_date: str, request: Request):
     """Positions and call holds from the saved snapshot. No SF, no Postgres."""
     from report_card_replay import replay_view
     _gate(request, territory_id, service_date)
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
     snap = store.load_snapshot(territory_id, service_date)
     if snap is None:
         return _not_ready(territory_id, service_date)
@@ -274,7 +274,7 @@ def get_case_trail(wo_id: str, request: Request):
     import case_trail
     if not feature_flags.is_on('scheduler_report_card'):
         raise HTTPException(status_code=404, detail='Not found')
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
     if not _WO_ID.match(wo_id or ''):
         raise HTTPException(status_code=422, detail='Invalid work order id')
     key = f'case_trail:{wo_id}'
