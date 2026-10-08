@@ -1,6 +1,6 @@
 """Day replay payload: driver tracks (GPS or estimated) and call holds, built from the snapshot only."""
 
-from report_card_replay import _s, estimated_track, holds, replay_view
+from report_card_replay import _s, estimated_track, holds, parked, replay_view, vehicle
 from report_card_snapshot import build_snapshot
 from tests.report_card_factories import D1, D2, tiny_raw
 
@@ -56,7 +56,7 @@ def test_gps_drivers_use_real_pings_and_others_are_estimated():
     by_id = {d['id']: d for d in view['drivers']}
     assert by_id[D2]['mode'] == 'gps' and by_id[D2]['track'] == pings[:2]
     assert by_id[D1]['mode'] == 'estimated'     # one ping only, ran SA1
-    assert by_id[D1]['track'][1][0] == _s('2026-09-28T16:40:00Z')
+    assert _s('2026-09-28T16:40:00Z') in [p[0] for p in by_id[D1]['track']]
 
 
 def test_calls_carry_only_in_day_sas_with_original_promise_and_rounded_location():
@@ -96,3 +96,16 @@ def test_towbook_garage_without_coordinates_gets_no_estimated_vehicles_and_does_
     sa['channel'], sa['final_driver_id'] = 'towbook', None
     snap['territory']['lat'] = None
     assert not [d for d in replay_view(snap)['drivers'] if d.get('towbook')]
+
+
+def test_estimated_drivers_are_parked_on_the_map_all_day_not_only_while_driving():
+    track = [[1200, 43.0, -78.8], [1800, 43.1, -78.9]]
+    assert parked(track, (43.0, -78.8), 1000, 2000) == [[1000, 43.0, -78.8], *track, [2000, 43.1, -78.9]]
+    assert parked([], (43.0, -78.8), 1000, 2000) == [[1000, 43.0, -78.8], [2000, 43.0, -78.8]]   # no GPS and no calls: stays at the origin
+
+
+def test_vehicle_is_the_last_truck_with_its_capabilities_and_the_drivers_skills():
+    d = {'trucks': [{'start': '2026-09-28T08:00:00Z', 'truck': 'old', 'truck_caps': ['Tow']},
+                    {'start': '2026-09-28T12:00:00Z', 'truck': '421 14F1', 'truck_caps': ['Flat Bed', 'Tow']}], 'skills': ['Battery']}
+    assert vehicle(d) == {'truck': '421 14F1', 'skills': ['Battery', 'Flat Bed', 'Tow']}
+    assert vehicle({}) == {'truck': None, 'skills': []}

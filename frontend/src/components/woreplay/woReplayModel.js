@@ -14,7 +14,7 @@ export const KINDS = {
 
 /** The command-center bar across the top shows EVERY channel a call can pass through, lit when this call touches it:
  *  where it was captured, the integration, Salesforce, and everything that can act on it. */
-export const HUD = { y: 60, edgeY: 124, h: 118 }
+export const HUD = { y: 36, edgeY: 76, h: 52 }
 export const NODE_ORDER = ['src_ivr', 'src_drr', 'src_mcc', 'src_partner', 'intake', 'sf', 'fsl', 'dispatcher', 'towbook']
 export const NODE_INFO = {
   src_ivr:     { label: 'Replicant', sub: 'Voice AI', colour: '#0284c7' },
@@ -110,16 +110,20 @@ export const miles = (a, b) => {
   return 3958.8 * 2 * Math.asin(Math.sqrt(h))
 }
 
-/** Towbook shows a vehicle only as status times. Draw it driving garage -> customer between En Route and On Location (along the
- *  road when the backend sent it, else straight), and say it is estimated. Returns a track in the real GPS shape [t, lat, lon]. */
-export function towbookTrack(steps, garage, wo, road) {
+/** Towbook shows a vehicle only as status times, and a Fleet / On-Platform driver may have no GPS at all. Draw it driving garage -> customer
+ *  between En Route and On Location (along the road when the backend sent it, else straight), and say it is estimated.
+ *  `by` = who reported the status steps: ['towbook'] (default) or ['driver', 'towbook'] for a driver with no GPS.
+ *  Returns a track in the real GPS shape [t, lat, lon]. */
+export function towbookTrack(steps, garage, wo, road, by = ['towbook']) {
   if (!garage || !wo) return []
   const t = s => Date.parse(s.ts) / 1000
-  const er = steps.find(s => s.from === 'towbook' && /en route/i.test(s.title))
-  const ol = steps.find(s => s.from === 'towbook' && /on location/i.test(s.title))
+  const er = steps.find(s => by.includes(s.from) && /en route/i.test(s.title))
+  const ol = steps.find(s => by.includes(s.from) && /on location/i.test(s.title))
   if (!er) return []
   const end = t(steps[steps.length - 1]) + 3600
   const arrive = ol ? t(ol) : t(er) + 900
   const leg = road?.c?.length > 1 ? buildLeg(road.c, t(er), arrive) : [[t(er), garage.lat, garage.lon], [arrive, wo.lat, wo.lon]]
-  return [[t(er) - 1, garage.lat, garage.lon], ...leg, [Math.max(end, arrive + 1), wo.lat, wo.lon]]
+  const given = by.length > 1 ? steps.find(s => s.names?.driver) : null   // a driver with no GPS waits at the garage from the moment the call is given to them
+  const from = given ? Math.min(t(given), t(er) - 1) : t(er) - 1
+  return [[from, garage.lat, garage.lon], ...(from < t(er) - 1 ? [[t(er) - 1, garage.lat, garage.lon]] : []), ...leg, [Math.max(end, arrive + 1), wo.lat, wo.lon]]
 }

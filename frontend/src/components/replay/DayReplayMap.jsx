@@ -33,7 +33,7 @@ export default function DayReplayMap({ replay, engine, dayDrivers, sasById, verd
     const pts = replay.calls.filter(c => c.lat != null).map(c => [c.lat, c.lon])
     if (pts.length) map.fitBounds(L.latLngBounds([...pts, [replay.territory.lat, replay.territory.lon]]), { padding: [30, 30], maxZoom: 12 })
     const drivers = new Map(), pins = new Map(), lines = new Map()
-    const kinds = Object.fromEntries(replay.drivers.map(d => [d.id, truckKindFor({ truck: dayDrivers[d.id]?.truck, skills: dayDrivers[d.id]?.skills })]))
+    const kinds = Object.fromEntries(replay.drivers.map(d => [d.id, truckKindFor({ truck: d.truck, skills: d.skills })]))
     let slowAt = 0
 
     const run = t => {
@@ -80,10 +80,11 @@ export default function DayReplayMap({ replay, engine, dayDrivers, sasById, verd
         open.add(c.id)
         const arrived = c.arrival != null && t >= c.arrival
         const late = !!c.promise_due && t > c.promise_due && !arrived
-        const state = arrived ? 'done' : late ? 'late' : 'ok'
+        const soon = !late && !arrived && c.promise_due != null && c.promise_due - t <= 600
+        const state = arrived ? 'done' : late ? 'late' : soon ? 'soon' : 'ok'
         let pin = pins.get(c.id)
         if (!pin) {
-          const mk = L.marker([c.lat, c.lon], { icon: icon(dayPinHtml(verdictColour(cb.current.verdictById[c.id])), 24, 24), zIndexOffset: 200 })
+          const mk = L.marker([c.lat, c.lon], { icon: icon(dayPinHtml(verdictColour(cb.current.verdictById[c.id])), 30, 30), zIndexOffset: 200 })
             .on('click', () => cb.current.onSelectSa(c.id)).addTo(root)
           mk.bindTooltip('', { direction: 'top', offset: [0, -8] })
           pin = { mk, el: mk.getElement()?.firstElementChild, state: '' }
@@ -92,7 +93,7 @@ export default function DayReplayMap({ replay, engine, dayDrivers, sasById, verd
         if (pin.state !== state || pin.sel !== (c.id === g.current?.selSa)) {
           pin.state = state; pin.sel = c.id === g.current?.selSa
           if (pin.el) pin.el.className = `rp-dpin ${state}${pin.sel ? ' sel' : ''}`
-          pin.mk.setTooltipContent(`<b>${esc(c.number)}</b><br>${arrived ? 'Driver on scene' : 'Member waiting'}${late ? ' · past original promise' : ''}`)
+          pin.mk.setTooltipContent(`<b>${esc(c.number)}</b><br>${arrived ? 'Driver on scene' : 'Member waiting'}${late ? ' · past original promise' : soon ? ' · promise within 10 min' : ''}`)
         }
       }
       for (const [id, p] of pins) if (!open.has(id)) { p.mk.remove(); pins.delete(id) }

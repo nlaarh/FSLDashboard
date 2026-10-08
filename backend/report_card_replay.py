@@ -53,6 +53,23 @@ def estimated_track(origin: tuple, calls: list) -> list:
     return pts
 
 
+def parked(track: list, origin: tuple, d0: int, d1: int) -> list:
+    """An estimated driver is on the map all day: at the home base (else the garage) before the first call, and where the last call
+    left him after it. The day view hides him while he is off shift. With no track at all he simply stays at the origin."""
+    if not track:
+        return [[d0, *origin], [d1, *origin]]
+    head = [[d0, *origin]] if track[0][0] > d0 else []
+    tail = [[d1, track[-1][1], track[-1][2]]] if track[-1][0] < d1 else []
+    return head + track + tail
+
+
+def vehicle(d: dict) -> dict:
+    """The truck the driver last logged into, as plain text for the truck drawing: its name and what it can do (Flat Bed, Wheel Lift Truck...).
+    Taken from the snapshot, so there is no new Salesforce read."""
+    last = max(d.get('trucks') or [], key=lambda x: x['start'], default=None)
+    return {'truck': last and last.get('truck'), 'skills': sorted(set((last or {}).get('truck_caps') or []) | set(d.get('skills') or []))}
+
+
 def _arrival(sa: dict) -> int | None:
     m = sa['milestones']
     return _s(m.get('arrival') or m.get('t_ol'))
@@ -119,7 +136,9 @@ def replay_view(snap: dict) -> dict:
             mode = 'estimated' if track else 'none'
         if mode == 'none' and d['id'] not in held and not d['logins']:
             continue
-        drivers.append({'id': d['id'], 'name': d['name'], 'mode': mode, 'gps_points': len(gps), 'track': track})
+        if mode != 'gps':
+            mode, track = 'estimated', parked(track, origin, d0, d1)
+        drivers.append({'id': d['id'], 'name': d['name'], 'mode': mode, 'gps_points': len(gps), 'track': track, **vehicle(d)})
 
     tb, tb_spans = towbook_vehicles(in_day, terr, d1)
     for c in calls:

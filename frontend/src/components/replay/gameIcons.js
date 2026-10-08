@@ -4,6 +4,9 @@
  * the CSS variable --c, so changing a truck's status is one style write, never a new icon.
  */
 import { esc } from './useLeafletMap'
+import { truckKindFor } from './truckKind.js'
+
+export { truckKindFor }
 
 export const STATUS = {
   en_route: { label: 'En route', colour: '#38bdf8' },
@@ -12,15 +15,6 @@ export const STATUS = {
   assigned: { label: 'Assigned, not rolling', colour: '#fbbf24' },
   idle: { label: 'Idle', colour: '#94a3b8' },
   estimated: { label: 'Estimated (no GPS)', colour: '#fb923c' },
-}
-
-/** flatbed | wheel_lift | light: from the truck and skill text when Salesforce gave it, else from the kind of job. */
-export function truckKindFor({ truck, skills, service } = {}) {
-  const s = [truck, ...(Array.isArray(skills) ? skills : [skills]), service].filter(Boolean).join(' ').toLowerCase()
-  if (/wheel.?lift|hook|\bwl\b|self.?loader/.test(s)) return 'wheel_lift'
-  if (/flat.?bed|rollback|roll.?back|carrier|\bfb\b/.test(s)) return 'flatbed'
-  if (/battery|jump|light|service|lockout|tire|fuel|winch|van|\bls\b/.test(s)) return 'light'
-  return 'flatbed'
 }
 
 const WHEELS = '<g fill="#0b1220"><rect x="0.5" y="6" width="3.5" height="8" rx="1.2"/><rect x="24" y="6" width="3.5" height="8" rx="1.2"/><rect x="0.5" y="44" width="3.5" height="9" rx="1.2"/><rect x="24" y="44" width="3.5" height="9" rx="1.2"/></g>'
@@ -45,9 +39,11 @@ export function garageHtml(name) {
 }
 
 /** The member: a car in a ring that pulses, plus the call number, the waiting timer and the car when known. */
+const CAR_SVG = (w, h) => `<svg viewBox="0 0 40 24" width="${w}" height="${h}"><path d="M3 17l2-6q1-2 4-2.5L14 4.5q1-1.5 3-1.5h8q2 0 3 1.5l5 4.5q3 .5 4 2.5l1 5.5v1.5q0 1-1 1H4q-1 0-1-1z" fill="#f8fafc"/><path d="M15 5.5h10l4 4H11z" fill="#0f172a" opacity=".55"/><circle cx="11" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/><circle cx="29" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/></svg>`
+
 export function memberHtml({ number, vehicle }) {
   return `<div class="rp-member ok"><div class="rp-mring"></div><div class="rp-mring r2"></div>
-    <div class="rp-mdisc"><svg viewBox="0 0 40 24" width="30" height="18"><path d="M3 17l2-6q1-2 4-2.5L14 4.5q1-1.5 3-1.5h8q2 0 3 1.5l5 4.5q3 .5 4 2.5l1 5.5v1.5q0 1-1 1H4q-1 0-1-1z" fill="#f8fafc"/><path d="M15 5.5h10l4 4H11z" fill="#0f172a" opacity=".55"/><circle cx="11" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/><circle cx="29" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/></svg></div>
+    <div class="rp-mdisc">${CAR_SVG(30, 18)}</div>
     <div class="rp-mtag"><b>${esc(number || 'Member')}</b><span class="wait">0:00</span>${vehicle ? `<i>${esc(vehicle)}</i>` : ''}</div></div>`
 }
 
@@ -58,8 +54,10 @@ const GLYPH = {
   text_out: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM8 8h8M8 12h5"/>',
   text_in: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22zM9 12h6"/>',
 }
-export const MARK_COLOUR = { phone: '#38bdf8', callback: '#f43f5e', text_out: '#ec4899', text_in: '#f59e0b' }
-export const markHtml = type => `<div class="rp-mark" style="--c:${MARK_COLOUR[type] || '#94a3b8'}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${GLYPH[type] || GLYPH.phone}</svg></div>`
+const MARK_COLOUR = { phone: '#38bdf8', callback: '#f59e0b', text_out: '#ec4899', text_in: '#34d399' }   // same colours as the Member contact tab
+const glyphOf = type => (type === 'call' || type === 'call_other' ? 'phone' : type)
+export const markColour = type => MARK_COLOUR[glyphOf(type)] || '#94a3b8'
+export const markHtml = type => `<div class="rp-mark" style="--c:${markColour(type)}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${GLYPH[glyphOf(type)] || GLYPH.phone}</svg></div>`
 
 /** Another job the driver was carrying, as a small numbered pin. */
 export const jobHtml = (n, ahead) => `<div class="rp-job${ahead ? ' ahead' : ''}">${n}</div>`
@@ -68,8 +66,9 @@ export const jobHtml = (n, ahead) => `<div class="rp-job${ahead ? ' ahead' : ''}
 export function dayTruckHtml({ name, kind, est }) {
   return `<div class="rp-truck day${est ? ' est' : ''}"><div class="rp-ring"></div>
     <div class="rp-body"><div class="hdg"><svg viewBox="0 0 28 60" width="28" height="60">${BODY[kind] || BODY.flatbed}</svg></div></div>
-    <div class="rp-held" style="display:none"></div><div class="rp-tag"><b>${esc(name)}</b></div></div>`
+    <div class="rp-held" style="display:none"></div>${est ? '<div class="rp-estb">estimated</div>' : ''}<div class="rp-tag"><b>${esc(name)}</b></div></div>`
 }
 
-/** A call on the day map: pulsing ring while the member waits (red past the promise), solid once a driver is there. */
-export const dayPinHtml = colour => `<div class="rp-dpin ok" style="--v:${colour}"><i class="rp-mring"></i><b></b></div>`
+/** A call on the day map: the member's car in a disc, ringed green while the wait is fine, amber near the promise, red (pulsing) past it;
+ *  the small dot is the verdict colour. Smaller sibling of the stage's member pin. */
+export const dayPinHtml = colour => `<div class="rp-dpin ok" style="--v:${colour}"><i class="rp-mring"></i><span class="rp-ddisc">${CAR_SVG(17, 10)}</span><b></b></div>`

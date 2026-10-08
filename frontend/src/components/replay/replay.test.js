@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip } from './engineMath.js'
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
+import { truckKindFor } from './truckKind.js'
 import { waitState, fmtWait, driverPhase, toastFor, towbookTrack } from '../woreplay/woReplayModel.js'
 
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} is not near ${b}`)
@@ -118,4 +119,31 @@ test('driver phase and toast lines come from the steps', () => {
   assert.equal(toastFor(steps, 4).text, 'Adam Lucas on scene: 47 min after the call, 12 min past the promise')
   assert.equal(toastFor(steps, 1).text, 'Assigned to Adam Lucas')
   assert.equal(toastFor([...steps, { id: 'E7', ts: '2026-09-24T12:03:00Z', from: 'driver', to: 'sf', title: 'Driver accepted in the FSL app', names: { driver: 'Adam Lucas' }, clock: '08:03:00' }], 5).text, 'Adam Lucas accepted')
+})
+
+test('truck type: a tow gets a flatbed or wheel-lift, battery / lockout / fuel / tire get the light service van', () => {
+  assert.equal(truckKindFor({ service: 'Tow Pick-Up' }), 'flatbed')
+  assert.equal(truckKindFor({ service: 'Tow Pick-Up', skills: ['Tow', 'Wheel Lift Truck'] }), 'wheel_lift')
+  assert.equal(truckKindFor({ service: 'Tow Pick-Up', truck: '25- PATRIOT FB', skills: ['Wheel Lift Truck', 'Flat Bed'] }), 'flatbed')
+  for (const w of ['Battery', 'Lockout', 'Tire', 'Fuel / Miscellaneous']) assert.equal(truckKindFor({ service: w, truck: '25- PATRIOT FB' }), 'light')
+  // the day map has no service: the truck name, then its capabilities
+  assert.equal(truckKindFor({ truck: '421 14F1 - 421 - ACTION TOWING', skills: ['Tow', 'Flat Bed'] }), 'flatbed')
+  assert.equal(truckKindFor({ truck: '70- RAM LS - 076DO' }), 'light')
+  assert.equal(truckKindFor({ truck: '100 09B1', skills: ['Jumpstart', 'Lockout', 'Tire'] }), 'light')
+  assert.equal(truckKindFor({ skills: ['Tow', 'Wheel Lift Truck'] }), 'wheel_lift')
+  assert.equal(truckKindFor({}), 'flatbed')
+})
+
+test('a driver with no GPS gets an estimated truck from the status times, waiting at the garage once the call is given to them', () => {
+  const steps = [
+    { ts: '2026-09-24T12:00:00Z', from: 'member', to: 'sf', title: 'Created' },
+    { ts: '2026-09-24T12:02:00Z', from: 'sf', to: 'driver', title: 'Assigned to Adam Lucas', names: { driver: 'Adam Lucas' } },
+    { ts: '2026-09-24T12:10:00Z', from: 'driver', to: 'sf', title: 'En Route' },
+    { ts: '2026-09-24T12:30:00Z', from: 'driver', to: 'sf', title: 'On Location' },
+  ]
+  const g = { lat: 0, lon: 0 }, m = { lat: 0, lon: 0.03 }
+  assert.deepEqual(towbookTrack(steps, g, m, null), [])          // Towbook-only by default
+  const tr = towbookTrack(steps, g, m, null, ['driver', 'towbook'])
+  assert.equal(tr[0][0], Date.parse('2026-09-24T12:02:00Z') / 1000); assert.deepEqual(tr[0].slice(1), [0, 0])
+  assert.equal(tr.at(-1)[2], 0.03)
 })

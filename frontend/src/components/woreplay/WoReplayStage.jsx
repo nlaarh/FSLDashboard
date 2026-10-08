@@ -6,7 +6,7 @@ import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion }
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import { buildPath } from '../replay/roadPath'
 import { indexAt } from '../replay/engineMath'
-import { truckKindFor } from '../replay/gameIcons'
+import { truckKindFor, markColour } from '../replay/gameIcons'
 import { createStageLayers } from './stageLayers'
 import { FlowPulse, pulsePath, pickDock } from './flowPulse'
 import StageHud from './StageHud'
@@ -15,9 +15,8 @@ import EventToasts, { KIND_ICON } from './EventToasts'
 import { StepCard, StepCaption } from './StepCard'
 import { KINDS, HUD, isSlot, slotX, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
 
-const MARK_ICON = { phone: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
-const MARK_COLOUR = { phone: '#38bdf8', callback: '#f43f5e', text_out: '#ec4899', text_in: '#f59e0b' }
-const PAD = { tl: L.point(110, 172), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
+const MARK_ICON = { call: PhoneCall, call_other: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
+const PAD = { tl: L.point(110, 118), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
 const toS = v => (typeof v === 'number' ? v : Date.parse(v) / 1000)
 const Chip = ({ on, children }) => on && <span className="rp-shimmer rounded-full px-3 py-1 text-[11px] text-slate-200">{children}</span>
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v) } catch { /* private window */ } return null }
@@ -45,6 +44,11 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
       kind: truckKindFor({ truck: d.truck, skills: d.skills, service: header?.service }),
     }))
     const tb = towbookTrack(steps, loc.garage, loc.wo, loc.roads?.garage_to_member)
+    const noGps = (loc.drivers || []).find(d => !d.track?.length)
+    if (!tb.length && !out.length && noGps) {   // a Fleet / On-Platform driver with no GPS: an estimated truck from the status times, never a silent gap
+      const est = towbookTrack(steps, loc.garage, loc.wo, loc.roads?.garage_to_member, ['driver', 'towbook'])
+      if (est.length) out.push({ key: 'est', name: noGps.name, garage: header?.garage, est: true, path: buildPath(est), kind: truckKindFor({ truck: noGps.truck, skills: noGps.skills, service: header?.service }) })
+    }
     if (tb.length) out.push({ key: 'tb', name: `${loc.towbook?.driver || 'Towbook Driver'} 1`, garage: header?.garage, est: true, path: buildPath(tb), kind: truckKindFor({ truck: loc.towbook?.truck, service: header?.service }) })
     return out
   }, [loc, steps, header])
@@ -169,7 +173,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
 
   const scrub = useMemo(() => [
     ...steps.map((s, k) => ({ t: times[k], label: `${s.clock} ${s.title}`, level: s.flag?.level, colour: s.flag ? '#f43f5e' : KINDS[s.kind]?.colour, Icon: KIND_ICON[s.kind] })),
-    ...marks.map(m => ({ t: m.ts, label: m.title, colour: MARK_COLOUR[m.type], Icon: MARK_ICON[m.type] })),
+    ...marks.map(m => ({ t: m.ts, label: m.title, colour: markColour(m.type), Icon: MARK_ICON[m.type] })),
   ], [steps, times, marks])
   const toggleDrawer = () => setOpen(o => { store('woReplayFlowOpen', o ? '0' : '1'); return !o })
   const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : fsRef.current?.requestFullscreen?.())
@@ -177,11 +181,11 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const btn = on => `px-2 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
 
   const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise
-  const pos = trucks.find(k => k.est || k.name === act.name)?.path.at(tNow)
+  const posTruck = trucks.find(k => k.est || k.name === act.name), pos = posTruck?.path.at(tNow), estNow = !!posTruck?.est
   const readout = !loc ? (locations === undefined ? 'Loading where the member and trucks were…' : 'Locations are not available for this call.')
     : !act.name && !pos ? (loc.towbook ? 'Towbook garage: Salesforce does not track where its driver is.' : 'No driver assigned at this moment.')
     : pos && loc.towbook && !act.name ? 'Towbook shows its driver only by status. The vehicle on the map is estimated from the Towbook En Route and On Location times, not GPS.'
-    : pos && loc.wo ? `${act.name || 'The vehicle'} is ${miles(pos, loc.wo).toFixed(1)} mi from the member`
+    : pos && loc.wo ? `${act.name || 'The vehicle'} is ${miles(pos, loc.wo).toFixed(1)} mi from the member${estNow && !loc.towbook ? ' (estimated: no GPS, drawn from the status times)' : ''}`
     : act.name && !trucks.some(k => k.name === act.name) ? `${act.name}: no GPS pings while this call was open.` : `${act.name || 'The vehicle'}: no GPS ping at this moment.`
   const ModeIcon = { follow: Crosshair, all: Globe2, free: Hand }[mode]
 
@@ -206,7 +210,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
             {open ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}<ListOrdered size={16} />
           </button>
         </div>
-        <FlowDrawer steps={steps} i={idx} open={open} onStep={stepTo} top={drawerTop} />
+        <FlowDrawer steps={steps} i={idx} open={open || !!drawerTop} onStep={stepTo} top={drawerTop} />
       </div>
 
       <ReplayPlayer engine={engine} start={t0 - 60} end={end} marks={scrub} onPrev={() => engine.prev()} onNext={() => engine.next()}>
