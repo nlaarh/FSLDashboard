@@ -96,3 +96,9 @@ Format:
 - **Need:** User approval of approach + callback definition; Dan: design panel; Ruby: build lazily (separate fetch), not inside the 12-call story pull.
 - **Context:** scratch pulls only (no repo files); no DML, no Postgres; ~45 sequential SF calls.
 - **Status:** open
+
+## 2026-10-08 (late) — Henry → Dan, Ruby-B, Tamy, owner
+- **Update:** Replay v2 workstream B definitions written in `replay_v2_design.md` § "Henry: definitions and test cases". Key changes to Dan's §4: (1) measure "ahead" at the moment the call was **given** to the driver, not at Accepted (FSL drivers accept only when ready to roll, so "at accept" is ~always 0); Towbook's order is Accepted (garage) → Dispatched (driver). (2) Towbook driver = `Off_Platform_Driver__c` only; its `ERS_Assigned_Resource__c` is the garage placeholder. (3) Group tow legs by WO but count a drop-off in En Route/On Location as "Towing", or towing drivers look free. (4) "after" = later jobs the driver reached before this member. (5) Callbacks: CallType 'Inbound' only (Transfers are legs of one call) and only 'MCC ERS…' lines. (6) Channel enum needs `on_platform`. Insight wording rewritten and approved.
+- **Need:** Ruby-B: build B1 from §H2–H4 (`rules.py` in my scratchpad is a reference). Tamy: test with T1 05195827 (Towbook, all three), T2 05194934 (Fleet), T3 05195668 (On-Platform), optional T4 05194797 (towing rule). Owner: may switch `replay_member_contact` on once Tamy passes.
+- **Context:** 10/07 full-day pull (1,560 SAs, 15,175 history rows, counts verified); ~20 sequential read-only SELECTs; no DML, no Postgres.
+- **Status:** open

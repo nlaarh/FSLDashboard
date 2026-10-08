@@ -332,3 +332,125 @@ No migrations, no new env vars, no new packages (framer-motion, leaflet and luci
 already used by the contractor map). One new flag, `replay_member_contact`, default off. Disk cache keys use the existing
 cache directory. Ship A first: speed only, low risk, already behind `call_story`. Then C. Then B with its flag off;
 the owner switches it on in Admin after Henry approves the insight wording. Rollback: revert the PR; for B, switching the flag off is enough.
+
+## Henry: definitions and test cases (2026-10-08)
+
+Evidence: all ERS SAs created 10/07 ET (1,560 SAs, 15,175 Status / `ERS_Assigned_Resource__c` / `Off_Platform_Driver__c`
+history rows, counts checked against `SELECT COUNT()`), plus targeted pulls for the 3 test WOs. About 20 sequential
+read-only SELECTs. Scripts: scratchpad `henry_v2/` (`rules.py` is the reference implementation of the rules below).
+
+### H1. What the trail actually looks like (this changes two of Dan's rules)
+Most common Status order per channel on 10/07 (non-drop-off legs):
+- **Fleet (n=113) and On-Platform (n=181):** Spotted → Assigned → **Dispatched → Accepted** → En Route → On Location → Completed.
+  The driver taps Accept only when he is ready to roll: Accepted → En Route median **0.3 min**. So at "Accepted" the driver
+  has almost nothing ahead (Fleet 4 of 107, On-Platform 11 of 159). "Ahead at accept" would nearly always say 0. **Wrong moment.**
+- **Towbook (n=588):** Spotted → Assigned → **Accepted → Dispatched** → En Route. The order is reversed. "Accepted" is written by
+  *Integrations Towbook* 20 s after Assigned: the **garage** accepted the call. "Dispatched" (median 1.7 min later) is when the
+  garage gave it to a driver. At least 79 of 588 also show a second Accepted after Dispatched (the driver acknowledging in Towbook).
+- **Towbook `ERS_Assigned_Resource__c` is the garage placeholder** (e.g. "Towbook-626"), the same on every call of that garage.
+  Filtering Towbook jobs by it counts the whole garage. The Towbook driver is **`SA.Off_Platform_Driver__c` only**
+  (per driver, e.g. 076DO had 22 distinct drivers on 10/07). It is **not history-tracked** (0 history rows of 588), so it is current-holder only.
+- **Tow legs:** the pick-up goes Completed and the drop-off goes En Route in the **same second** (median 0.0 min, n=329 Towbook,
+  105 On-Platform). While the driver hauls a car, the only active leg is the drop-off. If drop-offs are ignored completely, a
+  driver who is towing looks free. Counting the towing leg changed the "ahead" count on 71 of 557 Towbook calls and 8 of 159 On-Platform calls on 10/07.
+
+### H2. Definitions (replace Dan's §4 bullets "On his plate" and "after")
+**Driver D of the member call**
+- Fleet / On-Platform: member SA's `ERS_Assigned_Resource__c` (final holder). Channel from `ERS_Assigned_Resource__r.ERS_Driver_Type__c`:
+  'Fleet Driver' → `fleet`, 'On-Platform Contractor Driver' → `on_platform`. The response enum must have three values:
+  `fleet | on_platform | towbook` (On-Platform was 291 SAs on 10/07, more than Fleet's 113).
+- Towbook ('Off-Platform Contractor Driver', or resource name starts "Towbook"): member SA's `Off_Platform_Driver__c`. Never named in the UI ("the Towbook driver").
+  If it is empty (2 of 922 on 10/07), return `driver_load: []` with the note "The Towbook garage did not report which driver took this call."
+
+**A = the moment the call was given to D** (replaces "accepted")
+- Fleet / On-Platform: the last `ERS_Assigned_Resource__c` history **id row** (NewValue starts `0Hn`) whose NewValue = D, at or before
+  the member's first En Route. It is already in the story raw. Fallback, if no such row: last Dispatched before En Route.
+- Towbook: the last **Dispatched** on the member SA at or before its first En Route.
+- No A (never given to a driver, e.g. cancelled while Spotted) → no driver-load section.
+
+**A job is "on D's plate" at time t** (grouped by `ERS_Work_Order__c`, never the member's own WO)
+- Service / pick-up leg (any work type without "drop" in its name), Status at t (last trail row at or before t):
+  - Fleet / On-Platform: Status in {Dispatched, Accepted, En Route, On Location} **and** D held it at t (last
+    `ERS_Assigned_Resource__c` id row at or before t = D). Dan's status set is confirmed. Assigned is left out on purpose: the driver
+    cannot see it yet (only 2 of 105 Fleet and 5 of 169 On-Platform calls would change).
+  - Towbook: Status in {Dispatched, Accepted, En Route, On Location} **and** a Dispatched exists at or before t (an Accepted before
+    any Dispatched is the garage's accept, not the driver's).
+- Drop-off leg: Status in {En Route, On Location} → the WO is on the plate as **"Towing"**. A drop-off in Assigned/Dispatched/Accepted
+  is not counted (it is created with the pick-up, about 40 min before the pick-up arrival).
+- One WO counts once. Its label: Towing if the drop-off is active, else the pick-up status.
+- `ahead` = WOs on the plate at A. `current` = the one in En Route, On Location or Towing (if several, the most advanced); the rest are
+  "waiting to start". Plain labels for the UI: Dispatched/Accepted → "not started", En Route → "driving to it", On Location → "at the job", Towing → "towing".
+- Pin = the pick-up / service leg's Latitude/Longitude. Drop-offs never get a pin.
+
+**`after` = jobs that jumped ahead of the member** (replaces "first Dispatched/Accepted between A and On Location")
+A WO not on the plate at A, given to D after A (same "given" rule as A, on its pick-up/service leg), **and** where D reached it
+(first On Location on that leg) **before** the member's On Location. Jobs given later but served after the member did not delay
+anyone and are not counted. Measured 10/07: the loose rule flagged 128 Towbook calls, the strict rule 25. If the member SA has no On
+Location (cancelled, open), use the cancel time or now.
+
+**Query changes this needs (same 2 calls)**
+- `trail`: `Field IN ('Status','ERS_Assigned_Resource__c')`, plus `OldValue` not needed. The holder check changed the count on 3 of 169 On-Platform calls.
+- `jobs` driver filter: Towbook → `Off_Platform_Driver__c = '<D>'` **only**, never `ERS_Assigned_Resource__c`. FSL → `ERS_Assigned_Resource__c = '<D>'` (final holder only, not every driver who touched the call).
+
+**What it shows on 10/07 (one day, calls given to a driver 8 AM–midnight ET)**
+
+| Channel | Calls (n) | Driver had ≥1 job ahead | Avg jobs ahead | A later job was served first |
+|---|---|---|---|---|
+| Fleet | 105 | 22 (21%) | 0.22 | 0 |
+| On-Platform | 169 | 46 (27%) | 0.29 | 2 (1%) |
+| Towbook | 557 | 224 (40%) | 0.50 | 25 (4%) |
+
+One day only, no weather or volume adjustment, so these are not rankings. They are a sanity check that the rule returns sensible numbers.
+
+**Limits (put these in `notes`)**
+- Fleet / On-Platform: a job D held at A and later lost to another driver is not found (the jobs query uses the current holder).
+- Towbook: `Off_Platform_Driver__c` has no history, so if the garage swapped drivers we only see the last one; the holder at A cannot be checked.
+- Status times are driver taps. Example: SA-1091742 went En Route → On Location in 7 s, so the real arrival was earlier.
+
+### H3. Member calls: two rule fixes found in the data
+1. **Transfers are not callbacks.** VoiceCall has `CallType` 'Inbound' (1,072 on 10/07) and 'Transfer' (24, always with
+   `PreviousCallId`). On WO 05195827 one member call shows as 4 rows (1 Inbound + 3 Transfer legs). Count only `CallType = 'Inbound'`;
+   show Transfer rows inside their parent call ("transferred to Dispatch ERS Status").
+2. **Only ERS lines count.** 10 of 47 calls matched after 15 min on 10/07 went to "MCC Membership" (renewals, billing). Count a callback only
+   when `ToPhoneNumber` starts with 'MCC ERS' (New, Replicant Return, INEED). List other-line calls in the Member contact tab as
+   "Called the membership line", not in the insight. With both fixes, WOs with a callback on 10/07 went from 37 to 29.
+Owner's 15-minute rule is kept as is.
+
+### H4. Insight wording (approved as rewritten; owner may switch the flag on with these)
+Use "time(s)" not "×", round minutes, ET clock times, never name a Towbook driver.
+
+| Code | Text | Level |
+|---|---|---|
+| CALLED_BACK | "The member called AAA back {n} time(s). The first call came {m} min after they asked for help." Add " {k} of these came after the promised arrival time." when k > 0. | info: n = 1, before the promise. warn: n ≥ 2. bad: any callback after the promise and before the driver arrived. |
+| TEXTED_IN | "The member texted AAA {n} time(s)." Add " {k} came after the promised arrival time." when k > 0. | info; warn when k > 0. |
+| DRIVER_AHEAD | "When this call went to {driver}, they still had {n} other job(s) to finish first." `{driver}` = the name, or "the Towbook driver". If one was already under way, add " One was already {driving to it / at the job / towing}." | info: n = 1. warn: n ≥ 2. |
+| DRIVER_MORE_AFTER | "{driver} served {n} member(s) who called later before reaching this member." | warn; bad when this member's arrival was after the promise. |
+
+`{n}` counts inbound sessions for texts (not message count), WOs for jobs. Promise = original PTA (r2, metrics-spec §7.7).
+Omit an insight when its n = 0.
+
+### H5. Test work orders for Tamy (all 10/07/2026, all Completed; times ET)
+**T1, Towbook, covers all three: WO 05195827 / SA-1091889** (626 Dan's Tire & Auto, Tow; promised about 3:06 PM)
+- Created 2:17:26 PM. Given to the Towbook driver (Dispatched) 2:53:02 PM. En Route 6:04 PM. On Location 6:36:42 PM.
+- Calls: one member callback 5:20:06 PM (+183 min, MCC ERS Replicant Return, 1,073 s, answered by an agent). Three Transfer rows follow
+  (5:22, 5:30, 5:34). Expect **n = 1, level bad** (after the promise). If it says 4, the transfer fix is missing.
+- Texts: 1 inbound session at 4:55:56 PM (1 member message), channel "ERS SMS Messaging Channel". Expect TEXTED_IN n = 1, warn.
+- Jobs: **ahead = 1**: WO 05195923 (Tow, given 2:49:54 PM, not started). **after = 1**: WO 05196239 (Tow, given 4:55:51 PM, driver
+  arrived 5:09:29 PM, before this member). Must **not** count: WO 05196220 (given 5:48 PM, reached 8:27 PM, after this member),
+  WO 05195364 (done 1:44 PM) and any of the 5 drop-off SAs. The driver is never named.
+
+**T2, Fleet: WO 05194934 / SA-1091027** (100 Western New York Fleet, Tire; driver Marcus Gibson; promised about 11:08 AM)
+- Created 9:36:41 AM. Briefly assigned to another driver at 9:40:37, given to Marcus 9:40:52 AM. Marcus accepted 11:00:43 AM, On Location 11:34:49 AM.
+- Jobs: **ahead = 1, current, "driving to it"**: WO 05194878 (Battery; En Route since 9:26 AM, arrived 10:04, finished 11:00:36).
+  This is the example where the member waited for the driver's previous job. after = 0.
+- Texts: 2 inbound sessions, 10:57:34 AM and 11:36:52 AM (the second is after the driver arrived). Calls: none matched.
+
+**T3, On-Platform: WO 05195668 / SA-1091742** (4652D Val U Auto, Tow; driver Zack Felix; promised about 2:43 PM)
+- Created 1:25:48 PM. Given to Zack 1:28:37 PM. Accepted 2:33:47 PM. En Route 3:35:55 PM, On Location 3:36:02 PM (7 s later).
+- Jobs: **ahead = 1, current, "driving to it"**: WO 05195136 (Tow pick-up; arrived 1:40 PM, then towing until 2:34 PM). after = 0
+  (WO 05196132 was given at 4:42 PM, after this member was reached).
+- Texts: **3 inbound sessions**, 2:54:25, 3:19:42 and 3:29:45 PM, all after the promise → TEXTED_IN n = 3, k = 3, warn. Calls: none matched.
+
+**T4 (optional), the Towing rule: WO 05194797 / SA-1090906** (421 Action Towing, On-Platform; driver Michael Hucks)
+- Given to him 10:06:20 AM. At that moment WO 05194738's pick-up had gone Completed (10:05:32) and its drop-off was En Route
+  (10:05:45, delivered 10:25 AM). Expect **ahead = 1, "towing"**. If it shows 0, drop-offs are being ignored instead of grouped by WO.
