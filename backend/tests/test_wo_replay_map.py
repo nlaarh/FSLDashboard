@@ -1,6 +1,15 @@
 """wo_replay_map.py: locations for the replay. Fake Salesforce, no I/O."""
 
+import pytest
+
 from wo_replay_map import driver_names, pull_map
+
+
+@pytest.fixture(autouse=True)
+def no_roads(monkeypatch):
+    """Roads come from OSRM (tests/test_wo_replay_roads.py); here nothing may touch the network."""
+    monkeypatch.setattr('wo_replay_map.garage_route', lambda *a, **k: None)
+    monkeypatch.setattr('wo_replay_map.snap_runs', lambda *a, **k: [])
 
 
 class FakePuller:
