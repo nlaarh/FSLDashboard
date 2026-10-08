@@ -1,96 +1,74 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { iconFor } from './explainIcons'
-import { Play, Pause, SkipBack, SkipForward, ChevronLeft, ChevronRight, ListOrdered, Maximize2, Minimize2 } from 'lucide-react'
-import useLeafletMap, { esc } from '../replay/useLeafletMap'
-import { positionAt, trailUntil } from '../replay/replayMath'
-import useStepClock, { SPEEDS } from './useStepClock'
-import { KINDS, HUD, DRAWER_W, STEP_S, LEAD_S, TRAVEL, NODE_ORDER, NODE_INFO, isSlot, slotX, buildTimeline, stepAt, realTimeAt, hudState, miles, towbookTrack } from './woReplayModel'
+import { ListOrdered, ChevronLeft, ChevronRight, Maximize2, Minimize2, Sun, Moon, Crosshair, Globe2, Hand, PauseOctagon, PhoneCall, PhoneIncoming, MessageSquareText, MessageCircleReply } from 'lucide-react'
+import useLeafletMap, { setMapTheme } from '../replay/useLeafletMap'
+import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion } from '../replay/useReplayEngine'
+import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
+import { buildPath } from '../replay/roadPath'
+import { indexAt } from '../replay/engineMath'
+import { truckKindFor } from '../replay/gameIcons'
+import { createStageLayers } from './stageLayers'
+import { FlowPulse, pulsePath, pickDock } from './flowPulse'
+import StageHud from './StageHud'
+import FlowDrawer from './FlowDrawer'
+import EventToasts, { KIND_ICON } from './EventToasts'
+import { StepCard, StepCaption } from './StepCard'
+import { KINDS, HUD, isSlot, slotX, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
 
-const TRUCK = c => `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>`
-const PILL = 'position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;background:#0f172af2;color:#fff;border-radius:8px;padding:3px 10px;font:700 13px system-ui'
-const truckHtml = (name, active, est, heading, sc = 1) => {
-  const c = est ? '#ea580c' : active ? '#059669' : '#94a3b8'
-  const arrow = heading == null || !(active || est) ? '' : `<div style="position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-50%,-50%) rotate(${heading}deg) translateY(-${Math.round(44 * sc)}px);border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:15px solid ${c}"></div>`
-  const W = Math.round(60 * sc)
-  return `<div style="position:relative;width:${W}px;height:${W}px;opacity:${active || est ? 1 : 0.7}">
-    ${arrow}
-    <div style="width:${W}px;height:${W}px;border-radius:${Math.round(18 * sc)}px;background:#fff;display:flex;align-items:center;justify-content:center;border:${sc < 0.8 ? 3 : 4}px ${est ? 'dashed' : 'solid'} ${c};
-      box-shadow:${active || est ? `0 0 0 6px ${c}33,0 6px 14px rgba(0,0,0,.4)` : '0 3px 8px rgba(0,0,0,.3)'}">${TRUCK(c)}</div>
-    <div style="${PILL};top:66px;${active || est ? '' : 'background:#475569e6;font-weight:600;font-size:12px'}">${esc(name)}${est ? ' · estimated' : ''}</div>
-  </div>`
-}
-const customerHtml = (sc = 1) => { const W = Math.round(60 * sc); return `<div style="position:relative;width:${W}px;height:${W}px"><div style="position:absolute;inset:0;border-radius:50%;background:#ec489944"></div>
-  <div style="position:absolute;inset:${Math.round(12 * sc)}px;border-radius:50%;background:#ec4899;border:${sc < 0.8 ? 3 : 4}px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.45)"></div>
-  <div style="${PILL};top:${W + 6}px">Customer</div></div>` }
-const garageHtml = (name, sc = 1) => { const W = Math.round(44 * sc); return `<div style="position:relative;width:${W}px;height:${W}px"><div style="width:${W}px;height:${W}px;border-radius:10px;background:#6366f1;border:${sc < 0.8 ? 3 : 4}px solid #e0e7ff;box-shadow:0 0 0 6px rgba(99,102,241,.3),0 4px 10px rgba(0,0,0,.35)"></div>
-  <div style="${PILL};top:${W + 6}px;background:#fff;color:#0f172a;box-shadow:0 2px 8px rgba(0,0,0,.25)">${esc(name)}</div></div>` }
-const fmtDelta = s => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`)
-const etClock = sec => new Date(sec * 1000).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' })
-const ease = x => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
-
-/** A hop between two channel spheres: an arc above the row, so it never slides across the spheres in between. */
-function arcPts(a, b, n = 26) {
-  const y0 = a.y - 19, h = Math.min(30, 12 + Math.abs(b.x - a.x) * 0.035), cx = (a.x + b.x) / 2, cy = y0 - 2 * h
-  return Array.from({ length: n + 1 }, (_, k) => { const t = k / n; return { x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * cx + t * t * b.x, y: (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * cy + t * t * (b.y - 19) } })
-}
-
-function along(pts, t) {
-  if (pts.length === 1) return pts[0]
-  const lens = pts.slice(1).map((b, k) => Math.hypot(b.x - pts[k].x, b.y - pts[k].y))
-  let d = t * lens.reduce((a, b) => a + b, 0)
-  for (let k = 0; k < lens.length; k++) {
-    if (d <= lens[k] || k === lens.length - 1) { const f = lens[k] ? Math.min(1, d / lens[k]) : 1; return { x: pts[k].x + (pts[k + 1].x - pts[k].x) * f, y: pts[k].y + (pts[k + 1].y - pts[k].y) * f } }
-    d -= lens[k]
-  }
-  return pts[pts.length - 1]
-}
+const MARK_ICON = { phone: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
+const MARK_COLOUR = { phone: '#38bdf8', callback: '#f43f5e', text_out: '#ec4899', text_in: '#f59e0b' }
+const PAD = { tl: L.point(110, 172), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
+const toS = v => (typeof v === 'number' ? v : Date.parse(v) / 1000)
+const Chip = ({ on, children }) => on && <span className="rp-shimmer rounded-full px-3 py-1 text-[11px] text-slate-200">{children}</span>
+const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v) } catch { /* private window */ } return null }
 
 /**
- * The Work Order Replay stage, in the style of the TowFlow simulation: a simple map is the stage. The vehicle drives
- * garage -> customer on it, and a command-center column over the map shows where the call was captured, the integration,
- * Salesforce and whoever touched it. Messages fly from that column to the vehicle, the garage and the customer's phone.
+ * The Work Order Replay stage: a game-style live operations map. The replay engine (60 fps, no React per frame) drives the layers in
+ * stageLayers.js; React only re-renders on a new step, a pause or a click. Everything is clickable at once: the story shows first,
+ * trucks fade in when the GPS arrives (locations: undefined = still loading, null = unavailable), contact marks when B's extras arrive.
+ * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node).
  */
-export default function WoReplayStage({ steps, header, locations, jump }) {
-  const loc = locations || null
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('woReplayFlowOpen') === '1' } catch { return false } })
-  const tracks = useMemo(() => {
+export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop }) {
+  const where = header?.where
+  const loc = useMemo(() => locations || (where ? { wo: where.member, garage: where.garage, drivers: [], notes: [] } : null), [locations, where])
+  const times = useMemo(() => stepTimes(steps), [steps])
+  const t0 = times[0] ?? 0
+  const marks = useMemo(() => (rawMarks || []).map(m => ({ ...m, ts: toS(m.ts) })).filter(m => Number.isFinite(m.ts)).sort((a, b) => a.ts - b.ts), [rawMarks])
+  const wait = useMemo(() => ({ created: t0, promise: promiseTs(steps), onScene: onSceneTs(steps) }), [steps, t0])
+  const actors = useMemo(() => { let cur = null; return steps.map((s, k) => { if (s.names?.driver) cur = s.names.driver; return { name: cur, phase: driverPhase(steps, k) } }) }, [steps])
+  const actor = useMemo(() => t => actors[indexAt(times, t)] || { name: null, phase: 'assigned' }, [actors, times])
+
+  const trucks = useMemo(() => {
     if (!loc) return []
-    const out = loc.drivers.filter(d => d.track.length).map(d => ({ name: d.name, track: d.track, est: false }))
-    const tb = towbookTrack(steps, loc.garage, loc.wo)
-    if (tb.length) out.push({ name: `${loc.towbook?.driver || 'Towbook Driver'} 1`, track: tb, est: true })
+    const out = (loc.drivers || []).filter(d => d.track?.length).map(d => ({
+      key: d.name, name: d.name, garage: header?.garage, est: false, path: buildPath(d.track, d.road),
+      kind: truckKindFor({ truck: d.truck, skills: d.skills, service: header?.service }),
+    }))
+    const tb = towbookTrack(steps, loc.garage, loc.wo, loc.roads?.garage_to_member)
+    if (tb.length) out.push({ key: 'tb', name: `${loc.towbook?.driver || 'Towbook Driver'} 1`, garage: header?.garage, est: true, path: buildPath(tb), kind: truckKindFor({ truck: loc.towbook?.truck, service: header?.service }) })
     return out
-  }, [loc, steps])
-  // steps where the ACTING vehicle drives get more animation time (not other drivers who held the call earlier)
-  const tl = useMemo(() => {
-    const who = []; let cur = null
-    steps.forEach(st => { if (st.names?.driver) cur = st.names.driver; who.push(cur) })
-    return buildTimeline(steps, k => {
-      if (k + 1 >= steps.length) return 0
-      const a = Date.parse(steps[k].ts) / 1000, b = Date.parse(steps[k + 1].ts) / 1000
-      return Math.max(0, ...tracks.filter(t => t.est || t.name === who[k]).map(t => { const p0 = positionAt(t.track, a), p1 = positionAt(t.track, b); return p0 && p1 ? miles(p0, p1) : 0 }))
-    })
-  }, [steps, tracks])
-  const total = tl.total
-  const clock = useStepClock(total)
-  const { i, p, started, into, dur } = stepAt(clock.tau, tl)
-  const step = started ? steps[i] : null
-  const hud = hudState(steps, i, started)
-  const realT = realTimeAt(clock.tau, steps, tl)
-  const [ref, map] = useLeafletMap([42.9, -78.8], { light: true })
-  const [, bump] = useState(0)
-  const layers = useRef({})
-  const [autoCam, setAutoCam] = useState(true)
-  const [zoomBias, setZoomBias] = useState(0)          // the user's zoom ratio on top of the automatic framing, in zoom levels (2^bias x)
-  const [sc, setSc] = useState(1)                      // icon scale: smaller icons when zoomed out, so they do not pile up
-  useEffect(() => {
-    if (!map) return undefined
-    const f = () => setSc(Math.max(0.55, Math.min(1, +(0.55 + (map.getZoom() - 10) * 0.09).toFixed(2))))
-    f(); map.on('zoomend', f)
-    return () => map.off('zoomend', f)
-  }, [map])
-  const listRef = useRef(null)
-  const bounds = useRef(null)
+  }, [loc, steps, header])
+
+  const end = Math.max(times[times.length - 1] ?? t0, t0) + 180
+  const busy = useMemo(() => t => trucks.some(k => { const p = k.path.at(t); return p && p.heading != null && !p.stale }), [trucks])
+  const eventTimes = useMemo(() => [...times, ...marks.map(m => m.ts)].sort((a, b) => a - b), [times, marks])
+  const [hold, setHold] = useState(false)
+  const stops = useMemo(() => (hold ? steps.map((s, k) => (s.flag ? times[k] : null)).filter(x => x != null) : []), [hold, steps, times])
+  const engine = useReplayEngine({ start: t0 - 60, end, events: eventTimes, initial: t0 - 60, speed: 60, busy, stops })
+  const { t: tNow } = useEngineState(engine, 4)
+  const idx = useEngineIndex(engine, times)
+  const hud = useMemo(() => hudState(steps, idx, idx >= 0), [steps, idx])
+  const step = idx >= 0 ? steps[idx] : null
+
+  const [ref, map] = useLeafletMap([42.9, -78.8])
+  const [light, setLight] = useState(() => store('woReplayLight') === '1')
+  useEffect(() => setMapTheme(ref.current, light), [light, map]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const z = map && ref.current.querySelector('.leaflet-top.leaflet-left'); if (z) z.style.marginTop = `${HUD.h + 22}px` }, [map]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [size, setSize] = useState({ w: 1100, h: 640 })
+  const [open, setOpen] = useState(() => store('woReplayFlowOpen') === '1')
+  const [mode, setMode] = useState('follow')            // follow | all | free
+  const modeRef = useRef(mode); modeRef.current = mode
+  const flying = useRef(0)
   const fsRef = useRef(null)
   const [isFs, setIsFs] = useState(false)
   useEffect(() => {
@@ -98,379 +76,147 @@ export default function WoReplayStage({ steps, header, locations, jump }) {
     document.addEventListener('fullscreenchange', on)
     return () => document.removeEventListener('fullscreenchange', on)
   }, [])
-  const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : fsRef.current?.requestFullscreen?.())
   useEffect(() => {   // the map re-measures whenever its box changes size (window, full screen, flow column)
-    if (!map || !ref.current || typeof ResizeObserver === 'undefined') return undefined
-    const ro = new ResizeObserver(() => { map.invalidateSize({ animate: false }); bump(v => v + 1) })
+    if (!map || typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(() => { map.invalidateSize({ animate: false }); setSize({ w: ref.current.clientWidth, h: ref.current.clientHeight }) })
     ro.observe(ref.current)
     return () => ro.disconnect()
   }, [map]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const [hold, setHold] = useState(false)
-  const heldFor = useRef(-1)
-  const hovering = useRef(false)
-  const wasPlaying = useRef(false)
-  useEffect(() => {   // the user's own zoom or drag takes the camera away from the animation until "Auto camera" is switched back on
+  useEffect(() => {   // the user's own drag, wheel or zoom button takes the camera away until it is switched back
     const el = ref.current
-    if (!el) return undefined
-    const off = e => { if (e.target.closest?.('.leaflet-control-zoom, .leaflet-container')) setAutoCam(false) }
-    const wheel = () => setAutoCam(false)
-    el.addEventListener('pointerdown', off); el.addEventListener('wheel', wheel, { passive: true }); el.addEventListener('dblclick', wheel)
-    return () => { el.removeEventListener('pointerdown', off); el.removeEventListener('wheel', wheel); el.removeEventListener('dblclick', wheel) }
+    if (!map || !el) return undefined
+    const free = () => setMode('free')
+    const down = e => { if (e.target.closest?.('.leaflet-control-zoom')) free() }
+    map.on('dragstart', free); el.addEventListener('pointerdown', down); el.addEventListener('wheel', free, { passive: true }); el.addEventListener('dblclick', free)
+    return () => { map.off('dragstart', free); el.removeEventListener('pointerdown', down); el.removeEventListener('wheel', free); el.removeEventListener('dblclick', free) }
   }, [map]) // eslint-disable-line react-hooks/exhaustive-deps
-  const autoStarted = useRef(false)
-  useEffect(() => {   // start by itself once the map data is in (or known to be unavailable): nobody should have to find Play
-    if (autoStarted.current || locations === undefined) return undefined
-    autoStarted.current = true
-    const t = setTimeout(() => clock.setPlaying(true), 700)
-    return () => clearTimeout(t)
-  }, [locations]) // eslint-disable-line react-hooks/exhaustive-deps
-  const toggleDrawer = () => setOpen(o => { try { localStorage.setItem('woReplayFlowOpen', o ? '0' : '1') } catch { /* private window */ } return !o })
 
-  const activeName = hud.names.driver
-  const isActive = t => (t.est ? true : t.name === activeName)
-  const activeTrack = tracks.find(t => isActive(t) && positionAt(t.track, realT)) || null
-  const activePos = activeTrack && positionAt(activeTrack.track, realT)
-
-  useEffect(() => {
-    if (!map) return undefined
-    const L0 = { root: L.layerGroup().addTo(map), markers: new Map(), trail: L.polyline([], { color: '#059669', weight: 7, opacity: 0.85 }), link: L.polyline([], { color: '#ec4899', weight: 4, dashArray: '8 9' }), ahead: L.polyline([], { color: '#64748b', weight: 5, opacity: 0.7, dashArray: '2 11', lineCap: 'round' }) }
-    L0.ahead.addTo(L0.root); L0.trail.addTo(L0.root); L0.link.addTo(L0.root)
-    if (loc?.garage) L0.garage = L.marker([loc.garage.lat, loc.garage.lon], { interactive: false, keyboard: false, zIndexOffset: -500, icon: L.divIcon({ className: '', iconSize: [44, 44], iconAnchor: [22, 22], html: garageHtml(loc.garage.name.replace(/^\w+\s+-\s+/, '')) }) }).addTo(L0.root)
-    if (loc?.wo) L0.cust = L.marker([loc.wo.lat, loc.wo.lon], { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [60, 60], iconAnchor: [30, 30], html: customerHtml(1) }) }).addTo(L0.root)
+  // First framing: the member and the garage, once the map and the coordinates are known.
+  const fit = (animate = false) => {
     const pts = [loc?.wo, loc?.garage && loc.wo && miles(loc.garage, loc.wo) < 30 ? loc.garage : null].filter(Boolean).map(q => [q.lat, q.lon])
-    bounds.current = pts.length > 1 ? L.latLngBounds(pts) : null
-    if (pts.length > 1) map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [110, 172], paddingBottomRight: [110, 112], maxZoom: 15 })
-    else if (pts.length) map.setView(pts[0], 13.5)
-    const on = () => bump(n => n + 1)
-    map.on('move zoom', on)
-    layers.current = L0
-    return () => { map.off('move zoom', on); L0.root.remove(); layers.current = {} }
-  }, [map, loc, tracks])
+    if (pts.length > 1) map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: PAD.tl, paddingBottomRight: PAD.br, maxZoom: 15, animate })
+    else if (pts.length) map.setView(pts[0], 13.5, { animate })
+  }
+  useEffect(() => { if (map && loc) fit() }, [map, loc?.wo?.lat, loc?.wo?.lon, loc?.garage?.lat]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const L0 = layers.current
-    if (!map || !L0.markers) return
-    for (const t of tracks) {
-      const pos = positionAt(t.track, realT)
-      let m = L0.markers.get(t.name)
-      if (!pos) { if (m) { m.remove(); L0.markers.delete(t.name) } continue }
-      if (!m) { m = L.marker([pos.lat, pos.lon], { interactive: false, keyboard: false }).addTo(L0.root); L0.markers.set(t.name, m) }
-      m.setLatLng([pos.lat, pos.lon]).setIcon(L.divIcon({ className: '', iconSize: [Math.round(60 * sc), Math.round(60 * sc)], iconAnchor: [Math.round(30 * sc), Math.round(30 * sc)], html: truckHtml(t.name, isActive(t), t.est, pos.heading, sc) }))
-      m.setZIndexOffset(isActive(t) ? 1000 : 0)
-    }
-    if (activeTrack) { L0.trail.setLatLngs(trailUntil(activeTrack.track, realT)); L0.trail.setStyle({ dashArray: activeTrack.est ? '8 8' : null, color: activeTrack.est ? '#ea580c' : '#059669' }) } else L0.trail.setLatLngs([])
-    L0.ahead.setLatLngs(activeTrack && activePos ? [[activePos.lat, activePos.lon], ...activeTrack.track.filter(q => q[0] > realT).slice(0, 120).map(q => [q[1], q[2]])] : [])
-    L0.link.setLatLngs(activeTrack && activePos && loc?.wo ? [[activePos.lat, activePos.lon], [loc.wo.lat, loc.wo.lon]] : [])
-    // never let the acting vehicle drift under the top bar, the caption or off the map: pan just enough to keep it in view
-    if (activePos && autoCam) {
-      const q = map.latLngToContainerPoint([activePos.lat, activePos.lon]), sz = map.getSize()
-      if (q.x < 70 || q.x > sz.x - 70 || q.y < 150 || q.y > sz.y - 96) {
-        map.panInside([activePos.lat, activePos.lon], { paddingTopLeft: [80, 160], paddingBottomRight: [80, 104], animate: false })
-      }
-    }
-  }, [map, tracks, realT, activeName, sc]) // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Layers: built once per data change, then moved by the engine every frame.
+  const jobs = driverJobs
+  const onMarkRef = useRef(onMark); onMarkRef.current = onMark
   useEffect(() => {
     if (!map) return undefined
-    const z = ref.current?.querySelector('.leaflet-top.leaflet-right')
-    if (z) z.style.marginTop = '108px'
-    // the flow column opens beside the map (it never covers it): re-measure while it slides, then re-frame the action
-    let n = 0
-    const tick = setInterval(() => { map.invalidateSize({ animate: false }); bump(v => v + 1); if (++n > 12) clearInterval(tick) }, 30)
-    const done = setTimeout(() => { map.invalidateSize({ animate: false }); if (bounds.current) map.fitBounds(bounds.current, { paddingTopLeft: [110, 172], paddingBottomRight: [110, 112], maxZoom: 15, animate: true }) }, 420)
-    return () => { clearInterval(tick); clearTimeout(done) }
-  }, [open, map]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Camera. At each step it frames what matters for THAT step: the customer, the vehicle that is acting (where it is at the start and
-  // the end of the step) and, on a re-assignment, the driver it replaced. It zooms in as far as it can while those stay in view, so
-  // they are clearly apart instead of piled up. The garage joins the frame only when the vehicle is near it. The user's zoom ratio
-  // (the Zoom - / + buttons) is added on top. Other vehicles stay on the map but never force the camera wider.
-  const frameTo = (animate) => {
-    if (!map || !started || !loc?.wo || !steps[i]) return
-    const at = k => Date.parse(steps[Math.min(k, steps.length - 1)].ts) / 1000
-    const pts = [[loc.wo.lat, loc.wo.lon]]
-    const prevDriver = step?.why ? [...steps.slice(0, i)].reverse().map(x => x.names?.driver).find(n => n && n !== hud.names.driver) : null
-    let vehicle = false
-    for (const t of tracks) {
-      const acting = t.est || t.name === hud.names.driver
-      if (!(acting || t.name === prevDriver)) continue
-      for (const tm of acting ? [at(i), at(i + 1)] : [at(i)]) { const q = positionAt(t.track, tm); if (q) { pts.push([q.lat, q.lon]); vehicle = vehicle || acting } }
+    const layers = createStageLayers(map, { loc, header, trucks, actor, wait, marks, onMark: m => onMarkRef.current?.(m), jobs })
+    let gliding = false
+    const follow = r => {   // the truck leaving the middle 60% of the view makes the camera glide after it until it is centred again
+      if (modeRef.current !== 'follow' || !r.pos || flying.current > Date.now()) return
+      const playing = engine.ref.current.playing
+      const q = map.latLngToContainerPoint([r.pos.lat, r.pos.lon]), sz = map.getSize()
+      const cx = (PAD.tl.x + sz.x - PAD.br.x) / 2, cy = (PAD.tl.y + sz.y - PAD.br.y) / 2, hw = (sz.x - PAD.tl.x - PAD.br.x) * 0.3, hh = (sz.y - PAD.tl.y - PAD.br.y) * 0.3
+      const outside = Math.abs(q.x - cx) > hw || Math.abs(q.y - cy) > hh
+      if (!playing) { if (outside) map.panTo([r.pos.lat, r.pos.lon], { animate: true }); return }
+      if (outside) gliding = true
+      if (!gliding) return
+      gliding = Math.abs(q.x - cx) > hw * 0.3 || Math.abs(q.y - cy) > hh * 0.3
+      map.panBy([(q.x - cx) * 0.12, (q.y - cy) * 0.12], { animate: false })
     }
-    const nearGarage = loc.garage && (!vehicle || pts.slice(1).some(q => miles({ lat: q[0], lon: q[1] }, loc.garage) < 4))
-    if (nearGarage && miles(loc.garage, loc.wo) < 60) pts.push([loc.garage.lat, loc.garage.lon])
-    const bnds = L.latLngBounds(pts), tl_ = L.point(110, 172), br_ = L.point(110, 112)
-    const tight = pts.length < 2 || bnds.getNorthEast().distanceTo(bnds.getSouthWest()) < 40     // everything on one spot: street level
-    const fit = tight ? 16 : Math.min(map.getBoundsZoom(bnds, false, tl_.add(br_)), 17)
-    const z = Math.max(8, Math.min(18, fit + zoomBias))
-    const off = L.point((tl_.x - br_.x) / 2, (tl_.y - br_.y) / 2)          // the visible area sits between the top bar and the caption
-    const centre = map.unproject(map.project(bnds.getCenter(), z).subtract(off), z)
-    const sz = map.getSize()
-    const outside = pts.some(q => { const c = map.latLngToContainerPoint(q); return c.x < tl_.x || c.x > sz.x - br_.x || c.y < tl_.y || c.y > sz.y - br_.y })
-    // calm camera: move only when something would leave the view or the zoom is clearly off (or the user just changed the ratio)
-    if (animate === 'force' || outside || Math.abs(z - map.getZoom()) > 0.6) map.flyTo(centre, z, { duration: 1.2 })
-  }
-  useEffect(() => { if (autoCam) frameTo() }, [map, i, started, loc, tracks, autoCam]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (autoCam) frameTo('force') }, [zoomBias]) // eslint-disable-line react-hooks/exhaustive-deps
+    const run = t => follow(layers.frame(t, engine.ref.current.playing))
+    run(engine.ref.current.t)
+    const off = engine.subscribe(run)
+    return () => { off(); layers.destroy() }
+  }, [map, loc, header, trucks, actor, wait, marks, jobs, engine])
 
+  // Once per new step (wall time): the message flies, the card moves to the quietest corner, and the camera re-frames.
+  const [fx, setFx] = useState(null)
+  const dockId = useRef('tr')
   useEffect(() => {
-    const row = listRef.current?.querySelector(`[data-step="${i}"]`)
-    if (row && open && started) listRef.current.scrollTo({ top: row.offsetTop - 120, behavior: 'smooth' })
-  }, [i, open, started])
+    if (!map || idx < 0) { setFx(null); return }
+    const s = steps[idx], t = times[idx], act = actor(t)
+    const trk = trucks.find(k => k.est || k.name === act.name)
+    const tp = trk?.path.at(t)
+    const toPx = q => { const c = map.latLngToContainerPoint([q.lat, q.lon]); return { x: c.x, y: c.y } }
+    const pt = id => (isSlot(id) ? { x: slotX(id, size.w), y: HUD.y }
+      : id === 'member' ? (loc?.wo ? toPx(loc.wo) : null) : id === 'garage' ? (loc?.garage ? toPx(loc.garage) : null)
+      : id === 'driver' ? (tp ? toPx(tp) : loc?.garage ? toPx(loc.garage) : null) : null)
+    const path = pulsePath(s, pt), kind = KINDS[s.kind] || KINDS.system
+    const cardW = s.why || s.explain ? 310 : 270, cardH = Math.min(420, 150 + (s.why ? 120 : 0) + (s.explain ? 190 : 0))
+    const dock = pickDock(size.w, size.h, cardW, cardH, [pt('member'), pt('garage'), pt('driver'), path?.[path.length - 1]].filter(Boolean), dockId.current)
+    dockId.current = dock.id
+    setFx({ key: idx, path, colour: kind.colour, dash: kind.dash, dock, cardW })
+    if (!loc?.wo || modeRef.current === 'free') return
+    const pts = [[loc.wo.lat, loc.wo.lon]]
+    for (const k of modeRef.current === 'all' ? trucks : trk ? [trk] : []) { const q = k.path.at(t); if (q) pts.push([q.lat, q.lon]) }
+    if (loc.garage && (pts.length === 1 || modeRef.current === 'all' || pts.some(q => miles({ lat: q[0], lon: q[1] }, loc.garage) < 4)) && miles(loc.garage, loc.wo) < 60) pts.push([loc.garage.lat, loc.garage.lon])
+    const b = L.latLngBounds(pts), tight = pts.length < 2 || b.getNorthEast().distanceTo(b.getSouthWest()) < 40
+    const z = tight ? 16 : Math.min(map.getBoundsZoom(b, false, PAD.tl.add(PAD.br)), 17)
+    if (modeRef.current === 'all' || Math.abs(z - map.getZoom()) > 0.8) {
+      flying.current = Date.now() + 1000
+      const off = L.point((PAD.tl.x - PAD.br.x) / 2, (PAD.tl.y - PAD.br.y) / 2)
+      map.flyTo(map.unproject(map.project(b.getCenter(), z).subtract(off), z), z, { duration: 0.9 })
+    }
+  }, [idx, map]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const stageW = ref.current?.clientWidth || 1100
-  useEffect(() => {
-    const L0 = layers.current
-    if (!map || !L0.root) return
-    const w = Math.round(60 * sc), g = Math.round(44 * sc)
-    L0.cust?.setIcon(L.divIcon({ className: '', iconSize: [w, w], iconAnchor: [w / 2, w / 2], html: customerHtml(sc) }))
-    L0.garage?.setIcon(L.divIcon({ className: '', iconSize: [g, g], iconAnchor: [g / 2, g / 2], html: garageHtml(loc.garage.name.replace(/^\w+\s+-\s+/, ''), sc) }))
-  }, [map, sc, loc, tracks]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toPx = q => { const c = map.latLngToContainerPoint([q.lat, q.lon]); return { x: c.x, y: c.y } }
-  const pt = id => {
-    if (isSlot(id)) return { x: slotX(id, stageW), y: HUD.y }
-    if (!map) return null
-    if (id === 'member') return loc?.wo ? toPx(loc.wo) : null
-    if (id === 'garage') return loc?.garage ? toPx(loc.garage) : null
-    if (id === 'driver') return activePos ? toPx(activePos) : loc?.garage ? toPx(loc.garage) : null
-    return null
-  }
-  const ids = step ? [step.from, step.via, step.to].filter(Boolean) : []
-  // The route of this step. A hop between two channel spheres is an arc over the row; a hop between the bar and the map
-  // drops straight down from (or rises straight up to) the sphere, so nothing ever crosses a label or another channel.
-  const path = []
-  ids.forEach((id, k) => {
-    const q = pt(id)
-    if (!q) { path.push(null); return }
-    const slot = isSlot(id), prev = ids[k - 1], next = ids[k + 1]
-    if (slot && prev && !isSlot(prev)) path.push({ x: q.x, y: HUD.edgeY })
-    if (slot && prev && isSlot(prev) && pt(prev)) path.push(...arcPts(pt(prev), q).slice(1))
-    path.push(q)
-    if (slot && next && !isSlot(next)) path.push({ x: q.x, y: HUD.edgeY })
-  })
-  // the hops the call has already made along the bar stay drawn, so the route taken so far is always visible
-  const taken = []
-  if (started) {
-    const seen = new Set()
-    steps.slice(0, i).forEach(sp => {
-      const seq = [sp.from, sp.via, sp.to].filter(Boolean)
-      for (let k = 1; k < seq.length; k++) {
-        const key = `${seq[k - 1]}>${seq[k]}`
-        if (isSlot(seq[k - 1]) && isSlot(seq[k]) && seq[k - 1] !== seq[k] && !seen.has(key)) { seen.add(key); taken.push({ key, kind: KINDS[sp.kind] || KINDS.system, pts: arcPts(pt(seq[k - 1]), pt(seq[k])) }) }
-      }
-    })
-  }
-  const hasPath = step && path.length > 1 && path.every(Boolean) && step.from !== step.to
-  const pulse = hasPath ? along(path, ease(p)) : null
-  const kind = KINDS[step?.kind] || KINDS.system
-  const arrivedAt = step && p >= 1 ? pt(step.to) : null
-  const t0 = steps.length ? Date.parse(steps[0].ts) / 1000 : 0
-  const dueTs = steps.find(x => x.id === 'P1')?.ts
-  const pastPromise = dueTs ? realT >= Date.parse(dueTs) / 1000 : false
-  const STAGE_H_NOW = ref.current?.clientHeight || 640
-  const cardAt = step ? (pulse && p < 1 ? pulse : pt(step.to)) : null
-  const CARD_W = step?.why || step?.explain ? 310 : 270, CARD_H = Math.min(420, 150 + (step?.why ? 120 : 0) + (step?.explain ? 190 : 0))
-  const corners = [
-    { id: 'tl', x: 14, y: HUD.edgeY + 6 }, { id: 'tr', x: stageW - CARD_W - 84, y: HUD.edgeY + 6 },
-    { id: 'bl', x: 14, y: STAGE_H_NOW - 76 - CARD_H }, { id: 'br', x: stageW - CARD_W - 84, y: STAGE_H_NOW - 76 - CARD_H },
-  ]
-  const action = [pt('member'), pt('garage'), pt('driver'), cardAt].filter(Boolean)
-  const gap = c => Math.min(...action.map(q => Math.hypot(Math.max(c.x - q.x, 0, q.x - (c.x + CARD_W)), Math.max(c.y - q.y, 0, q.y - (c.y + CARD_H)))), 9999)
-  const cornerRef = useRef('tr')
-  const best = corners.reduce((a, c) => (gap(c) > gap(a) ? c : a), corners[0])
-  const cur = corners.find(c => c.id === cornerRef.current) || best
-  if (step && (gap(cur) < 50 && gap(best) > gap(cur) + 40)) cornerRef.current = best.id    // hysteresis: only move when clearly better
-  const dock = corners.find(c => c.id === cornerRef.current) || best
-  const cardX = dock.x, cardY = dock.y
-  const readout = (() => {
-    if (!loc) return locations === undefined ? 'Loading where the customer and drivers were…' : 'Locations are not available for this call.'
-    if (!activeName && !activeTrack) return loc.towbook ? 'Towbook garage: Salesforce does not track where its driver is.' : 'No driver assigned at this moment.'
-    if (activeTrack?.est) return `Towbook shows ${activeTrack.name} only by status. The vehicle on the map is estimated from the Towbook En Route and On Location times, not GPS.`
-    if (activePos && loc.wo) return `${activeName} is ${miles(activePos, loc.wo).toFixed(1)} mi from the customer`
-    if (activeName && !tracks.some(t => t.name === activeName)) return `${activeName}: no GPS pings while this call was open.`
-    return `${activeName}: no GPS ping at this moment.`
-  })()
-
-  const channel = id => {
-    const info = NODE_INFO[id], on = hud.touched.has(id), act = hud.active.has(id), lab = on && hud.labels[id] ? hud.labels[id] : info
-    const x = slotX(id, stageW)
-    return (
-      <div key={id} style={{ opacity: on ? 1 : 0.4, transition: 'opacity .3s' }}>
-        <div style={{ position: 'absolute', left: x - 18, top: HUD.y - 18, width: 36, height: 36, borderRadius: '50%',
-          background: `radial-gradient(circle at 32% 28%, #ffffffcc 0, ${info.colour} 38%, #0f172a 130%)`,
-          boxShadow: act ? `0 0 0 4px ${info.colour}66, 0 0 22px ${info.colour}` : '0 3px 8px rgba(0,0,0,.45)', transition: 'box-shadow .3s' }} />
-        <div style={{ position: 'absolute', left: x - 55, top: HUD.y + 22, width: 110, textAlign: 'center', background: 'rgba(15,23,42,.82)', borderRadius: 7, padding: '1px 3px' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: '#fff', lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lab.label}</div>
-          <div style={{ fontSize: 10.5, color: '#94a3b8', lineHeight: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lab.sub}</div>
-        </div>
-      </div>
-    )
-  }
-  const stepTo = k => { heldFor.current = -1; clock.setTau(LEAD_S + tl.starts[Math.min(steps.length - 1, Math.max(0, k))] + 0.01) }
-  useEffect(() => {   // "Show it in the replay" from the takeaways: go to that step and stop, so the message can be read
+  const heldBy = useRef(false)
+  const stepTo = k => { const n = Math.min(steps.length - 1, Math.max(0, k)); engine.seek(times[n] + 0.01) }
+  useEffect(() => {   // "Show it in the replay": go to that moment and stop, so it can be read ({ ts } from a contact mark, or { id } from a takeaway)
     if (!jump?.n) return
-    const k = steps.findIndex(x => x.id === jump.id)
-    if (k >= 0) { clock.setPlaying(false); stepTo(k) }
+    const ts = jump.ts != null ? toS(jump.ts) : times[steps.findIndex(x => x.id === jump.id)]
+    if (ts != null && Number.isFinite(ts)) { engine.pause(); engine.seek(ts + 0.01) }
   }, [jump?.n]) // eslint-disable-line react-hooks/exhaustive-deps
-  const ARRIVED = STEP_S * TRAVEL + 0.3
-  useEffect(() => {   // "Hold at each message": stop once the message has arrived, so it can be read; Play carries on through this step's drive
-    if (hold && clock.playing && started && into >= ARRIVED && heldFor.current !== i) { heldFor.current = i; clock.setPlaying(false) }
-  }, [into, hold, clock.playing, started, i]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // it starts by itself as soon as the story is in: nobody should have to find Play
+    if (prefersReducedMotion()) return undefined
+    const h = setTimeout(() => engine.play(), 400)
+    return () => clearTimeout(h)
+  }, [engine])
+
+  const scrub = useMemo(() => [
+    ...steps.map((s, k) => ({ t: times[k], label: `${s.clock} ${s.title}`, level: s.flag?.level, colour: s.flag ? '#f43f5e' : KINDS[s.kind]?.colour, Icon: KIND_ICON[s.kind] })),
+    ...marks.map(m => ({ t: m.ts, label: m.title, colour: MARK_COLOUR[m.type], Icon: MARK_ICON[m.type] })),
+  ], [steps, times, marks])
+  const toggleDrawer = () => setOpen(o => { store('woReplayFlowOpen', o ? '0' : '1'); return !o })
+  const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : fsRef.current?.requestFullscreen?.())
+  const toggleTheme = () => setLight(v => { store('woReplayLight', v ? '0' : '1'); return !v })
+  const btn = on => `px-2 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
+
+  const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise
+  const pos = trucks.find(k => k.est || k.name === act.name)?.path.at(tNow)
+  const readout = !loc ? (locations === undefined ? 'Loading where the member and trucks were…' : 'Locations are not available for this call.')
+    : !act.name && !pos ? (loc.towbook ? 'Towbook garage: Salesforce does not track where its driver is.' : 'No driver assigned at this moment.')
+    : pos && loc.towbook && !act.name ? 'Towbook shows its driver only by status. The vehicle on the map is estimated from the Towbook En Route and On Location times, not GPS.'
+    : pos && loc.wo ? `${act.name || 'The vehicle'} is ${miles(pos, loc.wo).toFixed(1)} mi from the member`
+    : act.name && !trucks.some(k => k.name === act.name) ? `${act.name}: no GPS pings while this call was open.` : `${act.name || 'The vehicle'}: no GPS ping at this moment.`
+  const ModeIcon = { follow: Crosshair, all: Globe2, free: Hand }[mode]
 
   return (
     <div ref={fsRef} className="space-y-2" style={isFs ? { background: '#020617', padding: 12, height: '100vh', display: 'flex', flexDirection: 'column' } : undefined}>
-      <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={isFs ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 170px), 820px)' }}>
-      <div className="relative flex-1 min-w-0" style={{ background: '#dbe4ee' }}>
-        <div ref={ref} style={{ position: 'absolute', inset: 0 }} />
-
-        <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1050 }}>
-          {taken.map(tk => <polyline key={tk.key} points={tk.pts.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={tk.kind.colour} strokeWidth="3.5" strokeLinecap="round" opacity="0.5" strokeDasharray={tk.kind.dash || undefined} />)}
-          {hasPath && (
-            <polyline points={path.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={kind.colour} strokeWidth="7" strokeLinejoin="round" strokeLinecap="round"
-              strokeDasharray={kind.dash || undefined} opacity="0.9" />
-          )}
-          {arrivedAt && <circle cx={arrivedAt.x} cy={arrivedAt.y} r={28 + 18 * Math.min(1, (into - STEP_S * TRAVEL) / 1.2)} fill="none" stroke={kind.colour} strokeWidth="5" opacity="0.7" />}
-          {hasPath && (() => {
-            const e = path[path.length - 1], q = path.slice(0, -1).reverse().find(z => Math.hypot(z.x - e.x, z.y - e.y) > 8)
-            if (!q) return null
-            const ang = (Math.atan2(e.y - q.y, e.x - q.x) * 180) / Math.PI
-            return <polygon points="0,0 -20,-10 -20,10" fill={kind.colour} transform={`translate(${e.x},${e.y}) rotate(${ang})`} opacity={p >= 0.97 ? 1 : 0.35} />
-          })()}
-          {pulse && <><circle cx={pulse.x} cy={pulse.y} r="26" fill={kind.colour} opacity="0.28" /><circle cx={pulse.x} cy={pulse.y} r="13" fill="#fff" stroke={kind.colour} strokeWidth="5" /></>}
-        </svg>
-
-        <div style={{ position: 'absolute', left: 10, right: 10, top: 10, height: HUD.h, borderRadius: 16, background: pastPromise ? 'rgba(127,29,29,.92)' : 'rgba(15,23,42,.9)', zIndex: 1040, pointerEvents: 'none',
-          boxShadow: '0 4px 14px rgba(0,0,0,.3)', transition: 'background .4s' }} />
-        <div style={{ position: 'absolute', left: 22, top: 30, zIndex: 1060, pointerEvents: 'none', color: '#fff', width: 200 }}>
-          <div style={{ fontSize: 26, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: 1.05 }}>{etClock(Math.max(realT, t0))}</div>
-          <div style={{ fontSize: 11.5, color: '#cbd5e1', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>SA received {etClock(t0)}{pastPromise ? ' · promise passed' : ''}</div>
-        </div>
-        <div style={{ position: 'absolute', inset: 0, zIndex: 1060, pointerEvents: 'none' }}>
-          {NODE_ORDER.map(channel)}
-          {step?.flag && step.explain && (() => {
-            const q = pt(step.to) || pt(step.from)
-            if (!q) return null
-            const BI = iconFor(step.explain.icon), grow = 1 + 0.1 * Math.sin(clock.tau * 6)
-            return (
-              <div style={{ position: 'absolute', left: q.x + 12, top: q.y - 54, width: 38, height: 38, borderRadius: '50%', background: step.flag.level === 'bad' ? '#e11d48' : '#d97706', color: '#fff',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid #fff', boxShadow: '0 4px 14px rgba(0,0,0,.45)', transform: `scale(${grow})` }} title={step.explain.title}>
-                <BI size={20} strokeWidth={2.4} />
-              </div>)
-          })()}
-          {pulse && p < 1 && step && (
-            <div style={{ position: 'absolute', left: pulse.x + 20, top: pulse.y - 36, padding: '3px 10px', borderRadius: 8, background: kind.colour, color: '#fff', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', boxShadow: '0 3px 10px rgba(0,0,0,.35)' }}>
-              {step.title}
-            </div>
-          )}
-          {cardAt && (
-            <div onMouseEnter={() => { hovering.current = true; if (clock.playing) { wasPlaying.current = true; clock.setPlaying(false) } }}
-              onMouseLeave={() => { hovering.current = false; if (wasPlaying.current) { wasPlaying.current = false; clock.setPlaying(true) } }}
-              style={{ position: 'absolute', left: cardX, top: cardY, pointerEvents: 'auto', cursor: 'default', width: CARD_W, maxHeight: Math.max(220, STAGE_H_NOW - HUD.edgeY - 96), overflowY: 'auto', padding: '8px 12px', borderRadius: 12, background: 'rgba(15,23,42,.94)', color: '#e2e8f0',
-              border: `2px solid ${step.flag ? '#f43f5e' : kind.colour}`, boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
-              <div style={{ fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 700, color: step.flag ? '#fda4af' : kind.colour }}>{etClock(Date.parse(step.ts) / 1000)} · {kind.label}{step.actor ? ` · ${step.actor}` : ''}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 1 }}>{step.title}</div>
-              {(step.content?.length ? step.content : []).map((l, k) => <div key={k} style={{ fontSize: 12, color: '#cbd5e1', marginTop: 1 }}>{l}</div>)}
-              {step.flag && <div style={{ fontSize: 12.5, fontWeight: 700, color: '#fda4af', marginTop: 4 }}>{step.flag.text}</div>}
-              {step.explain && (() => { const XI = iconFor(step.explain.icon); return (
-                <div style={{ marginTop: 7, paddingTop: 6, borderTop: '1px solid #475569' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, letterSpacing: 1.3, textTransform: 'uppercase', fontWeight: 700, color: '#fca5a5' }}><XI size={14} />Why this may have happened</div>
-                  {step.explain.why.slice(0, 3).map((l, k) => <div key={k} style={{ fontSize: 12, color: l.startsWith('This call:') ? '#fde68a' : '#cbd5e1', marginTop: 3 }}>{l}</div>)}
-                  {step.explain.check[0] && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}><b style={{ color: '#cbd5e1' }}>Check:</b> {step.explain.check[0]}</div>}
-                </div>) })()}
-              {step.why && (
-                <div style={{ marginTop: 7, paddingTop: 6, borderTop: '1px solid #475569' }}>
-                  <div style={{ fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 700, color: '#fbbf24' }}>Why this driver</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#fde68a', marginTop: 1 }}>{step.why.headline}</div>
-                  {step.why.lines.map((l, k) => <div key={k} style={{ fontSize: 12, color: l.startsWith('Computed') ? '#fcd34d' : '#cbd5e1', marginTop: 2 }}>{l}</div>)}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {step && (
-          <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, zIndex: 1060, padding: '8px 18px', borderRadius: 14, background: 'rgba(15,23,42,.92)', color: '#e2e8f0',
-            border: `1px solid ${step.flag ? '#f43f5ecc' : kind.colour + '88'}`, display: 'flex', alignItems: 'center', gap: 18, pointerEvents: 'none' }}>
-            <div style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: '#fff', minWidth: 128 }}>{etClock(Date.parse(step.ts) / 1000)}</div>
-            <div style={{ fontSize: 12, color: '#94a3b8', minWidth: 118 }}>{step.dt === 0 ? 'Call starts' : `${fmtDelta(step.dt)} into the call`}</div>
-            <div style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              <span style={{ fontSize: 10.5, letterSpacing: 1.4, textTransform: 'uppercase', color: kind.colour, marginRight: 10 }}>{kind.label}</span>{step.title}
-              {step.flag && <span style={{ marginLeft: 10, padding: '1px 9px', borderRadius: 999, fontSize: 12, background: step.flag.level === 'bad' ? '#f43f5e33' : '#f59e0b33', color: step.flag.level === 'bad' ? '#fda4af' : '#fcd34d' }}>{step.flag.text}</span>}
-            </div>
-            {step.actor && <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><span style={{ fontSize: 13.5, fontWeight: 600, color: '#fff' }}>{step.actor}</span><span style={{ fontSize: 12, color: kind.colour, marginLeft: 8 }}>{step.role}</span></div>}
-            <div style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>{i + 1} / {steps.length}</div>
+      <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={isFs ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 230px), 820px)' }}>
+        <div className="relative flex-1 min-w-0" style={{ background: '#0b1220' }}>
+          <div ref={ref} style={{ position: 'absolute', inset: 0 }} />
+          <FlowPulse fx={fx} />
+          <StageHud engine={engine} hud={hud} stageW={size.w} t0={t0} pastPromise={pastPromise} pulse={idx} />
+          <div style={{ position: 'absolute', left: 64, top: HUD.h + 22, zIndex: 1060, display: 'flex', gap: 8 }}>
+            <Chip on={locations === undefined}>Loading trucks…</Chip><Chip on={!!extrasLoading}>Loading calls and texts…</Chip>
           </div>
-        )}
-        <button onClick={toggleDrawer} title={open ? 'Close the flow' : 'Open the flow'} aria-label={open ? 'Close the flow' : 'Open the flow'}
-          style={{ position: 'absolute', right: 0, top: HUD.h + 112, width: 38, height: 64, borderRadius: '12px 0 0 12px', background: 'rgba(15,23,42,.94)', color: '#fff', border: 'none', zIndex: 1070,
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer', boxShadow: '-3px 3px 10px rgba(0,0,0,.25)' }}>
-          {open ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}<ListOrdered size={16} />
-        </button>
-        {!started && <div style={{ position: 'absolute', left: 24, top: HUD.h + 22, zIndex: 1060, padding: '6px 14px', borderRadius: 999, background: 'rgba(15,23,42,.88)', color: '#e2e8f0', fontSize: 13 }}>{locations === undefined ? 'Loading where the customer and vehicles were… it plays by itself when ready' : 'Starting…'}</div>}
-      </div>
-      <div style={{ width: open ? DRAWER_W : 0, transition: 'width .35s cubic-bezier(.2,.8,.2,1)', overflow: 'hidden', flexShrink: 0, background: 'rgba(15,23,42,.97)' }}>
-        <div style={{ width: DRAWER_W, height: '100%', color: '#e2e8f0', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #33415588' }}>
-            <div style={{ fontSize: 11, letterSpacing: 1.8, textTransform: 'uppercase', color: '#94a3b8' }}>Flow</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>{steps.length} events in order</div>
-          </div>
-            <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '6px 0', position: 'relative' }}>
-              {steps.map((st, k) => {
-                const kd = KINDS[st.kind] || KINDS.system, now = started && k === i, done = started && k < i
-                return (
-                  <button key={st.id} data-step={k} onClick={() => stepTo(k)}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 16px 8px 40px', position: 'relative', border: 'none', cursor: 'pointer', color: 'inherit',
-                      background: now ? `${kd.colour}33` : 'transparent', opacity: done || now ? 1 : 0.55, borderLeft: `3px solid ${now ? kd.colour : 'transparent'}` }}>
-                    <span style={{ position: 'absolute', left: 17, top: 0, bottom: 0, width: 2, background: '#33415588' }} />
-                    <span style={{ position: 'absolute', left: 11, top: 12, width: 14, height: 14, borderRadius: '50%', background: st.flag ? '#f43f5e' : kd.colour, border: '2px solid #0f172a', boxShadow: now ? `0 0 0 4px ${kd.colour}55` : 'none' }} />
-                    <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
-                      <span>{st.clock}</span><span>{st.dt ? `+${fmtDelta(st.dt)}` : 'start'}</span>
-                    </span>
-                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: now ? 700 : 600, color: '#fff', lineHeight: '17px' }}>{st.title}</span>
-                    <span style={{ display: 'block', fontSize: 11.5, color: kd.colour }}>{[kd.label, st.actor].filter(Boolean).join(' · ')}</span>
-                    {st.explain && (() => { const FI = iconFor(st.explain.icon); return <span style={{ position: 'absolute', right: 12, top: 26, color: st.flag?.level === 'bad' ? '#fb7185' : '#fbbf24' }} title={st.explain.title}><FI size={16} /></span> })()}
-                    {st.flag && <span style={{ display: 'block', fontSize: 11.5, color: '#fda4af', fontWeight: 700 }}>{st.flag.text}</span>}
-                    {st.why && <span style={{ display: 'block', fontSize: 11.5, color: '#fde68a', fontWeight: 600 }}>Why: {st.why.headline}</span>}
-                    {now && (st.content || []).slice(0, 3).map((l, n) => <span key={n} style={{ display: 'block', fontSize: 11.5, color: '#cbd5e1' }}>{l}</span>)}
-                  </button>
-                )
-              })}
-            </div>
+          <div style={{ position: 'absolute', left: '50%', top: HUD.h + 22, transform: 'translateX(-50%)', zIndex: 1060, pointerEvents: 'none' }}><SkipChip engine={engine} /></div>
+          <EventToasts engine={engine} steps={steps} times={times} />
+          {step && fx?.dock && <StepCard step={step} dock={fx.dock} w={fx.cardW} maxH={Math.max(220, size.h - HUD.edgeY - 96)}
+            onEnter={() => { if (engine.ref.current.playing) { heldBy.current = true; engine.pause() } }} onLeave={() => { if (heldBy.current) { heldBy.current = false; engine.play() } }} />}
+          {step && <StepCaption step={step} i={idx} n={steps.length} />}
+          <button onClick={toggleDrawer} title={open ? 'Close the flow' : 'Open the flow'} aria-label={open ? 'Close the flow' : 'Open the flow'}
+            className="rp-glass" style={{ position: 'absolute', right: 0, top: HUD.h + 112, width: 38, height: 64, borderRadius: '12px 0 0 12px', color: '#fff', zIndex: 1070,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}>
+            {open ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}<ListOrdered size={16} />
+          </button>
         </div>
-      </div>
+        <FlowDrawer steps={steps} i={idx} open={open} onStep={stepTo} top={drawerTop} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-        <button onClick={() => stepTo(i - 1)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300" title="Previous step"><SkipBack className="w-4 h-4" /></button>
-        <button onClick={() => { if (!clock.playing) heldFor.current = hold && started && into >= ARRIVED ? i : heldFor.current; clock.toggle() }} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${clock.playing ? 'bg-amber-500 text-slate-950' : 'bg-brand-600 hover:bg-brand-500 text-white'}`}>
-          {clock.playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{clock.playing ? 'Pause' : 'Play'}
+      <ReplayPlayer engine={engine} start={t0 - 60} end={end} marks={scrub} onPrev={() => engine.prev()} onNext={() => engine.next()}>
+        <button onClick={() => setHold(h => !h)} aria-pressed={hold} className={btn(hold)} title="Pause by itself at each problem, so it can be read. Press Play to carry on."><PauseOctagon className="w-3.5 h-3.5" />Pause at problems</button>
+        <button onClick={() => setMode(m => (m === 'follow' ? 'all' : 'follow'))} className={btn(mode !== 'free')} title="Follow the truck, or show everyone. Dragging or zooming the map switches to free; click to follow again.">
+          <ModeIcon className="w-3.5 h-3.5" />{mode === 'follow' ? 'Follow truck' : mode === 'all' ? 'Show all' : 'Free camera'}
         </button>
-        <button onClick={() => stepTo(i + 1)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300" title="Next step"><SkipForward className="w-4 h-4" /></button>
-        <div className="relative flex-1 min-w-[240px] h-6">
-          <input type="range" aria-label="Replay position" min={0} max={total} step={0.01} value={clock.tau}
-            onChange={e => { clock.setPlaying(false); clock.setTau(Number(e.target.value)) }} className="absolute inset-0 w-full accent-indigo-500" />
-          {steps.map((s, k) => (
-            <span key={s.id} title={`${s.clock} ${s.title}`} className="absolute top-0 w-0.5 h-2 pointer-events-none"
-              style={{ left: `${((LEAD_S + tl.starts[k]) / total) * 100}%`, background: s.flag ? '#f43f5e' : KINDS[s.kind]?.colour }} />
-          ))}
-        </div>
-        <button onClick={() => setHold(h => !h)} title="Pause automatically when each message arrives, so you can read it. Press Play for the next one." aria-pressed={hold}
-          className={`px-2 py-1 rounded-lg text-[11px] font-medium ${hold ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}>Hold at each message</button>
-        <span className="flex items-center gap-1 text-[11px] text-slate-400" title="Zoom ratio on top of the automatic framing: + brings the customer and drivers closer, - shows more distance">
-          Zoom
-          <button onClick={() => { setAutoCam(true); setZoomBias(b => Math.max(-3, +(b - 0.5).toFixed(1))) }} aria-label="Zoom out" className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold leading-none">−</button>
-          <span className="font-mono w-11 text-center text-slate-200">{(2 ** zoomBias).toFixed(2).replace(/0$/, '')}×</span>
-          <button onClick={() => { setAutoCam(true); setZoomBias(b => Math.min(3, +(b + 0.5).toFixed(1))) }} aria-label="Zoom in" className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold leading-none">+</button>
-          {zoomBias !== 0 && <button onClick={() => { setAutoCam(true); setZoomBias(0) }} className="px-1.5 h-6 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300">reset</button>}
-        </span>
-        <button onClick={() => { setAutoCam(a => !a) }} title="When on, the map follows the action. Zooming or dragging the map switches it off." aria-pressed={autoCam}
-          className={`px-2 py-1 rounded-lg text-[11px] font-medium ${autoCam ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}>Auto camera {autoCam ? 'on' : 'off'}</button>
-        <button onClick={toggleFs} title={isFs ? 'Exit full screen' : 'Full screen'} aria-label={isFs ? 'Exit full screen' : 'Full screen'} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200">{isFs ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</button>
-        {SPEEDS.map(v => (
-          <button key={v} onClick={() => clock.setSpeed(v)} className={`px-2 py-0.5 rounded font-mono ${clock.speed === v ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700'}`}>{v}×</button>
-        ))}
-      </div>
+        <button onClick={toggleTheme} className={btn(false)} aria-label={light ? 'Dark map' : 'Light map'} title={light ? 'Dark map' : 'Light map'}>{light ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}</button>
+        <button onClick={toggleFs} className={btn(false)} aria-label={isFs ? 'Exit full screen' : 'Full screen'} title={isFs ? 'Exit full screen' : 'Full screen'}>{isFs ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</button>
+      </ReplayPlayer>
       <div className="text-xs text-slate-300">{readout}</div>
       {loc?.towbook?.truck && <div className="text-xs text-slate-400">Towbook Driver 1 drove truck <b>{loc.towbook.truck}</b>. Towbook does not tell us who the driver is.</div>}
       {(loc?.notes || []).map((n, k) => <div key={k} className="text-xs text-slate-500">{n}</div>)}

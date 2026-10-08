@@ -1,8 +1,6 @@
-/** Work Order Replay model: the command-center slots drawn over the map, the step clock maths, and the pulse paths. */
-export const STEP_S = 8        // seconds of animation per step: the pulse travels for TRAVEL of it, then rests so the caption can be read
-export const TRAVEL = 0.45
-export const LEAD_S = 1.5
-export const STAGE_H = 680
+/** Work Order Replay model: the command-center slots drawn over the map, what each step means, and the waiting-timer maths.
+ *  The clock itself is the replay engine (components/replay/useReplayEngine.js); this file has no timing of its own. */
+import { buildLeg } from '../replay/roadPath.js'
 
 /** What kind of hop it is. System-to-system and texts to the member look different on purpose. */
 export const KINDS = {
@@ -34,36 +32,54 @@ export const isSlot = id => NODE_ORDER.includes(id)
 /** x of a channel's sphere for a stage of width w (the clock sits on the left). */
 export const slotX = (id, w, left = 232) => left + ((w - 16 - left) * (NODE_ORDER.indexOf(id) + 0.5)) / NODE_ORDER.length
 
-/** Animation timeline: every step gets STEP_S seconds, plus up to EXTRA_MAX more when a vehicle drives during it, so a drive
- *  can be watched instead of flashing past. starts/durs are in seconds after the lead-in. */
-export const EXTRA_PER_MILE = 4
-export const EXTRA_MAX = 22
-export function buildTimeline(steps, driveMiles = () => 0) {
-  const starts = [], durs = []
-  let t = 0
-  steps.forEach((_, k) => {
-    const d = STEP_S + Math.min(EXTRA_MAX, EXTRA_PER_MILE * (driveMiles(k) || 0))
-    starts.push(t); durs.push(d); t += d
-  })
-  return { starts, durs, total: LEAD_S + Math.max(t, STEP_S) + 1.5 }
+/** Step times as epoch seconds, in step order (the steps arrive sorted). */
+export const stepTimes = steps => steps.map(s => Date.parse(s.ts) / 1000)
+
+/** The member's waiting timer. created = call received, promise = original promise time, onScene = driver arrived (epoch s or null).
+ *  state: ok -> soon (10 min or less to the promise) -> late (past it); done once the driver is on scene, and the timer stops. */
+export function waitState(t, created, promise, onScene) {
+  const arrived = onScene != null && t >= onScene
+  const end = arrived ? onScene : t
+  const state = arrived ? 'done' : promise != null && t > promise ? 'late' : promise != null && promise - t <= 600 ? 'soon' : 'ok'
+  return { secs: Math.max(0, Math.floor(end - created)), state, over: promise != null && end > promise ? Math.round((end - promise) / 60) : 0 }
 }
 
-/** Which step is playing at animation time tau, how far the pulse has travelled (0..1), and whether the lead-in is over. */
-export function stepAt(tau, tl) {
-  const f = Math.max(0, tau - LEAD_S)
-  let i = 0
-  while (i + 1 < tl.starts.length && tl.starts[i + 1] <= f) i++
-  return { i, p: Math.min(1, (f - tl.starts[i]) / (STEP_S * TRAVEL)), started: tau >= LEAD_S, into: f - tl.starts[i], dur: tl.durs[i] }
+export function fmtWait(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60
+  return `${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${String(s).padStart(2, '0')}`
 }
 
-/** Real time (epoch seconds) at tau: runs from this step's timestamp to the next one's across the step, so vehicles
- *  drive smoothly while hours of the call play in seconds. */
-export function realTimeAt(tau, steps, tl) {
-  if (!steps.length) return 0
-  const { i, into, dur } = stepAt(tau, tl)
-  const t = st => Date.parse(st.ts) / 1000
-  const a = t(steps[i]), b = i + 1 < steps.length ? t(steps[i + 1]) : a
-  return a + (b - a) * Math.min(1, Math.max(0, into / dur))
+const isDriverStatus = (s, re) => (s.from === 'driver' || s.from === 'towbook') && s.to === 'sf' && re.test(s.title || '')
+/** When the driver reached the member (the first "On Location" step), or null. */
+export const onSceneTs = steps => { const s = steps.find(x => isDriverStatus(x, /on location/i)); return s ? Date.parse(s.ts) / 1000 : null }
+export const promiseTs = steps => { const s = steps.find(x => x.id === 'P1'); return s ? Date.parse(s.ts) / 1000 : null }
+
+/** What the acting vehicle is doing after step i, from the status steps so far: assigned | en_route | on_scene | done. */
+export function driverPhase(steps, i) {
+  let phase = 'assigned'
+  for (let k = 0; k <= i && k < steps.length; k++) {
+    const s = steps[k]
+    if (isDriverStatus(s, /en route/i)) phase = 'en_route'
+    else if (isDriverStatus(s, /on location/i)) phase = 'on_scene'
+    else if (isDriverStatus(s, /completed|cannot|cancel|unable|no.?show/i)) phase = 'done'
+    else if (/^(Assigned to|Driver removed|Pulled back)/.test(s.title || '')) phase = 'assigned'
+  }
+  return phase
+}
+
+/** One plain line for the toast that slides in when a step plays, e.g. "Driver on scene: 47 min after the call, 12 min past the promise". */
+export function toastFor(steps, i) {
+  const s = steps[i]
+  if (!s) return null
+  const who = s.names?.driver || s.names?.towbook || (s.from === 'driver' || s.from === 'towbook' ? steps.slice(0, i).reverse().map(x => x.names?.driver || x.names?.towbook).find(Boolean) : null)
+  let text = s.title
+  if (isDriverStatus(s, /on location/i)) {
+    const at = Date.parse(s.ts) / 1000, due = promiseTs(steps)
+    const late = due != null && at > due ? `, ${Math.round((at - due) / 60)} min past the promise` : ''
+    text = `${who || 'Driver'} on scene: ${Math.round((at - Date.parse(steps[0].ts) / 1000) / 60)} min after the call${late}`
+  } else if (/accepted/i.test(s.title) && who) text = `${who} accepted`
+  else if (s.actor && !s.title.includes(s.actor)) text = `${s.title} (${s.actor})`
+  return { text, level: s.flag?.level || (s.kind === 'mark' ? 'warn' : 'info'), kind: s.kind, clock: s.clock }
 }
 
 /** At step i: which channels the call has touched so far, which are active now, and what to print under each. */
@@ -94,9 +110,9 @@ export const miles = (a, b) => {
   return 3958.8 * 2 * Math.asin(Math.sqrt(h))
 }
 
-/** Towbook shows a vehicle only as status times. Draw it driving garage -> customer between En Route and On Location,
- *  and say it is estimated. Returns a track in the same [t, lat, lon] shape as real GPS, or [] when it cannot be drawn. */
-export function towbookTrack(steps, garage, wo) {
+/** Towbook shows a vehicle only as status times. Draw it driving garage -> customer between En Route and On Location (along the
+ *  road when the backend sent it, else straight), and say it is estimated. Returns a track in the real GPS shape [t, lat, lon]. */
+export function towbookTrack(steps, garage, wo, road) {
   if (!garage || !wo) return []
   const t = s => Date.parse(s.ts) / 1000
   const er = steps.find(s => s.from === 'towbook' && /en route/i.test(s.title))
@@ -104,5 +120,6 @@ export function towbookTrack(steps, garage, wo) {
   if (!er) return []
   const end = t(steps[steps.length - 1]) + 3600
   const arrive = ol ? t(ol) : t(er) + 900
-  return [[t(er) - 1, garage.lat, garage.lon], [t(er), garage.lat, garage.lon], [arrive, wo.lat, wo.lon], [Math.max(end, arrive + 1), wo.lat, wo.lon]]
+  const leg = road?.c?.length > 1 ? buildLeg(road.c, t(er), arrive) : [[t(er), garage.lat, garage.lon], [arrive, wo.lat, wo.lon]]
+  return [[t(er) - 1, garage.lat, garage.lon], ...leg, [Math.max(end, arrive + 1), wo.lat, wo.lon]]
 }
