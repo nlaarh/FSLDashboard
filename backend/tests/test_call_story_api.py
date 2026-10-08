@@ -8,10 +8,20 @@ from call_story_config import cs1
 from tests.call_story_factories import WO, towbook_cascade_raw
 
 
-def test_pull_is_sequential_and_capped(monkeypatch):
+def _composite_refused(monkeypatch):
+    """Salesforce refuses the bundled request, so pull_story takes the slow, one-query-at-a-time path."""
+    import report_card_build as rb
+
+    def refuse(self, named):
+        raise rb.CompositeError('wo', 'refused')
+    monkeypatch.setattr(rb.Puller, 'composite', refuse)
+
+
+def test_slow_path_is_sequential_and_capped(monkeypatch):
     """Every query goes through sf_query_all one at a time; sf_parallel is never used; <= max_sf_calls."""
     import call_story_pull as cp
     import report_card_build as rb
+    _composite_refused(monkeypatch)
     raw = towbook_cascade_raw()
     calls = []
 
@@ -39,6 +49,7 @@ def test_pull_is_sequential_and_capped(monkeypatch):
 def test_pull_refuses_non_ers_and_old_calls(monkeypatch):
     import call_story_pull as cp
     import report_card_build as rb
+    _composite_refused(monkeypatch)
     raw = towbook_cascade_raw()
     sas = [{**s, 'RecordType': {'Name': 'Travel'}} for s in raw['sas']]
     monkeypatch.setattr(rb, 'sf_query_all', lambda soql: [raw['wo']] if 'FROM WorkOrder' in soql else sas)

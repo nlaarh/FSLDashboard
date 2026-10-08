@@ -13,7 +13,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from report_card_build import CallCapReached, Puller
+from report_card_build import CallCapReached, CompositeError, Puller
 from sf_client import sanitize_soql
 from utils import parse_dt
 
@@ -44,6 +44,13 @@ SA_FIELDS = """Id, AppointmentNumber, Status, CreatedDate, ActualStartTime, Actu
  ERS_Rejection_Reason__c, ERS_Rejected_Datetime__c, ERS_Cancellation_Reason__c, Off_Platform_Driver__c,
  Off_Platform_Driver__r.Name, Off_Platform_Truck_Id__c, ERS_Tow_Pick_Up_Drop_off__c, Latitude, Longitude, City, PostalCode,
  Auto_Schedule_Requested__c"""
+SMS_FIELDS = """Name, CreatedDate, Sent_At__c, Message_Definition__c, Source_Flow__c, Outcome__c, Error_Message__c,
+ Checkpoint_Minutes__c, Service_Appointment__c, Messaging_End_User__c"""
+SURVEY_FIELDS = "Name, ERS_Overall_Satisfaction__c, ERS_Survey_Completed_Date__c"
+HIST_FIELDS = """Id, ServiceAppointmentId, Field, OldValue, NewValue, CreatedDate, CreatedById, CreatedBy.Name,
+ CreatedBy.Profile.Name"""
+AR_FIELDS = """ServiceAppointmentId, ServiceResourceId, ServiceResource.Name, ServiceResource.ERS_Driver_Type__c,
+ ServiceResource.RelatedRecordId, CreatedDate, CreatedBy.Name"""
 
 
 def classify(q: str, cfg: dict) -> tuple:
@@ -80,10 +87,14 @@ def resolve(p: Puller, kind: str, value: str) -> dict:
     if kind == 'wo':
         rows = p.all(f"SELECT {WO_FIELDS} FROM WorkOrder WHERE WorkOrderNumber = '{v}' OR ERS_Source_Call_ID__c = '{v}' LIMIT 3")
         if len(rows) > 1:
-            raise Ambiguous([{'type': 'wo' if r['WorkOrderNumber'] == v else 'source_call_id',
-                              'wo_number': r['WorkOrderNumber'], 'created': r['CreatedDate']} for r in rows])
+            raise _ambiguous(rows, v)
         return rows[0] if rows else _nf()
     return _wo_by(p, f"ERS_Source_Call_ID__c = '{v}'")
+
+
+def _ambiguous(rows: list, v: str) -> Ambiguous:
+    return Ambiguous([{'type': 'wo' if r['WorkOrderNumber'] == v else 'source_call_id',
+                       'wo_number': r['WorkOrderNumber'], 'created': r['CreatedDate']} for r in rows])
 
 
 def _nf():
@@ -100,42 +111,118 @@ def pull_story(q: str, cfg: dict, now: datetime | None = None) -> dict:
     t0 = time.time()
     kind, value = classify(q, cfg)
     p = Puller(max_calls=cfg['max_sf_calls'])
-    wo = resolve(p, kind, value)
-    wo_id = sanitize_soql(wo['Id'])
-    if parse_dt(wo['CreatedDate']) < now - timedelta(days=cfg['max_history_days']):
-        raise NotSupported(f"Older than {cfg['max_history_days']} days: Salesforce history is gone")
-    sas = p.all(f"SELECT {SA_FIELDS} FROM ServiceAppointment WHERE ERS_Work_Order__c = '{wo_id}' ORDER BY CreatedDate")
-    if not sas:
-        raise NotFound()
-    if not any((s.get('RecordType') or {}).get('Name') == 'ERS Service Appointment' for s in sas):
-        raise NotSupported('Not an ERS call')
-    ids = ",".join(f"'{sanitize_soql(s['Id'])}'" for s in sas)
-    raw = {'resolution': {'input': q, 'input_type': kind, 'wo': {'id': wo['Id'], 'number': wo['WorkOrderNumber'],
-                                                                 'call_key': wo.get('ERS_Call_Key__c'),
-                                                                 'source_call_id': wo.get('ERS_Source_Call_ID__c')}},
-           'wo': wo, 'sas': sas, 'data_notes': []}
-    hist_q = f"""SELECT Id, ServiceAppointmentId, Field, OldValue, NewValue, CreatedDate, CreatedById, CreatedBy.Name,
-        CreatedBy.Profile.Name FROM ServiceAppointmentHistory WHERE ServiceAppointmentId IN ({ids}) ORDER BY CreatedDate, Id"""
-    raw['history'] = p.all(hist_q)
-    if len(raw['history']) >= 1000:                         # sf_query_all can stop silently on a page error
-        n = p.count(f"SELECT COUNT() FROM ServiceAppointmentHistory WHERE ServiceAppointmentId IN ({ids})")
-        if n != len(raw['history']):
-            raw['history'] = p.all(hist_q)
-            if n != len(raw['history']):
-                raw['partial'] = True
-                raw['data_notes'].append({'code': 'HISTORY_COUNT_CHECKED', 'text': f'History incomplete: {len(raw["history"])} of {n} rows.'})
-    raw['assigned'] = p.all(f"""SELECT ServiceAppointmentId, ServiceResourceId, ServiceResource.Name,
-        ServiceResource.ERS_Driver_Type__c, ServiceResource.RelatedRecordId, CreatedDate, CreatedBy.Name
-        FROM AssignedResource WHERE ServiceAppointmentId IN ({ids})""")
-    _texts(p, raw, wo, cfg)
-    raw['survey'] = p.all(f"""SELECT Name, ERS_Overall_Satisfaction__c, ERS_Survey_Completed_Date__c
-        FROM Survey_Result__c WHERE ERS_Work_Order__c = '{wo_id}'""")
+    try:
+        raw = _pull_fast(p, q, kind, value, cfg, now)
+    except CompositeError as e:                  # slow path: the same rows, one query at a time
+        log.warning('call story composite failed (%s), reading sequentially', e)
+        raw = _pull_sequential(p, q, kind, value, cfg, now)
+    wo, sas = raw['wo'], raw['sas']
     _optional(raw, 'matrix', lambda: _matrix(p, sas), 'Priority matrix not read')
     _optional(raw, 'optimizer', lambda: _optimizer(p, raw), 'Optimizer trail not read')
     raw['sf_calls'] = p.calls
     raw['fetched_at'] = now.isoformat(timespec='seconds')
     raw['closed'] = _closed(sas, now, cfg)
     log.info('call story pull %s: %d calls, %d ms', wo['WorkOrderNumber'], p.calls, int((time.time() - t0) * 1000))
+    return raw
+
+
+def _checked(wo: dict, sas: list, now: datetime, cfg: dict):
+    if parse_dt(wo['CreatedDate']) < now - timedelta(days=cfg['max_history_days']):
+        raise NotSupported(f"Older than {cfg['max_history_days']} days: Salesforce history is gone")
+    if not sas:
+        raise NotFound()
+    if not any((s.get('RecordType') or {}).get('Name') == 'ERS Service Appointment' for s in sas):
+        raise NotSupported('Not an ERS call')
+
+
+def _new_raw(q: str, kind: str, wo: dict, sas: list) -> dict:
+    return {'resolution': {'input': q, 'input_type': kind, 'wo': {'id': wo['Id'], 'number': wo['WorkOrderNumber'],
+                                                                 'call_key': wo.get('ERS_Call_Key__c'),
+                                                                 'source_call_id': wo.get('ERS_Source_Call_ID__c')}},
+            'wo': wo, 'sas': sas, 'data_notes': []}
+
+
+def _hist_q(ids: str) -> str:
+    return f"SELECT {HIST_FIELDS} FROM ServiceAppointmentHistory WHERE ServiceAppointmentId IN ({ids}) ORDER BY CreatedDate, Id"
+
+
+def _verify_history(p: Puller, raw: dict, ids: str):
+    """sf_query_all can stop silently on a page error: with 1000+ rows, compare against a COUNT."""
+    if len(raw['history']) < 1000:
+        return
+    n = p.count(f"SELECT COUNT() FROM ServiceAppointmentHistory WHERE ServiceAppointmentId IN ({ids})")
+    if n != len(raw['history']):
+        raw['history'] = p.all(_hist_q(ids))
+        if n != len(raw['history']):
+            raw['partial'] = True
+            raw['data_notes'].append({'code': 'HISTORY_COUNT_CHECKED', 'text': f'History incomplete: {len(raw["history"])} of {n} rows.'})
+
+
+def _resolve_where(kind: str, v: str) -> str:
+    """The WorkOrder filter for each input type (the single-query twin of resolve())."""
+    if kind == 'sa':
+        return f"Id IN (SELECT ERS_Work_Order__c FROM ServiceAppointment WHERE AppointmentNumber = '{v}')"
+    if kind == 'id':
+        if v.startswith('0WO'):
+            return f"Id = '{v}'"
+        if v.startswith('08p'):
+            return f"Id IN (SELECT ERS_Work_Order__c FROM ServiceAppointment WHERE Id = '{v}')"
+        return f"Id IN (SELECT WorkOrderId FROM WorkOrderLineItem WHERE Id = '{v}')"
+    if kind == 'call_key':
+        return f"ERS_Call_Key__c = '{v}'"
+    if kind == 'wo':
+        return f"(WorkOrderNumber = '{v}' OR ERS_Source_Call_ID__c = '{v}')"
+    return f"ERS_Source_Call_ID__c = '{v}'"
+
+
+def _pull_fast(p: Puller, q: str, kind: str, value: str, cfg: dict, now: datetime) -> dict:
+    """One composite request: the WO with its SAs, texts and survey as child rows, then the history and assigned
+    resources through a reference to the WO. Builds the same raw dict as _pull_sequential. Phones are never read here."""
+    v = sanitize_soql(value)
+    semi = "ServiceAppointmentId IN (SELECT Id FROM ServiceAppointment WHERE ERS_Work_Order__c = '@{wo.records[0].Id}')"
+    got = p.composite({
+        'wo': f"""SELECT {WO_FIELDS},
+            (SELECT {SA_FIELDS}, ServiceTerritory.Latitude, ServiceTerritory.Longitude FROM Service_Appointments_del__r ORDER BY CreatedDate),
+            (SELECT {SMS_FIELDS} FROM SMS_Send_Logs__r ORDER BY CreatedDate),
+            (SELECT {SURVEY_FIELDS} FROM Work_Order_Survey_Results__r)
+            FROM WorkOrder WHERE {_resolve_where(kind, v)} LIMIT 3""",
+        'hist': f"SELECT {HIST_FIELDS} FROM ServiceAppointmentHistory WHERE {semi} ORDER BY CreatedDate, Id",
+        'ar': f"SELECT {AR_FIELDS} FROM AssignedResource WHERE {semi}"})
+    rows = got['wo']
+    if not rows:
+        raise NotFound()
+    if kind == 'wo' and len(rows) > 1:
+        raise _ambiguous(rows, v)
+    wo = dict(rows[0])
+    kids = {k: (wo.pop(k, None) or {}).get('records', [])
+            for k in ('Service_Appointments_del__r', 'SMS_Send_Logs__r', 'Work_Order_Survey_Results__r')}
+    sas = kids['Service_Appointments_del__r']
+    _checked(wo, sas, now, cfg)
+    raw = _new_raw(q, kind, wo, sas)
+    raw['history'], raw['assigned'], raw['survey'] = got['hist'], got['ar'], kids['Work_Order_Survey_Results__r']
+    _verify_history(p, raw, ",".join(f"'{sanitize_soql(s['Id'])}'" for s in sas))
+    if parse_dt(wo['CreatedDate']) >= parse_dt(cfg['sms']['log_start_utc']):
+        raw['sms_source'], raw['sms'] = 'send_log', kids['SMS_Send_Logs__r']
+    else:
+        _texts(p, raw, wo, cfg)                  # before 1 Sep 2026 the texts are in MessagingSession
+    return raw
+
+
+def _pull_sequential(p: Puller, q: str, kind: str, value: str, cfg: dict, now: datetime) -> dict:
+    """The slow path, 9-10 calls: one query per step. Used when the composite request is refused."""
+    wo = resolve(p, kind, value)
+    wo_id = sanitize_soql(wo['Id'])
+    if parse_dt(wo['CreatedDate']) < now - timedelta(days=cfg['max_history_days']):
+        raise NotSupported(f"Older than {cfg['max_history_days']} days: Salesforce history is gone")
+    sas = p.all(f"SELECT {SA_FIELDS} FROM ServiceAppointment WHERE ERS_Work_Order__c = '{wo_id}' ORDER BY CreatedDate")
+    _checked(wo, sas, now, cfg)
+    ids = ",".join(f"'{sanitize_soql(s['Id'])}'" for s in sas)
+    raw = _new_raw(q, kind, wo, sas)
+    raw['history'] = p.all(_hist_q(ids))
+    _verify_history(p, raw, ids)
+    raw['assigned'] = p.all(f"SELECT {AR_FIELDS} FROM AssignedResource WHERE ServiceAppointmentId IN ({ids})")
+    _texts(p, raw, wo, cfg)
+    raw['survey'] = p.all(f"SELECT {SURVEY_FIELDS} FROM Survey_Result__c WHERE ERS_Work_Order__c = '{wo_id}'")
     return raw
 
 
@@ -155,9 +242,7 @@ def _texts(p: Puller, raw: dict, wo: dict, cfg: dict):
     wo_id = sanitize_soql(wo['Id'])
     if parse_dt(wo['CreatedDate']) >= parse_dt(cfg['sms']['log_start_utc']):
         raw['sms_source'] = 'send_log'
-        raw['sms'] = p.all(f"""SELECT Name, CreatedDate, Sent_At__c, Message_Definition__c, Source_Flow__c, Outcome__c,
-            Error_Message__c, Checkpoint_Minutes__c, Service_Appointment__c FROM SMS_Send_Log__c
-            WHERE Work_Order__c = '{wo_id}' ORDER BY CreatedDate""")
+        raw['sms'] = p.all(f"SELECT {SMS_FIELDS} FROM SMS_Send_Log__c WHERE Work_Order__c = '{wo_id}' ORDER BY CreatedDate")
         return
     raw['sms_source'] = 'messaging_session'
 
