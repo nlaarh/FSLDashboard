@@ -11,7 +11,7 @@ import logging
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
-from sf_client import sf_query, sf_query_all, sanitize_soql
+from sf_client import sf_composite_query, sf_query, sf_query_all, sf_rest_get, sanitize_soql
 from utils import _ET, ERS_SA_FILTER
 
 log = logging.getLogger('report_card_build')
@@ -50,6 +50,22 @@ class CallCapReached(RuntimeError):
     """A capped pull (call story, max_sf_calls) would exceed its Salesforce call budget."""
 
 
+class CompositeError(RuntimeError):
+    """One query inside a composite request failed, or returned child rows past one page. The caller falls back."""
+
+    def __init__(self, key: str, body):
+        super().__init__(f'composite query {key!r} failed: {str(body)[:200]}')
+        self.key = key
+        self.body = body
+
+
+def _truncated_child(rec: dict) -> bool:
+    """True when a child subquery (X__r) in this record is cut off at one page."""
+    return any(isinstance(v, dict) and 'records' in v
+               and (v.get('done') is False or any(_truncated_child(c) for c in v['records']))
+               for v in rec.values())
+
+
 class Puller:
     """Runs queries one at a time and counts them (recorded as sf_calls)."""
 
@@ -65,6 +81,25 @@ class Puller:
     def all(self, soql: str) -> list:
         self._spend()
         return sf_query_all(soql)
+
+    def composite(self, named: dict) -> dict:
+        """Several queries in one Salesforce request: counts 1 call (+1 per extra result page). Returns {key: records}.
+        A subrequest that is not 200, or a child subquery cut off at one page, raises CompositeError."""
+        self._spend()
+        out = {}
+        for key, res in sf_composite_query(named).items():
+            body = res['body']
+            if res['status'] != 200:
+                raise CompositeError(key, body)
+            records = list(body.get('records', []))
+            while body.get('done') is False and body.get('nextRecordsUrl'):
+                self._spend()
+                body = sf_rest_get(body['nextRecordsUrl'])
+                records += body.get('records', [])
+            if any(_truncated_child(r) for r in records):
+                raise CompositeError(key, 'child rows past the first page')
+            out[key] = records
+        return out
 
     def count(self, soql: str) -> int:
         self._spend()
