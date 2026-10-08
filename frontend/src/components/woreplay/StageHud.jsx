@@ -20,10 +20,10 @@ export default function StageHud({ engine, hud, stageW, t0, pastPromise, pulse }
     <>
       <div style={{ position: 'absolute', left: 10, right: 10, top: 10, height: HUD.h, borderRadius: 12, zIndex: 1040, pointerEvents: 'none',
         background: 'rgba(11,18,32,.82)', backdropFilter: 'blur(10px)', border: '1px solid rgba(100,116,139,.3)', boxShadow: '0 6px 18px rgba(0,0,0,.35)' }} />
-      <div style={{ position: 'absolute', left: 24, top: 15, zIndex: 1060, pointerEvents: 'none', color: '#fff', width: 200 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div ref={clockRef} style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: '26px' }} />
-          {pastPromise && <span style={{ background: '#dc2626', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '1px 7px', lineHeight: '14px' }}>Promise passed</span>}
+      <div style={{ position: 'absolute', left: 24, top: 15, zIndex: 1060, pointerEvents: 'none', color: '#fff', width: 'max-content', maxWidth: 208 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <div ref={clockRef} style={{ fontSize: 20, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: '26px', whiteSpace: 'nowrap', flexShrink: 0 }} />
+          {pastPromise && <span style={{ background: '#dc2626', color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '1px 6px', lineHeight: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}>Promise passed</span>}
         </div>
         <div style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Call received {clockLabel(t0)}</div>
       </div>

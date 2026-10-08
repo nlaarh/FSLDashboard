@@ -1,4 +1,5 @@
 import { Truck, Crosshair, Hourglass, Navigation, MapPin, Wrench, Info } from 'lucide-react'
+import { shortDriverName } from '../../utils/driverName'
 import { etClock } from './contactMarks'
 
 const CHANNEL = { fleet: 'Fleet', on_platform: 'On-Platform', towbook: 'Towbook' }
@@ -28,7 +29,7 @@ function Job({ job, extra, right }) {
 /** Driver's other jobs tab. load = extras.driver_load[0] (or undefined), notes = extras.notes, onShow(ts) seeks the replay.
  *  Towbook drivers are never named: the answer already says "Towbook Driver". */
 export default function DriverLoadCard({ load, notes = [], onShow }) {
-  const who = load?.channel === 'towbook' ? 'the Towbook driver' : load?.driver
+  const who = load?.channel === 'towbook' ? 'the Towbook driver' : shortDriverName(load?.driver)
   const showBtn = ts => ts && onShow && <button onClick={() => onShow(ts)} className="text-[11px] text-brand-300 hover:text-brand-200 flex items-center gap-1 shrink-0"><Crosshair className="w-3 h-3" />Show</button>
   return (
     <div className="glass rounded-xl p-4 space-y-3">
@@ -36,7 +37,7 @@ export default function DriverLoadCard({ load, notes = [], onShow }) {
       {load && <>
         <div className="flex items-center gap-2 flex-wrap">
           <Truck className="w-4 h-4 text-brand-400" />
-          <span className="text-sm font-semibold text-white">{load.driver}</span>
+          <span className="text-sm font-semibold text-white">{shortDriverName(load.driver)}</span>
           <span className="px-2 py-0.5 rounded-full border border-slate-600 text-[11px] text-slate-300">{CHANNEL[load.channel] || load.channel}</span>
           <span className="text-xs text-slate-400 ml-auto flex items-center gap-2">Call given to {who} at {etClock(load.given_at)} ET {showBtn(load.given_at)}</span>
         </div>

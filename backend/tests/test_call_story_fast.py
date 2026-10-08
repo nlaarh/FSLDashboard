@@ -32,7 +32,6 @@ def _bundle(monkeypatch, raw=None, wo_rows=None):
         return {'wo': ok([wo] if wo_rows is None else wo_rows), 'hist': ok(raw['history']), 'ar': ok(raw['assigned'])}
     monkeypatch.setattr(rb, 'sf_composite_query', fake)
     monkeypatch.setattr(cp, '_matrix', lambda p, sas: None)              # optional extras are not under test here
-    monkeypatch.setattr(cp, '_optimizer', lambda p, raw: None)
     monkeypatch.setattr('cache.get', lambda key: None)
     monkeypatch.setattr('cache.put', lambda *a, **k: None)
     return raw, sent
@@ -47,6 +46,19 @@ def test_story_is_one_salesforce_call_and_the_same_raw_shape(monkeypatch):
     assert not any(k.endswith('__r') for k in out['wo'])                    # child rows moved out of the WO
     assert '@{wo.records[0].Id}' in sent['hist'] and '@{wo.records[0].Id}' in sent['ar']
     assert 'Mobile_Phone__c' not in ''.join(sent.values())                  # phones are never read here
+
+
+def test_an_engine_pick_in_the_history_costs_no_extra_optimizer_query(monkeypatch):
+    raw = towbook_cascade_raw()
+    raw['history'] = raw['history'] + [{**raw['history'][0], 'Field': 'ERS_Assigned_Resource__c', 'CreatedBy': {'Name': 'Platform Integration User'}}]
+    _bundle(monkeypatch, raw)
+
+    def no_query(*a, **k):
+        raise AssertionError('the story must not read FSL__Optimization_Request__c: nothing uses it')
+    monkeypatch.setattr(rb, 'sf_query_all', no_query)
+    monkeypatch.setattr(rb, 'sf_query', no_query)
+    out = cp.pull_story('05164342', CFG, now=NOW)
+    assert out['sf_calls'] == 1 and 'optimizer' not in out
 
 
 def test_fast_story_composes_like_the_slow_one(monkeypatch):

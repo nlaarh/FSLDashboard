@@ -1,7 +1,7 @@
 // Pure-maths tests for the replay engine, the road path and the work order model. Run: cd frontend && npm test (node's built-in runner).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip } from './engineMath.js'
+import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes } from './engineMath.js'
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
 import { truckKindFor } from './truckKind.js'
 import { waitState, fmtWait, driverPhase, toastFor, towbookTrack } from '../woreplay/woReplayModel.js'
@@ -146,4 +146,12 @@ test('a driver with no GPS gets an estimated truck from the status times, waitin
   const tr = towbookTrack(steps, g, m, null, ['driver', 'towbook'])
   assert.equal(tr[0][0], Date.parse('2026-09-24T12:02:00Z') / 1000); assert.deepEqual(tr[0].slice(1), [0, 0])
   assert.equal(tr.at(-1)[2], 0.03)
+})
+
+test('scrubber marks that overlap go on higher lanes; far-apart marks stay on the track', () => {
+  // 1000 s across 1000 px: 1 px per second, a mark needs 20 px of its own
+  assert.deepEqual(assignLanes([100, 101, 102, 500], 0, 1000, 1000), [0, 1, 2, 0])
+  assert.deepEqual(assignLanes([500, 100, 101], 0, 1000, 1000), [0, 0, 1])          // input order is kept
+  assert.deepEqual(assignLanes([100, 101, 125], 0, 1000, 1000), [0, 1, 0])          // the third clears the first, so it drops back
+  assert.deepEqual(assignLanes([], 0, 1000, 1000), [])
 })

@@ -282,6 +282,11 @@ def _late(items: list, promise, key='ts') -> list:
     return [x for x in items if promise and parse_dt(x[key]) > promise]
 
 
+def short_driver_name(name: str) -> str:
+    """Salesforce adds the garage's truck number to a driver's name ("Marcus Gibson 100"); people say "Marcus Gibson". Same rule as the Garage view."""
+    return re.sub(r'\s+\d{2,3}[A-Z]{0,2}$', '', name or '')
+
+
 def build_insights(calls: list, texts: list, load: dict | None, promise, on_location) -> list:
     out = []
     backs = [c for c in calls if c['kind'] == 'callback']
@@ -298,7 +303,7 @@ def build_insights(calls: list, texts: list, load: dict | None, promise, on_loca
         text = f"The member texted AAA {_plural(len(texts), 'time', 'times')}." + (f' {len(late)} came after the promised arrival time.' if late else '')
         out.append({'code': 'TEXTED_IN', 'level': 'warn' if late else 'info', 'text': text, 'ts': texts[0]['ts']})
     if load:
-        who = load['driver'] if load['channel'] != 'towbook' else 'the Towbook driver'
+        who = short_driver_name(load['driver']) if load['channel'] != 'towbook' else 'the Towbook driver'
         if load['ahead']:
             n = len(load['ahead'])
             text = f"When this call went to {who}, they still had {_plural(n, 'other job', 'other jobs')} to finish first."

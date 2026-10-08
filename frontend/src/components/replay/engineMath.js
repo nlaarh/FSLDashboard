@@ -54,3 +54,17 @@ export function fmtSkip(seconds) {
   const m = Math.max(1, Math.round(seconds / 60))
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`
 }
+
+/** Scrubber marks that would overlap (closer than `gapPx` on a bar `widthPx` wide) go on higher lanes, so every one stays clickable.
+ *  times: seconds, any order. Returns a lane (0 = on the track, 1 = one row up, ...) for each, in the input order. */
+export function assignLanes(times, start, span, widthPx, gapPx = 20) {
+  const order = times.map((t, i) => i).sort((a, b) => times[a] - times[b])
+  const lastX = [], lane = new Array(times.length).fill(0)
+  for (const i of order) {
+    const x = ((times[i] - start) / span) * widthPx
+    let k = lastX.findIndex(px => x - px >= gapPx)
+    if (k < 0) k = lastX.length
+    lastX[k] = x; lane[i] = k
+  }
+  return lane
+}

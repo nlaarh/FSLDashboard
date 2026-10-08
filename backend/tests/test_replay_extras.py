@@ -156,7 +156,7 @@ def test_insights_for_05195668_three_texts_after_the_promise():
 def test_driver_ahead_wording_names_fleet_driver_and_mentions_current_job():
     ctx, load = _load('05194934')
     ins = rx.build_insights([], [], load, None, None)
-    assert ins[0]['text'] == f"When this call went to {load['driver']}, they still had 1 other job to finish first. One was already driving to it."
+    assert ins[0]['text'] == f"When this call went to {rx.short_driver_name(load['driver'])}, they still had 1 other job to finish first. One was already driving to it."
     assert ins[0]['level'] == 'info'
 
 
@@ -176,3 +176,11 @@ def test_no_phone_digits_or_bodies_in_output():
 
 def test_phone_digits_takes_last_ten():
     assert rx.phone_digits('5858319725', '(585) 831-9725', None, '+1 716 555 0100', '123') == ['5858319725', '7165550100']
+
+
+def test_insight_names_drop_the_truck_number_like_the_garage_view():
+    assert [rx.short_driver_name(n) for n in ('Marcus Gibson 100', 'Ann Lee 12A', 'Jo Kim 118AB', 'Dee Roe')] == ['Marcus Gibson', 'Ann Lee', 'Jo Kim', 'Dee Roe']
+    load = {'driver': 'Marcus Gibson 100', 'channel': 'fleet', 'current': None, 'after': [],
+            'ahead': [{'given_at': '2026-10-07T15:00:00Z'}], 'given_at': '2026-10-07T15:00:00Z'}
+    out = rx.build_insights([], [], load, None, None)
+    assert out[0]['text'].startswith('When this call went to Marcus Gibson, they')

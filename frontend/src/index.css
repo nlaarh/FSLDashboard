@@ -244,6 +244,7 @@
 .rp-tag, .rp-gtag, .rp-mtag { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; text-align: center; pointer-events: none;
   background: rgba(15,23,42,.84); border: 1px solid rgba(100,116,139,.45); border-radius: 8px; padding: 1px 7px; color: #f1f5f9; backdrop-filter: blur(4px); }
 .rp-tag { top: calc(30px + 28px * var(--rp-s)); font: 700 11.5px/14px system-ui; }
+.rp-tag.above { top: auto; bottom: calc(30px + 28px * var(--rp-s)); }
 .rp-tag span { display: block; font: 500 10px/12px system-ui; color: #94a3b8; }
 .rp-tag span.e { color: #fb923c; }
 .rp-truck.day { width: 40px; height: 40px; }

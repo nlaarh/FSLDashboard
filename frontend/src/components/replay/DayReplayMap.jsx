@@ -3,6 +3,7 @@ import L from 'leaflet'
 import useLeafletMap, { esc } from './useLeafletMap'
 import { dayFrame, trailUntil } from './replayMath'
 import { dayTruckHtml, dayPinHtml, garageHtml, truckKindFor } from './gameIcons'
+import { shortDriverName } from '../../utils/driverName'
 import { verdictColour } from '../reportcard/reportCardStyles'
 
 const STACK = n => (n >= 3 ? '#f97316' : '#fbbf24')
@@ -45,7 +46,7 @@ export default function DayReplayMap({ replay, engine, dayDrivers, sasById, verd
         seen.add(d.id)
         let it = drivers.get(d.id)
         if (!it) {
-          const mk = L.marker([d.pos.lat, d.pos.lon], { zIndexOffset: 1000, icon: icon(dayTruckHtml({ name: d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, ''), kind: kinds[d.id], est: d.mode === 'estimated' }), 40, 40) })
+          const mk = L.marker([d.pos.lat, d.pos.lon], { zIndexOffset: 1000, icon: icon(dayTruckHtml({ name: shortDriverName(d.name), kind: kinds[d.id], est: d.mode === 'estimated' }), 40, 40) })
             .on('click', () => cb.current.onSelectDriver(d.id)).addTo(root)
           mk.bindTooltip('', { direction: 'right', offset: [16, 0] })
           const el = mk.getElement()?.firstElementChild

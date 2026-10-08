@@ -9,6 +9,7 @@ import DayReplayMap from '../replay/DayReplayMap'
 import DriverDayCard from '../replay/DriverDayCard'
 import DayGantt from './DayGantt'
 import ReplayPanel from '../woreplay/ReplayPanel'
+import { shortDriverName } from '../../utils/driverName'
 import { verdictColour } from './reportCardStyles'
 
 /** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock.
@@ -33,7 +34,7 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
   }, [garage, date])
 
   const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
-  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
+  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, shortDriverName(d.name)])), [data])
   // The picked call's own map and animation do not depend on the day replay, so it has ONE fixed slot above it, whatever state the
   // day replay is in: when the day arrives the call keeps playing (it is never unmounted and restarted).
   const pickedNumber = callStory ? calls.find(x => x.id === selectedSa)?.number : null
@@ -118,7 +119,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
                   <button key={d.id} onClick={() => setDriverId(d.id)} className="w-full text-left px-3 py-1.5 border-b border-slate-800/80 hover:bg-slate-800/60 flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.status.colour }} />
                     <span className="min-w-0">
-                      <span className="block text-xs text-white truncate">{d.id.startsWith('tb:') ? d.name : d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')}{d.pos && d.mode === 'estimated' ? ' (estimated)' : ''}</span>
+                      <span className="block text-xs text-white truncate">{d.id.startsWith('tb:') ? d.name : shortDriverName(d.name)}{d.pos && d.mode === 'estimated' ? ' (estimated)' : ''}</span>
                       <span className="block text-[11px] text-slate-400 truncate">{d.status.label}{d.status.call ? ` · ${d.status.call.number}` : ''}{d.held.length > 1 ? ` (+${d.held.length - 1} more)` : ''}</span>
                     </span>
                   </button>

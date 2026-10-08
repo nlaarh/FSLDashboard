@@ -1,7 +1,7 @@
 """Call Story: input resolution and the sequential Salesforce plan (call-story-architecture 3).
 
 Read-only SELECTs, one at a time (never sf_parallel), hard cap CS1.max_sf_calls. Required steps: resolve, WO, SAs,
-history, assigned resources, texts, survey. Optional steps (matrix, optimizer trail) never break a story: a failure
+history, assigned resources, texts, survey. The optional step (priority matrix) never breaks a story: a failure
 or the call cap becomes a data note. Phone numbers are read only for the pre-9/1 text lookup and never stored.
 
 Fields marked UNVERIFIED have not been checked with sf_describe yet (Salesforce was off-limits while Henry sampled):
@@ -118,7 +118,6 @@ def pull_story(q: str, cfg: dict, now: datetime | None = None) -> dict:
         raw = _pull_sequential(p, q, kind, value, cfg, now)
     wo, sas = raw['wo'], raw['sas']
     _optional(raw, 'matrix', lambda: _matrix(p, sas), 'Priority matrix not read')
-    _optional(raw, 'optimizer', lambda: _optimizer(p, raw), 'Optimizer trail not read')
     raw['sf_calls'] = p.calls
     raw['fetched_at'] = now.isoformat(timespec='seconds')
     raw['closed'] = _closed(sas, now, cfg)
@@ -285,20 +284,6 @@ def _matrix(p: Puller, sas: list) -> dict | None:
                      'slots': slots.get(r.get('ERS_Operating_Hours__c'))} for r in rows]}
     cache.put(key, out, ttl=86400)
     return out
-
-
-def _optimizer(p: Puller, raw: dict) -> dict | None:
-    """Q7, only when the FSL optimizer touched the call: requests in [first engine pick - 2 min, last + 1 min]."""
-    picks = [parse_dt(h['CreatedDate']) for h in raw['history'] if h['Field'] == 'ERS_Assigned_Resource__c'
-             and (h.get('CreatedBy') or {}).get('Name') in ('Platform Integration User', 'FSL System User')]
-    if not picks:
-        return None
-    lo = (min(picks) - timedelta(minutes=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    hi = (max(picks) + timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    rows = p.all(f"""SELECT Id, CreatedDate, FSL__Type__c, FSL__Status__c, FSL__Scheduling_Policy__c
-        FROM FSL__Optimization_Request__c WHERE CreatedDate >= {lo} AND CreatedDate <= {hi}""")
-    return {'requests': [{'ts': r['CreatedDate'], 'type': r.get('FSL__Type__c'), 'status': r.get('FSL__Status__c'),
-                          'policy_id': r.get('FSL__Scheduling_Policy__c')} for r in rows]}
 
 
 def _closed(sas: list, now: datetime, cfg: dict) -> bool:

@@ -1,4 +1,5 @@
 import L from 'leaflet'
+import { shortDriverName } from '../../utils/driverName'
 import { truckHtml, garageHtml, memberHtml, markHtml, jobHtml, STATUS } from '../replay/gameIcons'
 import { waitState, fmtWait } from './woReplayModel'
 
@@ -22,6 +23,9 @@ export function createStageLayers(map, opts) {
   const route = line({ weight: 4, opacity: 0.95, color: '#38bdf8', dashArray: '10 16' }, 'rp-march')
   const trail = [0.9, 0.5, 0.22].map(o => line({ weight: 5, opacity: o, color: '#38bdf8' }))
 
+  let garagePt = null   // the garage tag's spot in layer pixels, so a truck's name never lands on top of it
+  const placeGarage = () => { garagePt = loc?.garage ? map.latLngToLayerPoint([loc.garage.lat, loc.garage.lon]) : null }
+  placeGarage(); map.on('zoomend', placeGarage)
   if (loc?.garage) L.marker([loc.garage.lat, loc.garage.lon], { ...own, zIndexOffset: -500, icon: icon(garageHtml(loc.garage.name.replace(/^\w+\s+-\s+/, '')), 46, 42) }).addTo(root)
 
   let member = null, waitEl = null, memberEl = null, memberState = '', waitText = ''
@@ -41,7 +45,7 @@ export function createStageLayers(map, opts) {
   })
 
   const items = trucks.map(tr => {
-    const mk = L.marker([0, 0], { ...own, icon: icon(truckHtml(tr), 60, 60) })
+    const mk = L.marker([0, 0], { ...own, icon: icon(truckHtml({ ...tr, name: shortDriverName(tr.name) }), 60, 60) })
     return { tr, mk, shown: false, rot: null, key: '', st: 'idle', lastH: null, el: null }
   })
 
@@ -56,7 +60,7 @@ export function createStageLayers(map, opts) {
     for (const it of items) {
       const pos = it.tr.path.at(t)
       if (!pos) { if (it.shown) { root.removeLayer(it.mk); it.shown = false } continue }
-      if (!it.shown) { it.mk.addTo(root); it.shown = true; it.el = it.mk.getElement()?.firstElementChild; it.rot = null; it.lastH = null; it.key = '' }
+      if (!it.shown) { it.mk.addTo(root); it.shown = true; it.el = it.mk.getElement()?.firstElementChild; it.rot = null; it.lastH = null; it.key = ''; it.above = false }
       it.mk.setLatLng([pos.lat, pos.lon])
       const isAct = it.tr.est || it.tr.name === act.name
       const moving = pos.heading != null && !pos.stale
@@ -73,6 +77,10 @@ export function createStageLayers(map, opts) {
         it.el.classList.toggle('live', moving && isAct)
         it.el.style.opacity = isAct ? 1 : 0.7
         it.mk.setZIndexOffset(isAct ? 1000 : 0)
+      }
+      if (garagePt && it.el) {   // the garage tag is ~110 px wide, 25-40 px under the garage; the truck tag is ~120 x 40, 50-90 px under the truck
+        const q = map.latLngToLayerPoint([pos.lat, pos.lon]), clash = Math.abs(q.x - garagePt.x) < 115 && q.y < garagePt.y - 10 && q.y > garagePt.y - 65
+        if (clash !== it.above) { it.above = clash; it.el.querySelector('.rp-tag')?.classList.toggle('above', clash) }
       }
       if (isAct && !actingItem) { actingItem = it; actingPos = pos }
     }
@@ -105,5 +113,5 @@ export function createStageLayers(map, opts) {
     return { pos: actingPos, name: act.name }
   }
 
-  return { frame, destroy() { map.off('zoomend', sizeIcons); root.remove() } }
+  return { frame, destroy() { map.off('zoomend', sizeIcons); map.off('zoomend', placeGarage); root.remove() } }
 }

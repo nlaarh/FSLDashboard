@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Pause, SkipBack, SkipForward, FastForward } from 'lucide-react'
 import { SPEEDS, useEngineState } from './useReplayEngine'
-import { fmtSkip } from './engineMath'
+import { fmtSkip, assignLanes } from './engineMath'
 import { clockLabel } from './replayMath'
 
 const ET = 'America/New_York'
@@ -45,6 +45,15 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
     const every = Math.ceil(out.length / 12)
     return out.filter((_, i) => i % every === 0)
   }, [start, end])
+  const [barW, setBarW] = useState(800)
+  useEffect(() => {
+    if (!barRef.current || typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(() => setBarW(barRef.current.clientWidth || 800))
+    ro.observe(barRef.current)
+    return () => ro.disconnect()
+  }, [])
+  const lanes = useMemo(() => assignLanes(marks.map(m => m.t), start, span, barW), [marks, start, span, barW])
+  const up = Math.min(3, Math.max(0, ...lanes)) * 20   // marks that would overlap stack upward; the bar grows to make room
   const peak = density ? Math.max(1, ...density) : 1
 
   const seekFrom = e => {
@@ -85,25 +94,25 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
       </div>
 
       <div ref={barRef} onPointerDown={onDown} onPointerMove={e => e.buttons === 1 && seekFrom(e)}
-        className="relative h-11 cursor-pointer select-none touch-none" role="slider" aria-label="Replay time" aria-valuemin={start} aria-valuemax={end}>
+        className="relative cursor-pointer select-none touch-none" style={{ height: 44 + up }} role="slider" aria-label="Replay time" aria-valuemin={start} aria-valuemax={end}>
         {density && (
-          <div className="absolute inset-x-0 top-0 h-5 flex items-end gap-px opacity-70" aria-hidden>
+          <div className="absolute inset-x-0 h-5 flex items-end gap-px opacity-70" style={{ top: up }} aria-hidden>
             {density.map((n, i) => <div key={i} className="flex-1 bg-slate-600 rounded-t-sm" style={{ height: `${(n / peak) * 100}%` }} />)}
           </div>
         )}
-        <div className="absolute inset-x-0 top-[22px] h-1.5 rounded-full bg-slate-800" />
-        <div ref={fillRef} className="absolute left-0 top-[22px] h-1.5 rounded-full bg-brand-500" />
+        <div className="absolute inset-x-0 h-1.5 rounded-full bg-slate-800" style={{ top: 22 + up }} />
+        <div ref={fillRef} className="absolute left-0 h-1.5 rounded-full bg-brand-500" style={{ top: 22 + up }} />
         {marks.map((m, i) => (
           <button key={i} type="button" title={m.label} aria-label={m.label} onPointerDown={e => e.stopPropagation()}
             onClick={() => { engine.pause(); engine.seek(m.t) }}
-            className="absolute top-[13px] w-[18px] h-[18px] -translate-x-1/2 rounded-full flex items-center justify-center hover:scale-125 transition-transform"
-            style={{ left: pct(m.t), background: m.colour || '#e2e8f0', boxShadow: m.level === 'bad' ? '0 0 0 2px #fff6' : undefined }}>
+            className="absolute w-[18px] h-[18px] -translate-x-1/2 rounded-full flex items-center justify-center hover:scale-125 transition-transform"
+            style={{ left: pct(m.t), top: 13 + up - Math.min(3, lanes[i]) * 20, background: m.colour || '#e2e8f0', boxShadow: m.level === 'bad' ? '0 0 0 2px #fff6' : undefined }}>
             {m.Icon && <m.Icon size={11} color="#fff" strokeWidth={2.6} />}
           </button>
         ))}
-        <span ref={headRef} className="absolute top-[18px] w-3.5 h-3.5 -translate-x-1/2 rounded-full bg-white shadow ring-2 ring-brand-500 pointer-events-none" />
+        <span ref={headRef} style={{ top: 18 + up }} className="absolute w-3.5 h-3.5 -translate-x-1/2 rounded-full bg-white shadow ring-2 ring-brand-500 pointer-events-none" />
         {ticks.map(k => (
-          <span key={k.t} className="absolute top-[34px] -translate-x-1/2 text-[9px] text-slate-500 pointer-events-none" style={{ left: pct(k.t) }}>{k.label}</span>
+          <span key={k.t} className="absolute -translate-x-1/2 text-[9px] text-slate-500 pointer-events-none" style={{ left: pct(k.t), top: 34 + up }}>{k.label}</span>
         ))}
       </div>
     </div>

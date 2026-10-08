@@ -167,8 +167,10 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   }, [jump?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {   // it starts by itself as soon as the story is in: nobody should have to find Play
     if (prefersReducedMotion()) return undefined
-    const h = setTimeout(() => engine.play(), 400)
-    return () => clearTimeout(h)
+    const start = engine.ref.current.t
+    const h = setTimeout(() => { if (engine.ref.current.t === start) engine.play() }, 400)   // not if the user already moved the playhead
+    const off = engine.onChange(() => clearTimeout(h))   // a Pause, Play, speed or scrub in that window cancels it
+    return () => { clearTimeout(h); off() }
   }, [engine])
 
   const scrub = useMemo(() => [
@@ -201,7 +203,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
           </div>
           <div style={{ position: 'absolute', left: '50%', top: HUD.h + 22, transform: 'translateX(-50%)', zIndex: 1060, pointerEvents: 'none' }}><SkipChip engine={engine} /></div>
           <EventToasts engine={engine} steps={steps} times={times} />
-          {step && fx?.dock && <StepCard step={step} dock={fx.dock} w={fx.cardW} maxH={Math.max(220, size.h - HUD.edgeY - 96)}
+          {step && fx?.dock && !drawerTop && <StepCard step={step} dock={{ ...fx.dock, x: Math.max(10, Math.min(fx.dock.x, size.w - fx.cardW - 10)) }} w={fx.cardW} maxH={Math.max(220, size.h - HUD.edgeY - 96)}
             onEnter={() => { if (engine.ref.current.playing) { heldBy.current = true; engine.pause() } }} onLeave={() => { if (heldBy.current) { heldBy.current = false; engine.play() } }} />}
           {step && <StepCaption step={step} i={idx} n={steps.length} />}
           <button onClick={toggleDrawer} title={open ? 'Close the flow' : 'Open the flow'} aria-label={open ? 'Close the flow' : 'Open the flow'}
