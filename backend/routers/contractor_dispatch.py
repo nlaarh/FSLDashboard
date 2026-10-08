@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
 
 import cache
+import osrm
 from sf_client import sf_query_all, sanitize_soql
 from routers.contractor import _require_contractor_facilities, _facility_in_clause
 
@@ -449,13 +450,6 @@ def contractor_map(request: Request):
 
 # ── GET /api/contractor/route ────────────────────────────────────────────────
 
-# Public OSRM demo server: no key, no signup, no bill. It is a community box
-# with no SLA, so every failure here is soft — the map simply draws no line
-# rather than showing an error. Swapping in a paid router (Google Directions,
-# Mapbox) means changing _osrm_leg() and nothing else.
-OSRM_URL = 'https://router.project-osrm.org/route/v1/driving'
-OSRM_TIMEOUT = 8
-
 # The drop-off leg runs between two fixed addresses, so it is worth caching for
 # the day. The driver leg is not cached: the truck is moving, which is the whole
 # point of drawing it.
@@ -463,32 +457,9 @@ _ROUTE_TTL = 3600
 
 
 def _osrm_leg(a: tuple, b: tuple) -> dict | None:
-    """Street path between two (lat, lon) points, or None if unroutable.
-
-    OSRM takes lon,lat and returns lon,lat; Leaflet wants lat,lon. The flip is
-    the single easiest thing to get wrong here, so it happens in exactly one
-    place.
-    """
-    if not a or not b or a[0] is None or b[0] is None:
-        return None
-    try:
-        import requests
-        r = requests.get(f"{OSRM_URL}/{a[1]},{a[0]};{b[1]},{b[0]}",
-                         params={'overview': 'full', 'geometries': 'geojson'},
-                         timeout=OSRM_TIMEOUT)
-        d = r.json()
-        if d.get('code') != 'Ok' or not d.get('routes'):
-            log.info('osrm: no route (%s)', d.get('code'))
-            return None
-        rt = d['routes'][0]
-        return {
-            'coords': [[c[1], c[0]] for c in rt['geometry']['coordinates']],
-            'miles': round(rt['distance'] / 1609.344, 1),
-            'minutes': round(rt['duration'] / 60),
-        }
-    except Exception as exc:
-        log.info('osrm: leg failed: %s', exc)
-        return None
+    """Street path between two (lat, lon) points, or None if unroutable (osrm.py holds the routing)."""
+    r = osrm.route([a, b], cached=False) if a and b else None     # the truck is moving: never cached
+    return r and {k: r[k] for k in ('coords', 'miles', 'minutes')}
 
 
 @router.get("/api/contractor/route")

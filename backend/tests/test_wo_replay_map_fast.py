@@ -3,7 +3,16 @@
 from calendar import timegm
 from time import strptime
 
+import pytest
+
 from wo_replay_map import _paired_ids, _windows, locate, pull_map
+
+
+@pytest.fixture(autouse=True)
+def no_roads(monkeypatch):
+    """Roads come from OSRM (tests/test_wo_replay_roads.py); here nothing may touch the network."""
+    monkeypatch.setattr('wo_replay_map.garage_route', lambda *a, **k: None)
+    monkeypatch.setattr('wo_replay_map.snap_runs', lambda *a, **k: [])
 
 
 def epoch(hhmm, day='2026-09-28'):
@@ -130,6 +139,16 @@ def test_window_without_on_location_ends_at_the_last_history_row_and_assigned_on
     r = raw(history=[swap('15:10', 'Al One 100'), {'ServiceAppointmentId': 'SA1', 'Field': 'Status', 'NewValue': 'Completed', 'CreatedDate': '2026-09-28T16:30:00.000+0000'}])
     w = _windows(r, ['Al One 100', 'Cy Three 100'], r['sas'][0])
     assert w['Al One 100'][1].strftime('%H:%M') == '16:35' and w['Cy Three 100'][0].strftime('%H:%M') == '14:40'
+
+
+def test_map_carries_a_road_per_driver_with_a_track_and_the_garage_route(monkeypatch):
+    road = [{'t': [1, 2], 'i': [0, 1], 'c': [[1.0, 2.0], [3.0, 4.0]]}]
+    monkeypatch.setattr('wo_replay_map.snap_runs', lambda track, budget_s=6, max_requests=6: road if track else [])
+    monkeypatch.setattr('wo_replay_map.garage_route', lambda g, m, timeout=6: {'c': [[g['lat'], g['lon']]], 'miles': 1.0, 'minutes': 2})
+    m = pull_map(raw(), FakePuller(), snapshot_for=lambda t, d: snap())
+    assert m['drivers'][0]['road'] == road and m['roads']['garage_to_member']['c'] == [[42.9, -78.8]]
+    m = pull_map(raw(), FakePuller(), snapshot_for=lambda t, d: snap(gps=[]))        # no track: nothing to snap
+    assert m['drivers'][0]['road'] == [] and m['drivers'][0]['track'] == []
 
 
 def test_unpaired_names_still_use_the_serviceresource_query():

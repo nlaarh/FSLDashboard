@@ -5,6 +5,7 @@ Read-only and sequential, bound to this one call. Most calls need no Salesforce 
   garage         the member leg's ServiceTerritory coordinates, already in the story
   GPS pings      first from the day's built Report Card snapshot; only drivers still without a track go to
                  ServiceResourceHistory (Salesforce's slowest object), in one query, each with their own time window
+Roads (OSRM, not Salesforce): each driver's moving stretches snapped to streets, plus one garage-to-member route.
 Fallbacks that cost a query: ServiceResource names the history could not pair, ServiceTerritory when the story has no coordinates.
 A failed or empty GPS read is reported as a note, never guessed: a driver with fewer than 2 pings has no track.
 Towbook garages do not report driver location to Salesforce: for those legs the map has no driver, only the member, the
@@ -13,13 +14,16 @@ Member location is rounded to 4 decimals (about 11 m). Never returns a phone num
 """
 
 import re
+import time
 from datetime import timedelta
 
 from report_card_build import Puller, _in, _iso
 from report_card_timeline import Timelines
 from utils import parse_dt, to_eastern
+from wo_replay_roads import garage_route, snap_runs
 
 MAX_CALLS = 4
+ROAD_BUDGET_S = 6          # all road lookups for one map; whatever is not snapped stays a straight line
 WINDOW_BEFORE_MIN = 30     # pings from before the first pick, so the driver is already on the map when picked
 WINDOW_AFTER_MIN = 5
 MIN_PINGS = 2
@@ -124,6 +128,7 @@ def _snapshot_tracks(raw: dict, sa: dict | None, who: dict, wins: dict, snapshot
 
 
 def pull_map(raw: dict, puller: Puller | None = None, snapshot_for=None) -> dict:
+    started = time.monotonic()
     p = puller or Puller(max_calls=MAX_CALLS)
     notes = []
     sas = raw.get('sas') or []
@@ -180,5 +185,9 @@ def pull_map(raw: dict, puller: Puller | None = None, snapshot_for=None) -> dict
                         'source': 'snapshot' if name not in todo else 'salesforce'})
         if not track:
             notes.append(f'No GPS pings for {_short(name)} while this call was open.')
+    roads = {'garage_to_member': garage_route(garage, wo, timeout=ROAD_BUDGET_S)}
+    for d in drivers:
+        left = ROAD_BUDGET_S - (time.monotonic() - started)
+        d['road'] = snap_runs(d['track'], budget_s=left) if d['track'] and left > 0 else []
     window = [int(min(w[0] for w in wins.values()).timestamp()), int(max(w[1] for w in wins.values()).timestamp())] if wins else None
-    return {'wo': wo, 'garage': garage, 'towbook': towbook, 'drivers': drivers, 'notes': notes, 'window': window, 'sf_calls': p.calls}
+    return {'wo': wo, 'garage': garage, 'towbook': towbook, 'drivers': drivers, 'roads': roads, 'notes': notes, 'window': window, 'sf_calls': p.calls}
