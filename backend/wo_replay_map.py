@@ -28,7 +28,7 @@ WINDOW_BEFORE_MIN = 30     # pings from before the first pick, so the driver is 
 WINDOW_AFTER_MIN = 5
 MIN_PINGS = 2
 MAX_SNAPSHOT_TERRITORIES = 3
-_SUFFIX = re.compile(r'\s+\d{2,3}[A-Z]{0,2}$')
+_SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
 _SKIP = re.compile(r'^(Towbook-|\d{3}-\s*(ST|WNY|.*SPOT))', re.I)
 _ID = re.compile(r'^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$')
 

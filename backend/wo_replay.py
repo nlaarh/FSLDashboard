@@ -27,7 +27,7 @@ ROLE = {'FSL_AUTO_SCHEDULE': 'FSL auto-schedule', 'FSL_ENGINE': 'FSL optimizer',
         'CALL_TAKER': 'Call taker', 'OTHER': 'Other'}
 SYSTEM_VIA = {'FSL_AUTO_SCHEDULE': 'fsl', 'FSL_ENGINE': 'fsl', 'INTEGRATION': 'intake', 'TOWBOOK_SYNC': 'towbook'}
 HUMAN_CLASSES = {'HUMAN', 'GARAGE_DISPATCHER', 'CALL_TAKER', 'OTHER'}
-_SUFFIX = re.compile(r'\s+\d{2,3}[A-Z]{0,2}$')
+_SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
 _GARAGE_CODE = re.compile(r'^\w+\s+-\s+')
 
 

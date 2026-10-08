@@ -21,7 +21,7 @@ SEV_WEIGHT = {'bad': 0, 'warn': 1, 'info': 2}
 _ETA_LABELS = ('Garage and PTA', 'Garage + PTA')
 
 
-_SUFFIX = re.compile(r'\s+\d{2,3}[A-Z]{0,2}$')
+_SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
 
 
 def _short(n):
