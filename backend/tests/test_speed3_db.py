@@ -20,18 +20,21 @@ def test_the_ddl_can_run_twice(speed3_sqlite):
     for stmt in speed3_db.SCHEMA_SQL:
         speed3_sqlite.execute(stmt)
     names = {r[0] for r in speed3_sqlite.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {'driver_gps_points', 'driver_gps_samples'} <= names
+    assert {'driver_gps_points', 'driver_gps_samples', 'facts_day', 'facts_garage_day'} <= names
 
 
-def test_the_flag_defaults_off():
-    assert DEFAULT_FEATURES['replay_gps_store'] is False
+def test_all_three_flags_default_off():
+    for name in ('replay_gps_store', 'daily_facts'):
+        assert DEFAULT_FEATURES[name] is False
 
 
 def test_with_the_flags_off_the_background_loops_touch_no_table(monkeypatch):
+    import facts_job
     import gps_store
     flags(monkeypatch)
     monkeypatch.setattr(speed3_db, 'ensure_schema', lambda group: pytest.fail('flag off must not create tables'))
     monkeypatch.setattr(gps_store, 'sample_once', lambda *a: pytest.fail('flag off must not sample'))
+    monkeypatch.setattr(facts_job, 'run_once', lambda *a: pytest.fail('flag off must not build facts'))
 
     class Stop(Exception):
         pass
@@ -40,8 +43,9 @@ def test_with_the_flags_off_the_background_loops_touch_no_table(monkeypatch):
         raise Stop
 
     monkeypatch.setattr('time.sleep', one_pass)
-    with pytest.raises(Stop):
-        gps_store.run_forever()
+    for loop in (gps_store.run_forever, facts_job.run_forever):
+        with pytest.raises(Stop):
+            loop()
 
 
 def test_ensure_schema_reports_failure_instead_of_raising(monkeypatch):
@@ -57,7 +61,7 @@ def test_ensure_schema_reports_failure_instead_of_raising(monkeypatch):
 
 
 def test_the_lock_key_is_stable_and_per_job():
-    assert speed3_db.lock_key('gps_sampler') == speed3_db.lock_key('gps_sampler') != speed3_db.lock_key('other_job')
+    assert speed3_db.lock_key('gps_sampler') == speed3_db.lock_key('gps_sampler') != speed3_db.lock_key('facts_job')
 
 
 def test_leader_on_the_test_fake_is_the_caller(speed3_sqlite):

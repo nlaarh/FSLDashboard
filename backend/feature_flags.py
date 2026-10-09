@@ -39,9 +39,11 @@ DEFAULT_FEATURES = {
     'call_story': False,
     # Replay: member calls, member texts and the driver's other jobs (extras + text thread). On by default (owner, 2026-10-08).
     'replay_member_contact': True,
-    # Speed batch 3 (off until the owner approves the new tables and switches it on; off = today's behaviour):
+    # Speed batch 3 (all off until the owner approves the new tables and switches each on; off = today's behaviour):
     # Replay map reads our own 60 s record of driver positions instead of ServiceResourceHistory.
     'replay_gps_store': False,
+    # Reporting and 30-day trends read a daily facts table instead of pulling a month of history from Salesforce.
+    'daily_facts': False,
 }
 
 

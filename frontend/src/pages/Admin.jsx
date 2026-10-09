@@ -324,6 +324,7 @@ export default function Admin({ role = '' }) {
                   { key: 'call_story', label: 'Call Story', desc: 'Type a call, see what happened and why' },
                   { key: 'replay_member_contact', label: 'Replay: member contact', desc: 'Replay shows member calls, texts (with message text) and the driver\'s other jobs' },
                   { key: 'replay_gps_store', label: 'Replay: own GPS record', desc: 'Replay map reads our 60 s driver-position record instead of Salesforce history (needs the new tables)' },
+                  { key: 'daily_facts', label: 'Daily facts', desc: 'Reporting and 30-day trends read a daily facts table instead of a month of Salesforce history (needs the new tables)' },
                 ].map(m => {
                   const on = features[m.key] !== false
                   return (

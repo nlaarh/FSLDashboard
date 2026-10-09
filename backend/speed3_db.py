@@ -1,13 +1,15 @@
-"""Speed batch 3: the new Postgres tables, their one-time creation, and the single-leader lock.
+"""Speed batch 3: the four new Postgres tables, their one-time creation, and the single-leader lock.
 
-Nothing here runs unless a feature flag is on (replay_gps_store): deploying the code creates no table and
+Nothing here runs unless a feature flag is on (replay_gps_store, daily_facts): deploying the code creates no table and
 writes no row. The DDL is additive and idempotent (CREATE ... IF NOT EXISTS only: no ALTER, no DROP, no data rewrite).
-The owner approves it once; the same text is applied by `ensure_schema('gps')` the first time
-its flag is switched on, or by Kathy with psql (the statements are GPS_SQL, one per list item).
+The owner approves it once; the same text is applied by `ensure_schema('gps')` / `ensure_schema('facts')` the first time
+its flag is switched on, or by Kathy with psql (the statements are GPS_SQL and FACTS_SQL, one per list item).
 
 Tables (all in the app schema `core`, which db_adapter puts on the search path):
   driver_gps_points   one row per recorded driver position (the Replay map reads these instead of ServiceResourceHistory)
   driver_gps_samples  one row per successful 60 s sampler run: what proves a time window is fully covered
+  facts_day           one row per UTC day: when it was computed, how many appointments, assignments changed
+  facts_garage_day    one row per garage per UTC day: counts, ATA/PTA values, Towbook/FSL split
 """
 
 import logging
@@ -35,15 +37,55 @@ GPS_SQL = [
 )""",
 ]
 
-SCHEMA_SQL = GPS_SQL
-_GROUPS = {'gps': GPS_SQL}
+FACTS_SQL = [
+    """CREATE TABLE IF NOT EXISTS facts_day (
+    day           DATE PRIMARY KEY,
+    computed_at   TIMESTAMPTZ NOT NULL,
+    version       INTEGER NOT NULL,
+    sa_count      INTEGER NOT NULL,
+    reassignments INTEGER NOT NULL
+)""",
+    """CREATE TABLE IF NOT EXISTS facts_garage_day (
+    territory_id     TEXT NOT NULL,
+    day              DATE NOT NULL,
+    territory_name   TEXT NOT NULL,
+    r_total          INTEGER NOT NULL,
+    r_completed      INTEGER NOT NULL,
+    r_declined       INTEGER NOT NULL,
+    r_cancelled      INTEGER NOT NULL,
+    r_first_total    INTEGER NOT NULL,
+    r_first_accepted INTEGER NOT NULL,
+    r_second_total   INTEGER NOT NULL,
+    r_second_accepted INTEGER NOT NULL,
+    r_accepted       INTEGER NOT NULL,
+    r_accepted_completed INTEGER NOT NULL,
+    ata_json         TEXT NOT NULL,
+    pta_json         TEXT NOT NULL,
+    pts_json         TEXT NOT NULL,
+    t_volume         INTEGER NOT NULL,
+    t_completed      INTEGER NOT NULL,
+    t_auto           INTEGER NOT NULL,
+    t_fsl_volume     INTEGER NOT NULL,
+    t_towbook_volume INTEGER NOT NULL,
+    t_fleet_sum      DOUBLE PRECISION NOT NULL,
+    t_fleet_n        INTEGER NOT NULL,
+    t_sla_hits       INTEGER NOT NULL,
+    t_tb_sum         DOUBLE PRECISION NOT NULL,
+    t_tb_n           INTEGER NOT NULL,
+    PRIMARY KEY (territory_id, day)
+)""",
+    "CREATE INDEX IF NOT EXISTS idx_facts_garage_day_day ON facts_garage_day (day)",
+]
+
+SCHEMA_SQL = GPS_SQL + FACTS_SQL
+_GROUPS = {'gps': GPS_SQL, 'facts': FACTS_SQL}
 
 _ready = set()
 _ready_lock = threading.Lock()
 
 
 def ensure_schema(group: str) -> bool:
-    """Create one group of tables ('gps') once per process. False (never an exception) when the database
+    """Create one group of tables ('gps' or 'facts') once per process. False (never an exception) when the database
     refuses, so callers fall back to today's path."""
     if group in _ready:
         return True
