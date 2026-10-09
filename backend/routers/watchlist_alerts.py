@@ -9,7 +9,7 @@ Evaluates active SAs against 7 categories:
 6. High Priority Call Late — P1-P7 and CreatedDate > 30 min ago
 7. Potential Duplicate — same member with 2+ active SAs at similar location
 8. No Service Appointments on Work Order — WO is 'Submitted' but has no SA
-   (WO-level: see build_no_sa_wo_alerts)
+   (WO-level: see find_no_sa_wos / build_no_sa_wo_alerts)
 """
 
 import logging
@@ -106,19 +106,6 @@ def _is_duplicate_pair(s1: dict, s2: dict, rap1=(False, None), rap2=(False, None
     return same_street
 
 
-def _rap_info_by_woli(woli_ids: list) -> dict:
-    """WOLI Id -> (is RAP, customer name) for the duplicate check. One small read, only for accounts with 2+ active calls."""
-    if not woli_ids:
-        return {}
-    ids = ','.join(f"'{i}'" for i in woli_ids)
-    try:
-        rows = sf_query_all(f"SELECT Id, WorkOrder.Type__c, WorkOrder.Customer_Name__c FROM WorkOrderLineItem WHERE Id IN ({ids})")
-    except Exception as e:
-        log.warning(f"RAP customer lookup failed, duplicate check falls back to account only: {e}")
-        return {}
-    return {r['Id']: _rap_customer(r.get('WorkOrder')) for r in rows}
-
-
 def _is_tow_drop_off(sa: dict) -> bool:
     """True if SA is a Tow Drop-Off (exclude from most flags)."""
     work_type = (sa.get('WorkType') or {}).get('Name', '')
@@ -143,9 +130,12 @@ def _time_in_status_from_hist(hist_list: list, current_status: str, now_utc: dat
     return delta if 0 <= delta < 1440 else None
 
 
-def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc: datetime) -> list:
+def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc: datetime,
+                             dup_candidates: list | None = None, rap_by_woli: dict | None = None) -> list:
     """Evaluate all active SAs against the 6 operational flag categories.
 
+    dup_candidates: the appointments the Potential Duplicate flag looks at (see watchlist_snapshot.duplicate_candidates);
+    rap_by_woli: WOLI Id -> (is RAP, customer name) for the duplicate check.
     Returns a list of alert dicts for the UI table.
     """
     alerts = []
@@ -283,28 +273,9 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     sort_alerts(alerts)
 
     # ── Flag 7: Potential Duplicate — same member with 2+ active SAs at similar location ──
-    # SOQL handles both exclusions so Python only needs to group and check proximity:
-    #   • WorkType.Name != 'Tow Drop-Off'
-    #   • WO ERS_Unable_To_Complete_Dupe__c = false (via NOT IN subquery on WOLI)
-    cutoff = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    _dup_candidates: list = []
-    try:
-        _dup_candidates = sf_query_all(f"""
-            SELECT Id, AccountId, AppointmentNumber, Latitude, Longitude, Street, ParentRecordId
-            FROM ServiceAppointment
-            WHERE RecordType.Name = 'ERS Service Appointment'
-              AND ServiceTerritoryId != null
-              AND CreatedDate >= {cutoff}
-              AND StatusCategory IN ('None', 'Scheduled', 'Dispatched', 'InProgress', 'CheckedIn')
-              AND WorkType.Name != 'Tow Drop-Off'
-              AND ParentRecordId NOT IN (
-                  SELECT Id FROM WorkOrderLineItem
-                  WHERE WorkOrder.ERS_Unable_To_Complete_Dupe__c = true
-                    AND WorkOrder.CreatedDate >= {cutoff}
-              )
-        """)
-    except Exception as e:
-        log.warning(f"Duplicate candidate query failed, skipping Flag 7: {e}")
+    # The caller already left out Tow Drop-Offs and work orders marked "unable to complete dupe".
+    _dup_candidates = dup_candidates or []
+    rap_by_woli = rap_by_woli or {}
 
     acct_groups = defaultdict(list)
     for cand in _dup_candidates:
@@ -318,8 +289,6 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     for a in alerts:
         alert_by_sa[a['sa_id']] = a
 
-    rap_by_woli = _rap_info_by_woli(sorted({c.get('ParentRecordId') for g in acct_groups.values() if len(g) >= 2
-                                            for c in g if c.get('ParentRecordId')}))
     rap_of = lambda s: rap_by_woli.get(s.get('ParentRecordId'), (False, None))
 
     for acct_id, sa_group in acct_groups.items():
@@ -418,49 +387,43 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     return alerts
 
 
-def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = None) -> list:
-    """Flag 8: ERS WOs in 'Submitted' status (last 24h) with no Service Appointment.
+def find_no_sa_wos(now_utc: datetime, wo_ids_with_sa: set | None = None) -> list:
+    """Flag 8 data: ERS WOs in 'Submitted' status (last 24h) with no Service Appointment, as [(WO row, since)] where
+    `since` is when the WO turned Submitted (fallback: LastModifiedDate). Not scoped to territories: scope afterwards.
 
-    WO-level, so it can't come from the SA loop — alerts carry wo_id/wo_number
-    and an empty sa_id. An SA can hang off the WO two ways, so both are checked:
-    SA.ERS_Work_Order__c (SOQL anti-join) and SA.ParentRecordId → WOLI (Python).
+    An SA can hang off the WO two ways, so both are checked: SA.ERS_Work_Order__c (a child sub-select on the WO)
+    and SA.ParentRecordId -> WOLI. `wo_ids_with_sa` = work orders the caller already knows have an SA through the
+    WOLI path, so only the few still unresolved cost an extra read.
     """
     cutoff = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    territory_clause = ""
-    if territories:
-        ids = ", ".join(f"'{t}'" for t in territories)
-        territory_clause = f"AND ServiceTerritoryId IN ({ids})"
-
     try:
-        wos = sf_query_all(f"""
+        rows = sf_query_all(f"""
             SELECT Id, WorkOrderNumber, CreatedDate, LastModifiedDate,
                    ServiceTerritoryId, ServiceTerritory.Name, Priority_Code__c,
                    Street, City, Latitude, Longitude,
                    WorkType.Name, WorkTypeId, Current_Wait__c,
                    Vehicle_Make__c, Vehicle_Model__c, License_Plate__c,
                    Account.Name, Account.PersonMobilePhone, Account.Phone, Mobile_Phone__c,
-                   Facility_Name__c
+                   Facility_Name__c,
+                   (SELECT Id FROM Service_Appointments_del__r LIMIT 1)
             FROM WorkOrder
             WHERE RecordType.Name = 'ERS Work Order'
               AND Status = 'Submitted'
               AND CreatedDate >= {cutoff}
-              {territory_clause}
-              AND Id NOT IN (SELECT ERS_Work_Order__c FROM ServiceAppointment
-                             WHERE ERS_Work_Order__c != null)
         """)
     except Exception as e:
         log.warning(f"No-SA WO query failed, skipping Flag 8: {e}")
         return []
+    known = wo_ids_with_sa or set()
+    wos = [r for r in rows if not (r.get('Service_Appointments_del__r') or {}).get('records') and r['Id'] not in known]
     if not wos:
         return []
-
-    wo_ids = [w['Id'] for w in wos]
 
     # Second path: SA parented to one of the WO's line items
     try:
         wolis = batch_soql_parallel("""
             SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE WorkOrderId IN ('{id_list}')
-        """, wo_ids, chunk_size=200)
+        """, [w['Id'] for w in wos], chunk_size=200)
         wo_by_woli = {r['Id']: r['WorkOrderId'] for r in wolis}
         woli_sas = batch_soql_parallel("""
             SELECT ParentRecordId FROM ServiceAppointment WHERE ParentRecordId IN ('{id_list}')
@@ -469,6 +432,9 @@ def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = Non
     except Exception as e:
         log.warning(f"No-SA WOLI check failed, skipping Flag 8: {e}")
         return []
+    wos = [w for w in wos if w['Id'] not in has_sa]
+    if not wos:
+        return []
 
     # When did each WO turn Submitted? (fallback: LastModifiedDate)
     submitted_at = {}
@@ -476,7 +442,7 @@ def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = Non
         hist = batch_soql_parallel("""
             SELECT WorkOrderId, NewValue, CreatedDate FROM WorkOrderHistory
             WHERE WorkOrderId IN ('{id_list}') AND Field = 'Status'
-        """, wo_ids, chunk_size=200)
+        """, [w['Id'] for w in wos], chunk_size=200)
         for h in hist:
             if h.get('NewValue') == 'Submitted':
                 ts = _parse_dt(h.get('CreatedDate'))
@@ -486,12 +452,16 @@ def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = Non
     except Exception as e:
         log.warning(f"No-SA WO history lookup failed, using LastModifiedDate: {e}")
 
+    return [(wo, submitted_at.get(wo['Id']) or _parse_dt(wo.get('LastModifiedDate'))) for wo in wos]
+
+
+def build_no_sa_wo_alerts(no_sa_wos: list, now_utc: datetime, territories: list[str] | None = None) -> list:
+    """Flag 8 alerts from find_no_sa_wos() output. WO-level, so alerts carry wo_id/wo_number and an empty sa_id."""
     alerts = []
-    for wo in wos:
-        wo_id = wo['Id']
-        if wo_id in has_sa:
+    for wo, since in no_sa_wos:
+        if territories and wo.get('ServiceTerritoryId') not in territories:
             continue
-        since = submitted_at.get(wo_id) or _parse_dt(wo.get('LastModifiedDate'))
+        wo_id = wo['Id']
         if since:
             if since.tzinfo is None:
                 since = since.replace(tzinfo=timezone.utc)
@@ -536,42 +506,6 @@ def build_no_sa_wo_alerts(now_utc: datetime, territories: list[str] | None = Non
     return alerts
 
 
-def fetch_wo_data(woli_ids: list) -> dict:
-    """Fetch WorkOrder data via WOLI IDs.
-
-    Returns {woli_id: {wo_number, wo_id, current_wait, vehicle_make, vehicle_model, vehicle_plate}}.
-    """
-    if not woli_ids:
-        return {}
-
-    result = {}
-    try:
-        rows = batch_soql_parallel("""
-            SELECT Id, WorkOrderId, WorkOrder.WorkOrderNumber,
-                   WorkOrder.Current_Wait__c,
-                   WorkOrder.Vehicle_Make__c, WorkOrder.Vehicle_Model__c,
-                   WorkOrder.License_Plate__c
-            FROM WorkOrderLineItem
-            WHERE Id IN ('{id_list}')
-        """, woli_ids, chunk_size=200)
-
-        for r in rows:
-            woli_id = r.get('Id')
-            wo = r.get('WorkOrder') or {}
-            result[woli_id] = {
-                'wo_number': wo.get('WorkOrderNumber', ''),
-                'wo_id': r.get('WorkOrderId', ''),
-                'current_wait': wo.get('Current_Wait__c'),
-                'vehicle_make': wo.get('Vehicle_Make__c', ''),
-                'vehicle_model': wo.get('Vehicle_Model__c', ''),
-                'vehicle_plate': wo.get('License_Plate__c', ''),
-            }
-    except Exception as e:
-        log.warning(f"Failed to fetch WO data for alerts: {e}")
-
-    return result
-
-
 def fetch_kmi_cases(wo_ids: list) -> dict:
     """Fetch most recent ERS KMI Alert case per WorkOrder Id.
 
@@ -599,10 +533,11 @@ def fetch_kmi_cases(wo_ids: list) -> dict:
     return result
 
 
-def enrich_alerts_with_kmi(alerts: list) -> None:
-    """Merge most-recent KMI case data into operational alert dicts (in-place).
+def enrich_alerts_with_kmi(alerts: list, kmi_map: dict | None = None) -> dict:
+    """Merge most-recent KMI case data into operational alert dicts (in-place). Returns the map that was used.
 
-    Falls back to the last successful lookup if the SF query fails, so KMI
+    With kmi_map given (already looked up for the same work orders) nothing is read from Salesforce.
+    Otherwise falls back to the last successful lookup if the SF query fails, so KMI
     data doesn't flicker away on a transient SF error.
     """
     wo_ids = list({a['wo_id'] for a in alerts if a.get('wo_id')})
@@ -611,21 +546,23 @@ def enrich_alerts_with_kmi(alerts: list) -> None:
             alert['kmi_case_number'] = ''
             alert['kmi_case_id'] = ''
             alert['kmi_case_status'] = ''
-        return
+        return kmi_map or {}
 
-    try:
-        fresh = fetch_kmi_cases(wo_ids)
-        # Update cache with new results (merge so evicted WOs don't wipe others)
-        stored = _cache.get(_KMI_CACHE_KEY) or {}
-        stored.update(fresh)
-        _cache.put(_KMI_CACHE_KEY, stored, _KMI_CACHE_TTL)
-        kmi_map = fresh
-    except Exception as e:
-        log.warning("KMI case lookup failed, using cached data: %s", e)
-        kmi_map = _cache.get(_KMI_CACHE_KEY) or {}
+    if kmi_map is None:
+        try:
+            fresh = fetch_kmi_cases(wo_ids)
+            # Update cache with new results (merge so evicted WOs don't wipe others)
+            stored = _cache.get(_KMI_CACHE_KEY) or {}
+            stored.update(fresh)
+            _cache.put(_KMI_CACHE_KEY, stored, _KMI_CACHE_TTL)
+            kmi_map = fresh
+        except Exception as e:
+            log.warning("KMI case lookup failed, using cached data: %s", e)
+            kmi_map = _cache.get(_KMI_CACHE_KEY) or {}
 
     for alert in alerts:
         kmi = kmi_map.get(alert.get('wo_id'), {})
         alert['kmi_case_number'] = kmi.get('case_number', '')
         alert['kmi_case_id'] = kmi.get('case_id', '')
         alert['kmi_case_status'] = kmi.get('case_status', '')
+    return kmi_map

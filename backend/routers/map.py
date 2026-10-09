@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from utils import to_eastern as _to_eastern
 from sf_client import sf_query_all, sf_parallel
 import cache
+import ref_data
 
 router = APIRouter()
 
@@ -88,35 +89,11 @@ def get_map_grids():
 def get_map_drivers():
     """Active drivers logged into vehicles with last known GPS positions (cached 2 minutes)."""
     def _fetch():
-        from sf_client import sf_query_all as _sqa_local, sf_parallel as _sf_par
-
-        def _drv():
-            return _sqa_local("""
-                SELECT Id, Name,
-                       LastKnownLatitude, LastKnownLongitude, LastKnownLocationDate,
-                       ERS_Driver_Type__c, ERS_Tech_ID__c,
-                       RelatedRecord.Phone
-                FROM ServiceResource
-                WHERE IsActive = true
-                  AND ResourceType = 'T'
-                  AND LastKnownLatitude != null
-                  AND ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
-                ORDER BY Name
-            """)
-
-        def _trucks():
-            return _sqa_local("""
-                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c, ERS_LegacyTruckID__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-            """)
-
-        fetched = _sf_par(drivers=_drv, trucks=_trucks)
-        drivers = fetched['drivers']
+        # Shared reads (ref_data): the same drivers and trucks the other dashboards use, not a private copy.
+        drivers = sorted(ref_data.drivers(), key=lambda r: (r.get('Name') or '').lower())
         logged_in_ids = set()
         truck_map = {}
-        for asset in fetched['trucks']:
+        for asset in ref_data.trucks(active_only=False):
             dr_id = asset.get('ERS_Driver__c')
             if dr_id:
                 logged_in_ids.add(dr_id)

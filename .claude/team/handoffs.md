@@ -102,3 +102,9 @@ Format:
 - **Need:** Ruby-B: build B1 from §H2–H4 (`rules.py` in my scratchpad is a reference). Tamy: test with T1 05195827 (Towbook, all three), T2 05194934 (Fleet), T3 05195668 (On-Platform), optional T4 05194797 (towing rule). Owner: may switch `replay_member_contact` on once Tamy passes.
 - **Context:** 10/07 full-day pull (1,560 SAs, 15,175 history rows, counts verified); ~20 sequential read-only SELECTs; no DML, no Postgres.
 - **Status:** open
+
+## 2026-10-09 — Ruby → Tamy (branch perf/batch-2, three commits, nothing pushed)
+- **Update:** Speed batch 2 built from Dan's sf_query_audit. (1) Watchlist: one combined read (appointments + drivers + history + work order via ParentRecord), served from one snapshot (copy <=30 s as is, <=60 s served while ONE background rebuild runs, older waits); contractors served from the same snapshot; screen shows "updated Ns ago". (2) `backend/ref_data.py`: shared reads for Command Center, Ops Brief, Scheduler Insights, PTA advisor, driver map (trucks/members 10 min, drivers 2 min because they carry GPS, appointments + assignments 60 s, 8-week baseline 6 h). (3) Hidden tabs stop polling on Watchlist, Queue, Live Dispatch, On-Route, Contractor Dispatch.
+- **Need:** Tamy: compare each screen with production before/after (steps in the hand-off message). Watchlist: same alerts, same order, same counts; "updated Ns ago" counts up to ~30-60 then resets. Hidden tab: open Network, switch tabs for 2 min, no calls; switch back, one call at once.
+- **Context:** equality proofs ran live (SELECT only) against the old code from origin/main; scripts in the session scratchpad, not in the repo.
+- **Status:** open

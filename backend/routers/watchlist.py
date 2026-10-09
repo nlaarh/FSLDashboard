@@ -6,23 +6,25 @@ Auto-drops SAs completed/canceled for more than 5 minutes.
 Only shows SAs from the last 24 hours.
 
 Pure helper functions live in watchlist_helpers.py (keeps this file under 600 lines).
+The Salesforce read lives in watchlist_snapshot.py; this file turns that snapshot into alerts and decides when to
+re-read it: nobody waits for Salesforce once a copy exists (see "Serving" below).
 """
 
 import logging
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+import threading
+import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 
 import cache
 import users as _users
-from sf_client import sf_query_all, sf_parallel
-from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt
 from routers.watchlist_alerts import (
-    build_operational_alerts, build_no_sa_wo_alerts, fetch_wo_data,
+    build_operational_alerts, build_no_sa_wo_alerts, _rap_customer,
     enrich_alerts_with_kmi, sort_alerts,
 )
+from routers.watchlist_snapshot import fetch_snapshot
 from routers.auth import get_request_username
 from routers.watchlist_helpers import (
     _TERMINAL_STATUSES, _RESOLVED_STATUSES,
@@ -34,7 +36,14 @@ router = APIRouter()
 log = logging.getLogger('watchlist')
 
 CACHE_KEY = 'dispatch_watchlist'
-CACHE_TTL = 30
+FRESH_S = 30          # a copy this young is served as is (the screen polls every 30 s)
+MAX_STALE_S = 60      # a copy up to this old is served instantly while ONE background rebuild refreshes it;
+                      # older than this, the request waits for a rebuild (and falls back to the old copy only if it fails)
+_LOCK_NAME = 'watchlist_rebuild'
+
+# Serving: one copy per process. 'snap' = the raw Salesforce snapshot, 'result' = alerts for everybody built from it.
+_state: dict = {'snap': None, 'result': None, 'built': 0.0}
+_rebuild_lock = threading.Lock()      # one rebuild at a time in this process; waiters reuse its result
 
 
 # ── Endpoint ─────────────────────────────────────────────────────────────────
@@ -51,131 +60,135 @@ def api_watchlist(request: Request):
     username = get_request_username(request)
     user = _users.get_user(username) if username else None
     territories: list[str] = (user.get("territories") or []) if user and user.get("role") == "contractor" else []
+    return watchlist_for(territories)
 
-    # Contractor-scoped requests bypass shared cache (their slice is user-specific)
-    if not territories:
-        cached = cache.get(CACHE_KEY)
-        if cached:
-            return cached
-        cached = cache.disk_get(CACHE_KEY, CACHE_TTL)
-        if cached:
-            cache.put(CACHE_KEY, cached, CACHE_TTL)
-            return cached
 
+# ── Serving: last copy instantly, one background rebuild ─────────────────────
+
+def _age_of(last_updated) -> float:
+    """Seconds since an ISO 'last_updated' stamp (infinite when missing)."""
+    ts = _parse_dt(last_updated)
+    if not ts:
+        return float('inf')
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def _rebuild(block: bool) -> bool:
+    """Read Salesforce once and replace the copy. Only one rebuild runs at a time (block=False: skip if one is running
+    or another worker holds the rebuild lock; block=True: wait for the running one, then reuse its result)."""
+    if not _rebuild_lock.acquire(blocking=block):
+        return False
     try:
-        result = _build_watchlist(territories=territories)
+        if block and _age_of(_state['result'] and _state['result'].get('last_updated')) <= FRESH_S:
+            return True                                  # the rebuild we waited for already refreshed it
+        if not block and not cache.fs_lock_acquire(_LOCK_NAME, max_age=90):
+            return False                                 # another worker is rebuilding
+        try:
+            snap = fetch_snapshot()
+            result = assemble(snap, None)
+        finally:
+            if not block:
+                cache.fs_lock_release(_LOCK_NAME)
+        _state.update(snap=snap, result=result, built=time.time())
+        cache.put(CACHE_KEY, result, MAX_STALE_S)
+        cache.disk_put(CACHE_KEY, result, MAX_STALE_S)
+        return True
     except Exception as e:
         log.error(f"Watchlist build failed: {e}", exc_info=True)
-        if not territories:
-            stale = cache.get_stale(CACHE_KEY) or cache.disk_get_stale(CACHE_KEY)
-            if stale:
-                return stale
-        return {'watchlist': [], 'total': 0, 'last_updated': None, 'error': str(e)}
+        return False
+    finally:
+        _rebuild_lock.release()
 
-    if not territories:
-        cache.put(CACHE_KEY, result, CACHE_TTL)
-        cache.disk_put(CACHE_KEY, result, CACHE_TTL)
-    return result
+
+def _rebuild_in_background() -> None:
+    def run():
+        cache.set_system_thread(True)                    # a background rebuild is not a user read
+        _rebuild(block=False)
+    threading.Thread(target=run, daemon=True, name='watchlist-rebuild').start()
+
+
+def warm() -> None:
+    """Fill the copy once after a restart (called by the refresher)."""
+    if not _rebuild(block=True):
+        raise RuntimeError('watchlist warm-up failed')
+
+
+def watchlist_for(territories: list[str] | None = None) -> dict:
+    """The watchlist for everybody (territories empty) or for a contractor's territories.
+
+    Copy younger than FRESH_S: served. Up to MAX_STALE_S old: served at once and one background rebuild starts.
+    Older or missing: wait for a rebuild; if it fails, serve the last copy (or an error body). 'last_updated' always
+    says when Salesforce was read, so "updated Ns ago" on screen is true."""
+    snap = _state['snap']
+    result = _state['result']
+    age = time.time() - _state['built'] if snap else float('inf')
+    if not territories and age > FRESH_S:
+        disk = cache.disk_get_stale(CACHE_KEY)           # a copy another worker/process wrote may be newer
+        disk_age = _age_of(disk.get('last_updated')) if disk else float('inf')
+        if disk_age < age:
+            result, snap, age = disk, None, disk_age
+
+    if age > MAX_STALE_S or (territories and snap is None):
+        if not _rebuild(block=True):
+            return _fallback(territories, snap, result)
+        snap, result = _state['snap'], _state['result']
+    elif age > FRESH_S:
+        _rebuild_in_background()
+    return assemble(snap, territories) if territories else result
+
+
+def _fallback(territories, snap, result) -> dict:
+    """The rebuild failed: serve the last copy we have (its last_updated tells the truth about its age)."""
+    if territories:
+        if snap is not None:
+            return assemble(snap, territories)
+    else:
+        stale = result or cache.get_stale(CACHE_KEY) or cache.disk_get_stale(CACHE_KEY)
+        if stale:
+            return stale
+    return {'watchlist': [], 'total': 0, 'last_updated': None, 'error': 'Salesforce read failed'}
 
 
 # ── Build watchlist ──────────────────────────────────────────────────────────
 
-def _build_watchlist(territories: list[str] | None = None) -> dict:
-    now_utc = datetime.now(timezone.utc)
-    cutoff_24h = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    # Keep terminal calls only if they changed very recently (UI only needs a short
-    # grace window to show "Completed Xm ago" before auto-drop).
-    cutoff_recent_terminal = (now_utc - timedelta(minutes=15)).strftime('%Y-%m-%dT%H:%M:%SZ')
+def _wo_info(entry: dict | None) -> dict:
+    if not entry:
+        return {}
+    wo = entry.get('wo') or {}
+    return {
+        'wo_number': wo.get('WorkOrderNumber', ''),
+        'wo_id': entry.get('wo_id', ''),
+        'current_wait': wo.get('Current_Wait__c'),
+        'vehicle_make': wo.get('Vehicle_Make__c', ''),
+        'vehicle_model': wo.get('Vehicle_Model__c', ''),
+        'vehicle_plate': wo.get('License_Plate__c', ''),
+    }
 
-    # Build territory filter clause for contractor scoping
-    territory_clause = ""
-    if territories:
-        ids = ", ".join(f"'{t}'" for t in territories)
-        territory_clause = f"AND ServiceTerritoryId IN ({ids})"
 
-    # ── Query 1: Active + recently completed SAs (last 24h) ──
-    sas = sf_query_all(f"""
-        SELECT Id, AppointmentNumber, Status, StatusCategory,
-               ServiceTerritoryId, ServiceTerritory.Name,
-               WorkType.Name, WorkTypeId, ERS_PTA__c, Description,
-               ERS_Tow_Pick_Up_Drop_off__c, ParentRecordId,
-               WO_Priority_Code__c, FSL__GanttLabel__c,
-               AAA_ERS_Account_Facility__c, AAA_ERS_Account_Facility__r.Name,
-               AAA_ERS_Account_Facility__r.Phone,
-               AccountId, Account.Name, Account.PersonMobilePhone, Account.Phone,
-               Phone, Mobile_Phone__c,
-               ERS_Parent_Territory__c, ERS_Parent_Territory__r.Name,
-               CreatedDate, SchedStartTime, ActualStartTime, ActualEndTime,
-               LastModifiedDate, Street, City, Latitude, Longitude
-        FROM ServiceAppointment
-        WHERE RecordType.Name = 'ERS Service Appointment'
-          AND ServiceTerritoryId != null
-          AND CreatedDate >= {cutoff_24h}
-          {territory_clause}
-          AND (
-                StatusCategory IN ('None', 'Scheduled', 'Dispatched', 'InProgress', 'CheckedIn')
-                OR (
-                    StatusCategory IN ('Completed', 'Canceled')
-                    AND LastModifiedDate >= {cutoff_recent_terminal}
-                )
-          )
-        ORDER BY CreatedDate ASC
-    """)
+def assemble(snap: dict, territories: list[str] | None = None) -> dict:
+    """Alerts and watchlist entries from a snapshot. Pure Python, no Salesforce, so it also serves each contractor's
+    territories from the shared snapshot. Duplicate checks always look at every territory (as they always did)."""
+    now_utc = snap['now']
+    scope = set(territories) if territories else None
+    sas = [s for s in snap['sas'] if scope is None or s.get('ServiceTerritoryId') in scope]
+    ar_by_sa, hist_by_sa, wo_by_woli = snap['ar_by_sa'], snap['hist_by_sa'], snap['wo_by_woli']
+
+    def _kmi(alerts):
+        known = snap.get('kmi_map')
+        snap['kmi_map'] = enrich_alerts_with_kmi(alerts, known)
 
     # WO-level flag: Submitted WOs with no SA can't be found from the SA list below
-    no_sa_alerts = build_no_sa_wo_alerts(now_utc, territories)
+    no_sa_alerts = build_no_sa_wo_alerts(snap['no_sa_wos'], now_utc, territories)
 
     if not sas:
         if no_sa_alerts:
-            enrich_alerts_with_kmi(no_sa_alerts)
+            _kmi(no_sa_alerts)
         return {'watchlist': [], 'total': 0, 'operational_alerts': no_sa_alerts,
                 'last_updated': now_utc.isoformat()}
 
     sa_map = {s['Id']: s for s in sas}
-    sa_ids = list(sa_map.keys())
-
-    # ── Queries 2 & 3: AssignedResource + SAHistory in parallel ──
-    def _q_assigned():
-        return batch_soql_parallel("""
-            SELECT Id, ServiceAppointmentId,
-                   ServiceResource.Name, ServiceResource.Id,
-                   ServiceResource.ERS_Tech_ID__c,
-                   ServiceResource.ERS_Driver_Type__c,
-                   ServiceResource.LastKnownLatitude,
-                   ServiceResource.LastKnownLongitude,
-                   CreatedDate, CreatedBy.Name, CreatedBy.Profile.Name
-            FROM AssignedResource
-            WHERE ServiceAppointmentId IN ('{id_list}')
-            ORDER BY CreatedDate ASC
-        """, sa_ids, chunk_size=200)
-
-    def _q_history():
-        return batch_soql_parallel("""
-            SELECT ServiceAppointmentId, Field, OldValue, NewValue,
-                   CreatedDate, CreatedBy.Name, CreatedBy.Profile.Name
-            FROM ServiceAppointmentHistory
-            WHERE ServiceAppointmentId IN ('{id_list}')
-              AND Field IN ('Status', 'ERS_Assigned_Resource__c')
-            ORDER BY CreatedDate ASC
-        """, sa_ids, chunk_size=200)
-
-    data = sf_parallel(assigned=_q_assigned, history=_q_history)
-    ar_rows = data['assigned']
-    hist_rows = data['history']
-
-    # ── Index data by SA ──
-    ar_by_sa = defaultdict(list)       # sa_id -> [AssignedResource records]
-    hist_by_sa = defaultdict(list)     # sa_id -> [SAHistory records]
-
-    for r in ar_rows:
-        sa_id = r.get('ServiceAppointmentId')
-        if sa_id:
-            ar_by_sa[sa_id].append(r)
-
-    for r in hist_rows:
-        sa_id = r.get('ServiceAppointmentId')
-        if sa_id:
-            hist_by_sa[sa_id].append(r)
 
     # ── Evaluate each SA against watchlist criteria ──
     entries = []
@@ -219,34 +232,30 @@ def _build_watchlist(territories: list[str] | None = None) -> dict:
     entries.sort(key=_sort_key)
 
     # ── Operational Alerts (new flag-based table) ──
-    operational_alerts = build_operational_alerts(sas, sa_map, hist_by_sa, now_utc)
+    rap_by_woli = {woli: _rap_customer(v.get('wo')) for woli, v in wo_by_woli.items()}
+    operational_alerts = build_operational_alerts(sas, sa_map, hist_by_sa, now_utc,
+                                                  snap['dup_candidates'], rap_by_woli)
 
     # ── Enrich alerts with WO data + phases for timeline hover ──
-    if operational_alerts:
-        woli_ids = list({sa_map[a['sa_id']].get('ParentRecordId')
-                        for a in operational_alerts
-                        if a['sa_id'] in sa_map and sa_map[a['sa_id']].get('ParentRecordId')})
-        wo_data = fetch_wo_data(woli_ids) if woli_ids else {}
-        for alert in operational_alerts:
-            sa = sa_map.get(alert['sa_id'], {})
-            woli_id = sa.get('ParentRecordId', '')
-            wo_info = wo_data.get(woli_id, {})
-            alert['wo_number'] = wo_info.get('wo_number', '')
-            alert['wo_id'] = wo_info.get('wo_id', '')
-            alert['current_wait'] = wo_info.get('current_wait')
-            # Vehicle from WO
-            v_parts = [p for p in [wo_info.get('vehicle_make', ''), wo_info.get('vehicle_model', '')] if p]
-            alert['vehicle'] = ' '.join(v_parts)
-            alert['vehicle_plate'] = wo_info.get('vehicle_plate', '')
-            # Add phases for SAWithTimeline hover
-            hist_list = hist_by_sa.get(alert['sa_id'], [])
-            alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
-            alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
-            alert['work_type_id'] = sa.get('WorkTypeId') or ''
+    for alert in operational_alerts:
+        sa = sa_map.get(alert['sa_id'], {})
+        wo_info = _wo_info(wo_by_woli.get(sa.get('ParentRecordId', '')))
+        alert['wo_number'] = wo_info.get('wo_number', '')
+        alert['wo_id'] = wo_info.get('wo_id', '')
+        alert['current_wait'] = wo_info.get('current_wait')
+        # Vehicle from WO
+        v_parts = [p for p in [wo_info.get('vehicle_make', ''), wo_info.get('vehicle_model', '')] if p]
+        alert['vehicle'] = ' '.join(v_parts)
+        alert['vehicle_plate'] = wo_info.get('vehicle_plate', '')
+        # Add phases for SAWithTimeline hover
+        hist_list = hist_by_sa.get(alert['sa_id'], [])
+        alert['phases'] = _build_phases(hist_list, alert['status'], now_utc)
+        alert['work_type'] = (sa.get('WorkType') or {}).get('Name', '')
+        alert['work_type_id'] = sa.get('WorkTypeId') or ''
 
     operational_alerts.extend(no_sa_alerts)
     if operational_alerts:
-        enrich_alerts_with_kmi(operational_alerts)
+        _kmi(operational_alerts)
         sort_alerts(operational_alerts)
 
     return {

@@ -2,10 +2,10 @@
 
 import math as _math
 from fastapi import APIRouter, HTTPException, Query
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from collections import defaultdict
 
-from sf_client import sf_query_all_shared as sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sanitize_soql
 from utils import (
     _ET, parse_dt as _parse_dt, to_eastern as _to_eastern,
     is_fleet_territory, haversine,
@@ -13,9 +13,14 @@ from utils import (
 from dispatch import _driver_tier, _call_tier, _can_serve
 from ops import get_ops_territories, get_ops_territory_detail, get_ops_garages
 import cache
+import ref_data
 from cache import DASHBOARD_TTL
 
 router = APIRouter()
+
+# Appointment statuses the brief looks at (the list its old query had)
+_BRIEF_STATUSES = ('Dispatched', 'Completed', 'Canceled', 'Cancel Call - Service Not En Route',
+                   'Cancel Call - Service En Route', 'Unable to Complete', 'Assigned', 'No-Show')
 
 
 # ── Daily Operations ──────────────────────────────────────────────────────────
@@ -54,84 +59,16 @@ def ops_brief():
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(_ET)
         today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # 1) Parallel fetch: drivers, active SAs, priority matrix, hourly baseline
-        from sf_client import sf_parallel, sf_query_all as _sqa
-
-        def _get_drivers():
-            return _sqa("""
-                SELECT Id, Name, LastKnownLatitude, LastKnownLongitude,
-                       LastKnownLocationDate, ERS_Driver_Type__c, ERS_Tech_ID__c,
-                       RelatedRecord.Phone
-                FROM ServiceResource
-                WHERE IsActive = true AND ResourceType = 'T'
-                  AND LastKnownLatitude != null
-                  AND ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
-            """)
-
-        def _get_active_sas():
-            return _sqa(f"""
-                SELECT Id, AppointmentNumber, Status, CreatedDate, ActualStartTime,
-                       ERS_PTA__c, ERS_Dispatch_Method__c, ERS_Parent_Territory__c,
-                       ERS_Parent_Territory__r.Name,
-                       ServiceTerritoryId, ServiceTerritory.Name,
-                       WorkType.Name, Latitude, Longitude, Street, City, PostalCode
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {cutoff}
-                  AND ServiceTerritoryId != null
-                  AND RecordType.Name = 'ERS Service Appointment'
-                  AND Status IN ('Dispatched','Completed','Canceled',
-                                 'Cancel Call - Service Not En Route',
-                                 'Cancel Call - Service En Route',
-                                 'Unable to Complete','Assigned','No-Show')
-                ORDER BY CreatedDate ASC
-            """)
-
-        def _get_assigned_resources():
-            return _sqa(f"""
-                SELECT ServiceResourceId, ServiceAppointmentId,
-                       ServiceResource.Name
-                FROM AssignedResource
-                WHERE ServiceAppointment.CreatedDate >= {cutoff}
-                  AND ServiceAppointment.Status IN ('Dispatched','Assigned','In Progress')
-            """)
-
-        def _get_logged_in_drivers():
-            """Drivers currently logged into a vehicle (Asset.ERS_Driver__c)."""
-            return _sqa("""
-                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c, ERS_LegacyTruckID__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-                  AND ERS_Driver__r.IsActive = true
-            """)
-
-        def _get_hourly_baseline():
-            """Historical hourly volume for same DOW (last 8 weeks)."""
-            dow = now_utc.weekday()  # 0=Mon ... 6=Sun
-            # SF DAY_IN_WEEK: 1=Sun, 2=Mon, ... 7=Sat
-            sf_dow = dow + 2 if dow < 6 else 1
-            eight_weeks_ago = (now_utc - timedelta(weeks=8)).strftime('%Y-%m-%dT00:00:00Z')
-            return _sqa(f"""
-                SELECT HOUR_IN_DAY(CreatedDate) hr, COUNT(Id) cnt
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {eight_weeks_ago}
-                  AND DAY_IN_WEEK(CreatedDate) = {sf_dow}
-                  AND ServiceTerritoryId != null
-                  AND RecordType.Name = 'ERS Service Appointment'
-                  AND Status != 'Canceled'
-                GROUP BY HOUR_IN_DAY(CreatedDate)
-                ORDER BY HOUR_IN_DAY(CreatedDate)
-            """)
-
-        data = sf_parallel(
-            drivers=_get_drivers,
-            sas=_get_active_sas,
-            assigned=_get_assigned_resources,
-            baseline=_get_hourly_baseline,
-            logged_in=_get_logged_in_drivers,
-        )
+        # 1) Shared reads (ref_data): drivers, today's SAs and assignments, trucks, hourly baseline
+        sf_dow = (now_utc.weekday() + 2) if now_utc.weekday() < 6 else 1    # SF DAY_IN_WEEK: 1=Sun, 2=Mon, ... 7=Sat
+        data = {
+            'drivers': ref_data.drivers(),
+            'sas': ref_data.appointments(today_start, statuses=_BRIEF_STATUSES),
+            'assigned': ref_data.assigned(today_start, sa_statuses=('Dispatched', 'Assigned', 'In Progress')),
+            'baseline': ref_data.hourly_baseline(sf_dow, now_utc),
+            'logged_in': ref_data.trucks(),
+        }
 
         # Filter: only drivers logged into a vehicle (Asset.ERS_Driver__c)
         logged_in_ids = set()

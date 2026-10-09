@@ -13,8 +13,14 @@ from routers.command_center_helpers import (
     build_today_metrics, build_reassignment_cost,
 )
 import cache
+import ref_data
 
 router = APIRouter()
+
+
+# Appointment statuses the Command Center counts (the list its old query had)
+_CC_STATUSES = ('Dispatched', 'Completed', 'Canceled', 'Cancel Call - Service Not En Route',
+                'Cancel Call - Service En Route', 'Unable to Complete', 'Assigned', 'No-Show')
 
 
 # ── Command Center -- Live Territory Overview ─────────────────────────────────
@@ -29,6 +35,8 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
 
         # Parallel: SAs + active drivers with GPS per territory
         def _get_cc_sas():
+            if hours <= 24:                      # inside the shared last-24 h copy (ref_data)
+                return ref_data.appointments(now_utc.replace(microsecond=0) - timedelta(hours=hours), statuses=_CC_STATUSES)
             return sf_query_all(f"""
                 SELECT Id, AppointmentNumber, Status, CreatedDate,
                        ActualStartTime, SchedStartTime,
@@ -42,89 +50,40 @@ def command_center(hours: int = Query(24, ge=1, le=168)):
                 WHERE CreatedDate >= {cutoff_utc}
                   AND ServiceTerritoryId != null
                   AND RecordType.Name = 'ERS Service Appointment'
-                  AND Status IN ('Dispatched','Completed','Canceled',
-                                 'Cancel Call - Service Not En Route',
-                                 'Cancel Call - Service En Route',
-                                 'Unable to Complete','Assigned','No-Show')
+                  AND Status IN {_CC_STATUSES}
                 ORDER BY CreatedDate ASC
             """)
 
         def _get_cc_trucks():
             """On-shift drivers from Asset (vehicle login = on shift). Only real drivers."""
-            return sf_query_all("""
-                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-                  AND ERS_Driver__r.IsActive = true
-            """)
+            return ref_data.trucks()
 
         def _get_cc_drivers():
-            """STM for territory->driver mapping + GPS positions."""
-            return sf_query_all("""
-                SELECT ServiceTerritoryId, ServiceResourceId,
-                       ServiceResource.LastKnownLatitude,
-                       ServiceResource.LastKnownLocationDate,
-                       ServiceResource.ERS_Driver_Type__c
-                FROM ServiceTerritoryMember
-                WHERE TerritoryType IN ('P','S')
-                  AND ServiceResource.IsActive = true
-                  AND ServiceResource.ResourceType = 'T'
-            """)
+            """STM for territory->driver mapping (ids only: GPS comes from the all-fleet list)."""
+            return ref_data.members()
 
         # All GPS-capable drivers: Fleet + On-Platform Contractors (both use FSL app)
         def _get_all_fleet():
-            return sf_query_all("""
-                SELECT Id, Name, LastKnownLatitude, LastKnownLocationDate,
-                       ERS_Driver_Type__c
-                FROM ServiceResource
-                WHERE IsActive = true AND ResourceType = 'T'
-                  AND ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
-                  AND (NOT Name LIKE 'Test %')
-                  AND (NOT Name LIKE '000-%')
-                  AND (NOT Name LIKE '0 %')
-                  AND (NOT Name LIKE '100A %')
-                  AND (NOT Name LIKE '%SPOT%')
-                  AND Name != 'Travel User'
-            """)
+            return ref_data.drivers(require_gps=False,
+                                    exclude_names=('Test %', '000-%', '0 %', '100A %', '%SPOT%'),
+                                    exclude_exact=('Travel User',))
 
         # Today's SAs across ALL statuses for status breakdown + driver ATA leaderboard
         today_et = now_utc.astimezone(_ET).replace(hour=0, minute=0, second=0, microsecond=0)
         today_start = today_et.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         def _get_today_sas():
-            return sf_query_all(f"""
-                SELECT Id, Status, ERS_Dispatch_Method__c,
-                       CreatedDate, ActualStartTime,
-                       ERS_Cancellation_Reason__c, ERS_Facility_Decline_Reason__c,
-                       WorkType.Name
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {today_start}
-                  AND ServiceTerritoryId != null
-                  AND RecordType.Name = 'ERS Service Appointment'
-            """)
+            return ref_data.appointments(today_et.astimezone(timezone.utc))
 
         def _get_fleet_leaderboard():
-            return sf_query_all(f"""
-                SELECT Id, CreatedDate, ActualStartTime,
-                       ERS_Dispatch_Method__c,
-                       ServiceTerritory.Name
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {today_start}
-                  AND Status = 'Completed'
-                  AND ActualStartTime != null
-                  AND ServiceTerritoryId != null
-                  AND WorkType.Name != 'Tow Drop-Off'
-                  AND ERS_Dispatch_Method__c = 'Field Services'
-            """)
+            return [r for r in ref_data.appointments(today_et.astimezone(timezone.utc), ers_only=False,
+                                                     statuses=('Completed',))
+                    if r.get('ActualStartTime')
+                    and ((r.get('WorkType') or {}).get('Name') or '').lower() != 'tow drop-off'
+                    and (r.get('ERS_Dispatch_Method__c') or '').lower() == 'field services']
 
         def _get_fleet_drivers_today():
-            return sf_query_all(f"""
-                SELECT ServiceAppointmentId, ServiceResource.Name
-                FROM AssignedResource
-                WHERE ServiceAppointment.CreatedDate >= {today_start}
-                  AND ServiceAppointment.Status = 'Completed'
-                  AND ServiceAppointment.ERS_Dispatch_Method__c = 'Field Services'
-            """)
+            return ref_data.assigned(today_et.astimezone(timezone.utc), sa_statuses=('Completed',),
+                                     dispatch_method='Field Services')
 
         def _get_reassign_history():
             """Driver changes = real bounces (SA reassigned to different driver)."""
