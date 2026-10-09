@@ -16,6 +16,7 @@ import {
 import { StatChip, Div, LegendDot, LegendSmall, fmtPhone, fmtWait } from '../components/CommandCenterUtils'
 import DispatchInsightsFullView, { SuggestionCard } from '../components/DispatchInsights'
 import SAWatchlist from '../components/SAWatchlist'
+import { readLast } from '../components/garagelive/garageLiveModel'
 import useCommandCenterData from '../hooks/useCommandCenterData'
 import {
   STATUS_COLORS, SA_COLORS, WINDOWS, customerIcon,
@@ -43,16 +44,22 @@ export default function CommandCenter() {
     filtered, idleDriverIds,
   } = useCommandCenterData()
 
-  // The Garage Live tab lives in the URL (?tab=garage-live&garage=ID) so it can be shared, reloaded and remembered
+  // The Garage Live tab lives in the URL (?tab=garage-live&garage=ID) so it can be shared, reloaded and remembered.
+  // One place writes both parts together: two separate updates would overwrite each other.
   const [params, setParams] = useSearchParams()
-  useEffect(() => { if (params.get('tab') === 'garage-live') setViewMode('garage-live') }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const garageTabUrl = p => { const n = new URLSearchParams(p); n.set('tab', 'garage-live'); const last = readLast(); if (!n.get('garage') && last) n.set('garage', last); return n }
+  useEffect(() => {
+    if (params.get('tab') !== 'garage-live') return
+    setViewMode('garage-live')
+    if (!params.get('garage') && readLast()) setParams(garageTabUrl, { replace: true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const shownTab = useRef(viewMode)
   useEffect(() => {
     if (shownTab.current === viewMode) return                       // only a real tab change touches the URL (the first pass still shows the default tab)
     shownTab.current = viewMode
     const on = params.get('tab') === 'garage-live'
-    if (viewMode === 'garage-live' && !on) setParams(p => { const n = new URLSearchParams(p); n.set('tab', 'garage-live'); return n }, { replace: true })
-    if (viewMode !== 'garage-live' && on && params.get('tab')) setParams(p => { const n = new URLSearchParams(p); n.delete('tab'); n.delete('garage'); return n }, { replace: true })
+    if (viewMode === 'garage-live') setParams(garageTabUrl, { replace: true })
+    else if (on) setParams(p => { const n = new URLSearchParams(p); n.delete('tab'); n.delete('garage'); return n }, { replace: true })
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

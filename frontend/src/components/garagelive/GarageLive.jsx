@@ -30,9 +30,6 @@ export default function GarageLive() {
   const { data, error, stale, loading, receivedAt, reload } = useGarageLive(garageId)
 
   useEffect(() => { fetchGarages().then(setGarages).catch(() => setGaragesError('The garage list could not be loaded.')) }, [])
-  useEffect(() => {                                              // put a remembered garage into the URL so the page can be shared and reloaded
-    if (!urlId && garageId) setParams(p => { const n = new URLSearchParams(p); n.set('garage', garageId); return n }, { replace: true })
-  }, [urlId, garageId, setParams])
   useEffect(() => { if (garageId) writeLast(garageId) }, [garageId])
   useEffect(() => { const id = setInterval(() => setNowMs(Date.now()), 1000); return () => clearInterval(id) }, [])
 
