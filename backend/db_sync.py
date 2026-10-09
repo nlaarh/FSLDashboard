@@ -7,13 +7,18 @@ seed, incremental sync, and status. Uses core functions from db.py.
 import os, time as _time
 from datetime import datetime, date, timedelta, timezone
 
-from sf_client import sf_query_all, refresh_auth
+from sf_client import TIMEOUT_LONG, sf_query_all as _sf_query_all, refresh_auth
 from db import (
     get_con, query, query_scalar, execute,
     _get_last_sync, _set_last_sync,
     _LOCAL_DIR, _DB_PATH, is_seeded,
     _sync_static,
 )
+
+
+def sf_query_all(soql: str) -> list[dict]:
+    """Bulk sync pulls: allowed the long Salesforce timeout."""
+    return _sf_query_all(soql, timeout=TIMEOUT_LONG)
 
 
 # ── Dynamic table sync (chunked by date) ────────────────────────────────────

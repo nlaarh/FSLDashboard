@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed, _reference_allowed
 import cache
 import refresher
+import sf_client
 import users as _users
 from repositories import settings, activity
 
@@ -112,6 +113,13 @@ async def auth_middleware(request: Request, call_next):
     # Not authenticated — API calls get 401; page requests get the SPA so React renders <Landing />
     if path.startswith("/api/"):
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def sf_endpoint_middleware(request: Request, call_next):
+    """Tag this request so every Salesforce call it causes is counted for its endpoint (admin system health)."""
+    sf_client.sf_endpoint.set(sf_client.endpoint_label(request.url.path))
     return await call_next(request)
 
 

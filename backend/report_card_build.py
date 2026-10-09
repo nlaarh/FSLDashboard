@@ -11,7 +11,7 @@ import logging
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
-from sf_client import sf_composite_query, sf_query, sf_query_all, sf_rest_get, sanitize_soql
+from sf_client import TIMEOUT_LONG, sf_composite_query, sf_query, sf_query_all, sf_rest_get, sanitize_soql
 from utils import _ET, ERS_SA_FILTER
 
 log = logging.getLogger('report_card_build')
@@ -80,7 +80,7 @@ class Puller:
 
     def all(self, soql: str) -> list:
         self._spend()
-        return sf_query_all(soql)
+        return sf_query_all(soql, timeout=TIMEOUT_LONG)   # replay GPS history alone takes 28-39 s
 
     def composite(self, named: dict) -> dict:
         """Several queries in one Salesforce request: counts 1 call (+1 per extra result page). Returns {key: records}.
@@ -103,7 +103,7 @@ class Puller:
 
     def count(self, soql: str) -> int:
         self._spend()
-        return sf_query(soql).get('totalSize', 0)
+        return sf_query(soql, timeout=TIMEOUT_LONG).get('totalSize', 0)
 
     def batched(self, template: str, ids, size: int = 150, split_on_timeout: bool = False) -> list:
         ids = sorted(set(i for i in ids if i))
