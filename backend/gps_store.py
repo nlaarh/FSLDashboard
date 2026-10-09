@@ -25,7 +25,8 @@ MAX_LOOKBACK_MIN = 60      # after an outage the sampler asks for at most this m
 KEEP_DAYS = 15         # owner 2026-10-09: no longer than 15 days; older Replay days read Salesforce (not "covered")
 HEARTBEAT_S = 300          # a parked driver still gets one point every 5 min
 MOVE_DEG = 0.0001          # about 11 m: smaller moves count as parked
-RETENTION_EVERY_S = 6 * 3600
+RETENTION_EVERY_S = 3600       # hourly, so the table never holds much more than 15 days
+MAX_POINTS = 300_000           # hard cap (~2x the expected 15 days): above it nothing is written and Replay reads Salesforce
 
 _last = {}                 # resource id -> (epoch, lat, lon) of the last point stored by this worker
 _state = {'retention': 0.0}
@@ -71,6 +72,10 @@ def sample_once(now: datetime | None = None) -> dict | None:
         row = db.execute('SELECT max(sampled_at) AS last FROM driver_gps_samples').fetchone()
         floor = now - timedelta(minutes=MAX_LOOKBACK_MIN)
         since = max(speed3_db.as_dt(row['last']) - timedelta(seconds=5), floor) if row and row['last'] else now - timedelta(minutes=5)
+        count = db.execute('SELECT count(*) AS n FROM driver_gps_points').fetchone()['n']
+        if count >= MAX_POINTS:                  # never grow past the cap; no sample is recorded, so Replay falls back to Salesforce
+            log.warning('GPS store at its cap (%s points >= %s): not sampling until the hourly cleanup runs', count, MAX_POINTS)
+            return {'rows_seen': 0, 'points_written': 0, 'capped': True}
         records = sf_query_all(_sample_soql(since))
         points = points_from(records, _last)
         written = 0

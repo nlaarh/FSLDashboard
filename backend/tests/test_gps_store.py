@@ -142,3 +142,13 @@ def test_flag_on_and_covered_the_map_needs_no_salesforce_history_read(speed3_sql
 def test_flag_on_but_not_covered_falls_back_to_salesforce(speed3_sqlite, monkeypatch):
     m, p = _map(monkeypatch, replay_gps_store=True)                                        # empty store
     assert any('ServiceResourceHistory' in q for q in p.queries) and m['drivers'][0]['source'] == 'salesforce'
+
+
+def test_sampler_stops_writing_at_the_size_cap_and_asks_salesforce_nothing(speed3_sqlite, monkeypatch):
+    monkeypatch.setattr(gps_store, 'MAX_POINTS', 1)
+    asked = []
+    monkeypatch.setattr(gps_store, 'sf_query_all', lambda q: asked.append(q) or [rec('A', T0)])
+    assert gps_store.sample_once(T0 + timedelta(seconds=30)) == {'rows_seen': 1, 'points_written': 1}
+    assert gps_store.sample_once(T0 + timedelta(seconds=90)) == {'rows_seen': 0, 'points_written': 0, 'capped': True}
+    assert len(asked) == 1                                                               # capped run made no Salesforce read
+    assert speed3_sqlite.execute('SELECT count(*) FROM driver_gps_samples').fetchone()[0] == 1   # no sample: Replay falls back
