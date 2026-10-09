@@ -1,6 +1,6 @@
 """Accounting audit — heavy WOA audit computation."""
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_query_all_shared, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt
 from fastapi import HTTPException
@@ -16,6 +16,7 @@ from routers.accounting_calc import (
     _SF_BASE, _TIME_CODES, _TOW_CODES, estimate_gvw,
 )
 from routers.accounting_audit_ai import call_audit_ai
+from routers.accounting_towbook_log import towbook_log_soql
 from routers.accounting_photos import fetch_photos
 from repositories import accounting
 
@@ -35,6 +36,7 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
                Work_Order__r.ServiceTerritory.ParentTerritory.Name,
+               Work_Order__r.CreatedDate,
                Work_Order__r.Facility_Name__c,
                Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
@@ -101,15 +103,9 @@ def _build_woa_data(woa_id: str) -> dict:
     def _get_rflib_gps_r2():
         if _is_on_platform or not _wo_number:
             return []
-        return sf_query_all(f"""
-            SELECT ERS_Request__c, CreatedDate
-            FROM rflib_Log__c
-            WHERE Type__c = 'Integration Towbook Inbound'
-              AND Context__c = 'Appointment Update from Towbook'
-              AND ReferenceId__c = '{sanitize_soql(_wo_number)}'
-            ORDER BY CreatedDate ASC
-            LIMIT 50
-        """)
+        soql = towbook_log_soql(_wo_number, wo.get('CreatedDate'))
+        # Shared read: audits of the same work order (several WOAs, AI step, PDF) made together cost one query
+        return sf_query_all_shared(soql, ttl=300) if soql else []
 
     def _get_same_day_r2():
         # same_day only needed for New (open) WOAs — skip for Approved/Rejected
