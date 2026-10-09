@@ -372,6 +372,23 @@ def contractor_recs_pg_fuel(
 
 # ── GET /api/contractor/recommendations/er-miles ─────────────────────────────
 
+def _status_history_for_wos(wo_ids: list[str]) -> list[dict]:
+    """'En Route' / 'On Location' status changes of the appointments of these work orders, oldest first.
+    Salesforce cannot filter history NewValue ("field 'NewValue' can not be filtered"), so the query reads the
+    work orders' Status rows (a handful per appointment, at most 500 work orders) and keeps these two here."""
+    id_csv = "','".join(sanitize_soql(x) for x in wo_ids)
+    rows = sf_query_all(f"""
+        SELECT ServiceAppointmentId, NewValue, CreatedDate,
+               ServiceAppointment.ERS_Work_Order__c
+        FROM ServiceAppointmentHistory
+        WHERE ServiceAppointment.ERS_Work_Order__c IN ('{id_csv}')
+          AND Field = 'Status'
+        ORDER BY ServiceAppointmentId, CreatedDate ASC
+        LIMIT 50000
+    """)
+    return [r for r in rows if r.get("NewValue") in ("En Route", "On Location")]
+
+
 @router.get("/api/contractor/recommendations/er-miles")
 def contractor_recs_er_miles(
     request: Request,
@@ -426,22 +443,11 @@ def contractor_recs_er_miles(
         return {"items": []}
 
     # Fetch SA history to detect On-Location-before-Enroute anomaly.
-    # Cross-object filter on SAHistory is not supported in all SF orgs — fall back
-    # to empty history if the query fails so the rest of the endpoint still works.
+    # The rest of the endpoint still works if the history query fails.
     candidate_ids = [wo["Id"] for wo in candidates[:500]]
     history_rows = []
     try:
-        id_csv = "','".join(sanitize_soql(x) for x in candidate_ids)
-        history_rows = sf_query_all(f"""
-            SELECT ServiceAppointmentId, NewValue, CreatedDate,
-                   ServiceAppointment.ERS_Work_Order__c
-            FROM ServiceAppointmentHistory
-            WHERE ServiceAppointment.ERS_Work_Order__c IN ('{id_csv}')
-              AND Field = 'Status'
-              AND NewValue IN ('En Route', 'On Location')
-            ORDER BY ServiceAppointmentId, CreatedDate ASC
-            LIMIT 50000
-        """)
+        history_rows = _status_history_for_wos(candidate_ids)
     except Exception as e:
         log.warning(f"contractor_recs_er_miles: SA history query failed (skipping): {e}")
 

@@ -1,6 +1,6 @@
 """Accounting audit — heavy WOA audit computation."""
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_query_all_shared, sf_parallel, sanitize_soql
 from sf_batch import batch_soql_parallel
 from utils import parse_dt as _parse_dt
 from fastapi import HTTPException
@@ -16,8 +16,36 @@ from routers.accounting_calc import (
     _SF_BASE, _TIME_CODES, _TOW_CODES, estimate_gvw,
 )
 from routers.accounting_audit_ai import call_audit_ai
+from routers.accounting_towbook_log import towbook_log_soql
 from routers.accounting_photos import fetch_photos
 from repositories import accounting
+
+def _same_day_calls(account_id: str, date_str: str, wo_id: str, wo_number: str) -> list:
+    """Other work orders of this member created on the date (UTC day) of the adjustment."""
+    if not (account_id and date_str):
+        return []
+    try:
+        rows = sf_query_all(f"""
+            SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
+                   ServiceTerritory.Name
+            FROM WorkOrder
+            WHERE AccountId = '{sanitize_soql(account_id)}'
+              AND CreatedDate >= {date_str}T00:00:00Z
+              AND CreatedDate <= {date_str}T23:59:59Z
+              AND Id != '{sanitize_soql(wo_id)}'
+            LIMIT 10
+        """)
+    except Exception as e:
+        log.warning(f"Same-day work orders lookup failed for WO {wo_number}: {e}")
+        return []
+    return [
+        {'wo_number': r.get('WorkOrderNumber'), 'status': r.get('Status'),
+         'trouble_code': r.get('Trouble_Code__c'), 'created_date': r.get('CreatedDate'),
+         'territory': (r.get('ServiceTerritory') or {}).get('Name')}
+        for r in (rows or [])
+        if r.get('WorkOrderNumber') != wo_number
+    ]
+
 
 def _build_woa_data(woa_id: str) -> dict:
     """Build full WOA audit data WITHOUT the AI call (fast path, ~3-5s).
@@ -35,6 +63,7 @@ def _build_woa_data(woa_id: str) -> dict:
                Work_Order__r.ServiceTerritoryId,
                Work_Order__r.ServiceTerritory.Name,
                Work_Order__r.ServiceTerritory.ParentTerritory.Name,
+               Work_Order__r.CreatedDate,
                Work_Order__r.Facility_Name__c,
                Work_Order__r.Facility__r.Name,
                Work_Order__r.Latitude, Work_Order__r.Longitude,
@@ -101,42 +130,15 @@ def _build_woa_data(woa_id: str) -> dict:
     def _get_rflib_gps_r2():
         if _is_on_platform or not _wo_number:
             return []
-        return sf_query_all(f"""
-            SELECT ERS_Request__c, CreatedDate
-            FROM rflib_Log__c
-            WHERE Type__c = 'Integration Towbook Inbound'
-              AND Context__c = 'Appointment Update from Towbook'
-              AND ReferenceId__c = '{sanitize_soql(_wo_number)}'
-            ORDER BY CreatedDate ASC
-            LIMIT 50
-        """)
+        soql = towbook_log_soql(_wo_number, wo.get('CreatedDate'))
+        # Shared read: audits of the same work order (several WOAs, AI step, PDF) made together cost one query
+        return sf_query_all_shared(soql, ttl=300) if soql else []
 
     def _get_same_day_r2():
         # same_day only needed for New (open) WOAs — skip for Approved/Rejected
         if (woa.get('Status__c') or '') != 'New':
             return []
-        if not (_account_id and _woa_date_str):
-            return []
-        try:
-            rows = sf_query_all(f"""
-                SELECT WorkOrderNumber, Status, Trouble_Code__c, CreatedDate,
-                       ServiceTerritory.Name
-                FROM WorkOrder
-                WHERE AccountId = '{sanitize_soql(_account_id)}'
-                  AND CreatedDate >= {_woa_date_str}T00:00:00Z
-                  AND CreatedDate <= {_woa_date_str}T23:59:59Z
-                  AND Id != '{sanitize_soql(wo_id)}'
-                LIMIT 10
-            """, max_records=10)
-            return [
-                {'wo_number': r.get('WorkOrderNumber'), 'status': r.get('Status'),
-                 'trouble_code': r.get('Trouble_Code__c'), 'created_date': r.get('CreatedDate'),
-                 'territory': (r.get('ServiceTerritory') or {}).get('Name')}
-                for r in (rows or [])
-                if r.get('WorkOrderNumber') != _wo_number
-            ]
-        except Exception:
-            return []
+        return _same_day_calls(_account_id, _woa_date_str, wo_id, _wo_number)
 
     def _get_all_sa_history_r2():
         """SA history for SAs directly linked to WO (ParentRecordId = WO.Id)."""

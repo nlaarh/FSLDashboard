@@ -11,9 +11,14 @@ from routers.auth import get_request_username
 from utils import _ET, parse_dt as _parse_dt
 from dispatch import _driver_tier, _call_tier, _can_serve
 import cache
+import ref_data
 
 router = APIRouter()
 
+
+# Statuses of today's appointments this screen looks at
+_PTA_STATUSES = ('Dispatched', 'Completed', 'Assigned', 'Cancel Call - Service Not En Route',
+                 'Cancel Call - Service En Route', 'Unable to Complete', 'Canceled', 'No-Show')
 
 # Cycle times in minutes (verified from 8,500+ SAs, Mar 2026)
 _CYCLE_TIMES = {'tow': 115, 'winch': 40, 'battery': 38, 'light': 33}
@@ -83,41 +88,16 @@ def pta_advisor(request: Request):
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(_ET)
         today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        cutoff = today_start.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         from sf_client import sf_parallel, sf_query_all as _sqa
 
         data = sf_parallel(
-            # Today's SAs with territory and work type
-            sas=lambda: _sqa(f"""
-                SELECT Id, Status, CreatedDate, ActualStartTime,
-                       ERS_PTA__c, ERS_Dispatch_Method__c,
-                       Off_Platform_Driver__r.Name, Off_Platform_Truck_Id__c,
-                       ServiceTerritoryId, ServiceTerritory.Name,
-                       WorkType.Name
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {cutoff}
-                  AND ServiceTerritoryId != null
-                  AND Status IN ('Dispatched','Completed','Assigned',
-                                 'Cancel Call - Service Not En Route',
-                                 'Cancel Call - Service En Route',
-                                 'Unable to Complete','Canceled','No-Show')
-            """),
-            # Assigned resources for active SAs (driver → SA mapping)
-            assigned=lambda: _sqa(f"""
-                SELECT ServiceResourceId, ServiceResource.Name, ServiceAppointmentId
-                FROM AssignedResource
-                WHERE ServiceAppointment.CreatedDate >= {cutoff}
-                  AND ServiceAppointment.Status IN ('Dispatched','Assigned','In Progress')
-            """),
+            # Today's SAs with territory and work type, and their assigned drivers (shared reads, ref_data;
+            # this screen never filtered on record type)
+            sas=lambda: ref_data.appointments(today_start, ers_only=False, statuses=_PTA_STATUSES),
+            assigned=lambda: ref_data.assigned(today_start, sa_statuses=('Dispatched', 'Assigned', 'In Progress')),
             # Logged-in drivers (Asset = truck with driver)
-            logged_in=lambda: _sqa("""
-                SELECT ERS_Driver__c, Name, ERS_Truck_Capabilities__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-                  AND ERS_Driver__r.IsActive = true
-            """),
+            logged_in=lambda: ref_data.trucks(),
             # Territory membership (driver → territory)
             members=lambda: _sqa("""
                 SELECT ServiceResourceId, ServiceTerritoryId

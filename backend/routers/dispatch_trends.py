@@ -31,6 +31,10 @@ def api_trends():
     _sf_id_pat = re.compile(r'^[a-zA-Z0-9]{15}$|^[a-zA-Z0-9]{18}$')
 
     def _fetch():
+        from facts_trends import trends_or_none      # flag daily_facts: our daily facts table instead of 31 days of history
+        facts = trends_or_none()
+        if facts is not None:
+            return facts
         # ── Parallel SOQL queries ────────────────────────────────────
         # Use LAST_N_DAYS:31 + CreatedDate < TODAY to get 30 complete days
         # (excludes today's incomplete data)

@@ -10,6 +10,7 @@ const fmtPhone = (raw) => {
   return raw
 }
 import { clsx } from 'clsx'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const STATUS_COLORS = {
   'Dispatched': 'bg-blue-500/15 text-blue-400 border-blue-500/30',
@@ -55,9 +56,9 @@ export default function OnRoute() {
 
   useEffect(() => {
     load()
-    timerRef.current = setInterval(() => load(), 60000)
+    timerRef.current = pollWhileVisible(() => load(), 60000)
     tickRef.current = setInterval(() => setNow(Date.now()), 30000) // update elapsed every 30s
-    return () => { clearInterval(timerRef.current); clearInterval(tickRef.current) }
+    return () => { timerRef.current(); clearInterval(tickRef.current) }
   }, [])
 
   // Focus search on load

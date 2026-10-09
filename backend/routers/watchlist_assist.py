@@ -16,7 +16,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import sf_query_all, sf_query_all_shared, sf_parallel, sanitize_soql
 from utils import haversine, TRAVEL_SPEED_MPH, is_fleet_territory
 
 router = APIRouter()
@@ -195,6 +195,28 @@ def _process_drivers(rows: list, sa_lat, sa_lon, busy_map: dict = None,
     return drivers
 
 
+# Who is on a truck and who is absent today barely change within minutes, and every Assist click needs both: one shared
+# read per 10 minutes for all clicks, both modes (ResourceAbsence is a table scan, 0.68 s).
+_REFERENCE_TTL = 600
+
+
+def _q_logged_in():
+    return sf_query_all_shared("""
+        SELECT ERS_Driver__c
+        FROM Asset
+        WHERE RecordType.Name = 'ERS Truck'
+          AND ERS_Driver__c != null
+    """, ttl=_REFERENCE_TTL)
+
+
+def _q_absent():
+    return sf_query_all_shared("""
+        SELECT ResourceId
+        FROM ResourceAbsence
+        WHERE Start <= TODAY AND End >= TODAY
+    """, ttl=_REFERENCE_TTL)
+
+
 _TERRITORY_MEMBER_SUBQUERY = """
     SELECT ServiceResourceId FROM ServiceTerritoryMember
     WHERE ServiceTerritoryId = '{t}'
@@ -236,21 +258,6 @@ def _fetch_territory_drivers(territory: str, sa_lat, sa_lon, work_type: str = No
             WHERE ServiceResourceId IN ({mem_sub})
               AND CreatedDate = LAST_N_DAYS:3
               AND ServiceAppointment.StatusCategory IN ('Scheduled','Dispatched','InProgress')
-        """)
-
-    def _q_logged_in():
-        return sf_query_all("""
-            SELECT ERS_Driver__c
-            FROM Asset
-            WHERE RecordType.Name = 'ERS Truck'
-              AND ERS_Driver__c != null
-        """)
-
-    def _q_absent():
-        return sf_query_all("""
-            SELECT ResourceId
-            FROM ResourceAbsence
-            WHERE Start <= TODAY AND End >= TODAY
         """)
 
     data = sf_parallel(drivers=_q_drivers, busy=_q_busy, logged_in=_q_logged_in, absent=_q_absent)
@@ -322,21 +329,6 @@ def _fetch_000_resources(sa_lat, sa_lon, parent_territory_id: str, work_type: st
               AND ServiceResource.ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
               AND ServiceResource.IsActive = true
               AND ServiceAppointment.CreatedDate >= LAST_N_DAYS:2
-        """)
-
-    def _q_logged_in():
-        return sf_query_all("""
-            SELECT ERS_Driver__c
-            FROM Asset
-            WHERE RecordType.Name = 'ERS Truck'
-              AND ERS_Driver__c != null
-        """)
-
-    def _q_absent():
-        return sf_query_all("""
-            SELECT ResourceId
-            FROM ResourceAbsence
-            WHERE Start <= TODAY AND End >= TODAY
         """)
 
     data = sf_parallel(garages=_q_garages, fsl_drivers=_q_fsl_drivers, fsl_busy=_q_fsl_busy,

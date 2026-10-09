@@ -20,6 +20,7 @@ import DriverMapPopup from './DriverMapPopup'
 import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
 import { fetchWatchlist } from '../api'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const CallMapView = lazy(() => import('./callmap/CallMapView'))   // the full-window call map loads only when opened
 
@@ -55,6 +56,8 @@ const FLAG_COLORS = {
   'Call Not Assigned': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
   'Call Not Assigned - Rejected': 'bg-rose-500/20 text-rose-400 border-rose-500/40',
   'Call Not Assigned - Received': 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+  'No Service Resource': 'bg-lime-500/20 text-lime-400 border-lime-500/40',
+  'Service Territory Needs Action': 'bg-teal-500/20 text-teal-400 border-teal-500/40',
   'Call Not Closed': 'bg-purple-500/20 text-purple-400 border-purple-500/40',
   'Potential Duplicate': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
   'No Service Appointments on Work Order': 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/40',
@@ -463,28 +466,29 @@ export default function SAWatchlist({ contractorMode = false }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [countdown, setCountdown] = useState(30)
+  const [nowMs, setNowMs] = useState(() => Date.now())   // ticks every second so 'updated Ns ago' stays true
   const [mapDriver, setMapDriver] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [activeTab, setActiveTab] = useState('alerts')
+  const updatedMs = data?.last_updated ? Date.parse(data.last_updated) : NaN
+  const updatedAgo = Number.isNaN(updatedMs) ? null : Math.max(0, Math.round((nowMs - updatedMs) / 1000))
   const searchRef = useRef(null)
 
   // ── Data fetching with auto-refresh ──
   useEffect(() => {
     const load = () => {
       fetchWatchlist()
-        .then(d => { setData(d); setCountdown(30); setError(null) })
+        .then(d => { setData(d); setNowMs(Date.now()); setError(null) })
         .catch(e => setError(e.message))
         .finally(() => setLoading(false))
     }
     load()
-    const iv = setInterval(load, 30000)
-    return () => clearInterval(iv)
+    return pollWhileVisible(load, 30000)
   }, [])
 
   // ── Countdown ticker ──
   useEffect(() => {
-    const t = setInterval(() => setCountdown(c => Math.max(c - 1, 0)), 1000)
+    const t = setInterval(() => setNowMs(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
@@ -585,7 +589,7 @@ export default function SAWatchlist({ contractorMode = false }) {
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
           <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
           <span>LIVE</span>
-          <span className="tabular-nums">{countdown}s</span>
+          {updatedAgo != null && <span className="tabular-nums" title="When Salesforce was last read for this screen">updated {updatedAgo}s ago</span>}
         </div>
       </div>
 
@@ -778,7 +782,7 @@ export default function SAWatchlist({ contractorMode = false }) {
               <div>
                 <h3 className="font-bold text-white mb-1">What are Operational Alerts?</h3>
                 <p className="text-slate-400">
-                  SAs and Work Orders that match one of 8 flag conditions indicating dispatcher intervention may be needed.
+                  SAs and Work Orders that match one of 10 flag conditions indicating dispatcher intervention may be needed.
                   The system evaluates all open SAs (and Submitted Work Orders) every 30 seconds and flags those that meet criteria.
                 </p>
               </div>
@@ -800,6 +804,14 @@ export default function SAWatchlist({ contractorMode = false }) {
                   <div>
                     <span className="text-amber-400 font-bold">Call Not Assigned - Received</span>
                     <p className="pl-2 mt-0.5">SA status is 'Received' — call entered the system but hasn't been dispatched yet.</p>
+                  </div>
+                  <div>
+                    <span className="text-lime-400 font-bold">No Service Resource</span>
+                    <p className="pl-2 mt-0.5">The appointment's Scheduled Start had a value and was removed — it is blank now and the call is more than 5 minutes old. The flag clears as soon as Scheduled Start has a value again.</p>
+                  </div>
+                  <div>
+                    <span className="text-teal-400 font-bold">Service Territory Needs Action</span>
+                    <p className="pl-2 mt-0.5">The territory on an active call (appointment or work order) is blank or starts with a letter — it should start with a number.</p>
                   </div>
                   <div>
                     <span className="text-purple-400 font-bold">Call Not Closed</span>

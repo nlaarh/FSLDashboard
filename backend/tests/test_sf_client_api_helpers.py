@@ -35,7 +35,7 @@ def _reset_sf_state(monkeypatch):
     sf_client._stats.update({"total_calls": 0, "errors": 0, "rate_waits": 0, "breaker_trips": 0})
     sf_client._recent_errors.clear()
     monkeypatch.setattr(sf_client, "get_auth", lambda: ("token-1", "https://example.my.salesforce.com"))
-    monkeypatch.setattr(sf_client, "refresh_auth", lambda: ("token-2", "https://example.my.salesforce.com"))
+    monkeypatch.setattr(sf_client, "refresh_auth", lambda *a: ("token-2", "https://example.my.salesforce.com"))
 
 
 def test_sf_rest_get_builds_versioned_path_and_params(monkeypatch):

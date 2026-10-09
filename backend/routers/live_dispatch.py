@@ -131,6 +131,7 @@ def _build_live_dispatch(territories: list[str] | None = None) -> dict:
             WHERE StatusCategory IN ('Completed')
               AND RecordType.Name = 'ERS Service Appointment'
               AND ActualEndTime >= {cutoff_1h}
+              AND CreatedDate >= {cutoff_24h}
               {territory_clause}
         """)
 
