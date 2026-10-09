@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Search, Loader2, RefreshCw, AlertCircle } from 'lucide-react'
+import { pollWhileVisible } from '../../utils/pollWhileVisible'
 
 // UNRELEASED — rendered only when the backend `contractor_dispatch` flag is on.
 // Dispatch board for a contractor's own garages. Read-only by design: no new
@@ -60,8 +61,7 @@ export default function ContractorDispatch() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    const t = setInterval(load, 60000)   // keep the board current
-    return () => clearInterval(t)
+    return pollWhileVisible(load, 60000)   // keep the board current (paused while the tab is hidden)
   }, [load])
 
   const counts = data?.counts || {}

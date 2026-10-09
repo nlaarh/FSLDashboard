@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import SALink from '../components/SALink'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const URGENCY_COLORS = {
   green:  'bg-emerald-500/20 text-emerald-400 border-emerald-700/30',
@@ -262,8 +263,7 @@ export default function QueueBoard() {
 
   useEffect(() => {
     if (!autoRefresh) return
-    const id = setInterval(load, 30000)
-    return () => clearInterval(id)
+    return pollWhileVisible(load, 30000)
   }, [autoRefresh, load])
 
   const queue = data?.queue || []

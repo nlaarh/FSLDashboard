@@ -20,6 +20,7 @@ import DriverMapPopup from './DriverMapPopup'
 import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
 import { fetchWatchlist } from '../api'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 const CallMapView = lazy(() => import('./callmap/CallMapView'))   // the full-window call map loads only when opened
 
@@ -478,8 +479,7 @@ export default function SAWatchlist({ contractorMode = false }) {
         .finally(() => setLoading(false))
     }
     load()
-    const iv = setInterval(load, 30000)
-    return () => clearInterval(iv)
+    return pollWhileVisible(load, 30000)
   }, [])
 
   // ── Countdown ticker ──

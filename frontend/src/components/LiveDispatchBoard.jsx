@@ -20,6 +20,7 @@ import CheckpointTracker from './CheckpointTracker'
 import { DrillDown } from './CommandCenterUtils'
 import SALink from './SALink'
 import DriverMapPopup from './DriverMapPopup'
+import { pollWhileVisible } from '../utils/pollWhileVisible'
 
 // ── Phase & Channel constants ────────────────────────────────────────────────
 const PHASES = ['Dispatched', 'Accepted', 'En Route', 'On Location', 'In Progress']
@@ -235,8 +236,7 @@ export default function LiveDispatchBoard() {
         .finally(() => setLoading(false))
     }
     load()
-    const iv = setInterval(load, 60000)
-    return () => clearInterval(iv)
+    return pollWhileVisible(load, 60000)
   }, [])
 
   // ── Countdown timer ──────────────────────────────────────────────────────
