@@ -58,6 +58,7 @@ def compose(sas: list, woli_to_wo: dict, wos: dict, logs_by_wo: dict, surveys_by
             'text': text_state(wo, logs_by_wo.get(wo['Id'], [])),
             'survey': survey_of((surveys_by_wo or {}).get(wo['Id'], [])),
             'wo_id': wo['Id'],
+            'source': wo.get('Source__c'),   # how the call came in (IVR, DRR, Intake, RAP...): the channel split in the replay list
             'cases': (cases_by_wo or {}).get(wo['Id'], {'total': 0, 'open': 0, 'human': 0, 'auto': 0}),
         }
     return out
