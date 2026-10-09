@@ -37,8 +37,8 @@ DEFAULT_FEATURES = {
     'scheduler_report_card': False,
     # Call Story ("type a call, see what happened and why"). Off until released.
     'call_story': False,
-    # Replay: member calls, member texts and the driver's other jobs (extras + text thread). Off until Henry's wording is approved.
-    'replay_member_contact': False,
+    # Replay: member calls, member texts and the driver's other jobs (extras + text thread). On by default (owner, 2026-10-08).
+    'replay_member_contact': True,
 }
 
 

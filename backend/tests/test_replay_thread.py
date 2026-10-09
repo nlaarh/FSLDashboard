@@ -89,7 +89,7 @@ def test_flag_and_permission_gates(client):
     assert c.get('/api/call-story/extras?q=05164342', headers={'x-test-role': 'contractor'}).status_code == 403
     assert c.get('/api/call-story/text-thread?q=05164342', headers={'x-test-role': 'contractor'}).status_code == 403
     assert c.get('/api/call-story/extras?q=hello').status_code == 400
-    state['flags']['replay_member_contact'] = False                     # the new switch is off by default
+    state['flags']['replay_member_contact'] = False                     # the switch can still be turned off in Admin
     assert c.get('/api/call-story/extras?q=05164342').status_code == 404
     assert c.get('/api/call-story/text-thread?q=05164342').status_code == 404
     assert state['pulls'] == 0 and state['extras'] == 0
