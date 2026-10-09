@@ -305,3 +305,6 @@
 .leaflet-tooltip.cm-tip-wrap { background: transparent; border: 0; box-shadow: none; padding: 0; } .leaflet-tooltip.cm-tip-wrap::before { display: none; }
 .leaflet-popup.cm-tip-wrap .leaflet-popup-content-wrapper { background: transparent; box-shadow: none; padding: 0; } .leaflet-popup.cm-tip-wrap .leaflet-popup-content { margin: 0; } .leaflet-popup.cm-tip-wrap .leaflet-popup-tip { display: none; }
 @media (prefers-reduced-motion: reduce) { .rp-member.cm.red .rp-mring { animation: none; } }
+/* Garage Live: the pin or truck the drawer just sent the map to */
+.glive-pulse .rp-ring { animation: rp-pulse 1.1s ease-out 3; opacity: 1; border-width: 3px; }
+.glive-focus { filter: drop-shadow(0 0 3px #2563eb) drop-shadow(0 0 12px #2563eb); }

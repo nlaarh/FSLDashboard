@@ -19,7 +19,7 @@ const clockET = s => new Date(s * 1000).toLocaleTimeString('en-US', { timeZone: 
  * The Watchlist call map: a full-window view of one open call (not a split screen). Back button or Esc closes it.
  * alert = the Watchlist row; flagClass = the row's flag chip colours. The data refreshes every 60 s while this is open and the tab is visible.
  */
-export default function CallMapView({ alert, flagClass, onClose }) {
+export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Watchlist' }) {
   const hints = useMemo(() => ({ sa_number: alert.sa_number, geo: alert.facility_name?.startsWith('000'), lat: alert.latitude, lon: alert.longitude }), [alert])
   const { data, error, stale, loading } = useCallMap(alert.sa_id, hints)
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
@@ -65,7 +65,7 @@ export default function CallMapView({ alert, flagClass, onClose }) {
     <div role="dialog" aria-modal="true" aria-label="Call map" className="fixed inset-0 z-[1200] bg-slate-950 text-slate-100 flex flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-b border-slate-800 bg-slate-900">
         <button ref={backRef} type="button" onClick={onClose} className="inline-flex items-center gap-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold px-4 py-2.5 text-sm min-h-[44px]">
-          <ArrowLeft className="w-5 h-5" />Back to Watchlist
+          <ArrowLeft className="w-5 h-5" />Back to {backLabel}
         </button>
         <div className="min-w-0">
           <div className="text-lg font-bold text-white tabular-nums">WO {alert.wo_number || sa?.wo_number || '—'} <span className="text-slate-500">·</span> {alert.sa_number}</div>

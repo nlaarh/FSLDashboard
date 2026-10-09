@@ -188,7 +188,7 @@ from routers import (
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
     contractor, contractor_recommendations, contractor_dispatch,
-    garage_acceptance, embed, report_card, call_story, replay_extras,
+    garage_acceptance, embed, report_card, call_story, replay_extras, garage_live,
 )
 
 app.include_router(auth.router)
@@ -227,6 +227,7 @@ app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
 app.include_router(watchlist_assist.router)
 app.include_router(watchlist_call_map.router)
+app.include_router(garage_live.router)
 app.include_router(accounting.router)
 app.include_router(accounting_reviews.router)
 app.include_router(accounting_ai.router)
