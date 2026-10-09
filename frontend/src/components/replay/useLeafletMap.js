@@ -21,7 +21,10 @@ export default function useLeafletMap(center, { light = true } = {}) {
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' }).addTo(m)
     L.control.zoom({ position: 'topleft' }).addTo(m)
     setMap(m)
-    return () => { m.remove(); setMap(null) }
+    // the map re-measures itself whenever its box changes size (Expand, window resize), or the tiles stay in the old frame
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => m.invalidateSize({ animate: false }))
+    ro?.observe(ref.current)
+    return () => { ro?.disconnect(); m.remove(); setMap(null) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return [ref, map]

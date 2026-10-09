@@ -22,7 +22,7 @@ export function SkipChip({ engine, className = '' }) {
  * and clickable event marks (colour or icon). The playhead and clock are written straight to the DOM every frame (no React render).
  * marks: [{ t, label, colour, Icon, level }] — clicking one jumps there.
  */
-export default function ReplayPlayer({ engine, start, end, density, marks = [], onPrev, onNext, speeds = SPEEDS, children }) {
+export default function ReplayPlayer({ engine, start, end, density, marks = [], onPrev, onNext, speeds = SPEEDS, big = false, className = '', children }) {
   const barRef = useRef(null), headRef = useRef(null), fillRef = useRef(null), clockRef = useRef(null)
   const { playing, speed } = useEngineState(engine, 4)
   const span = Math.max(end - start, 1)
@@ -53,7 +53,8 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
     return () => ro.disconnect()
   }, [])
   const lanes = useMemo(() => assignLanes(marks.map(m => m.t), start, span, barW), [marks, start, span, barW])
-  const up = Math.min(3, Math.max(0, ...lanes)) * 20   // marks that would overlap stack upward; the bar grows to make room
+  const x = big ? 18 : 0   // expanded (big screen): a taller density strip, thicker track, bigger buttons and text
+  const up = Math.min(3, Math.max(0, ...lanes)) * 20 + x   // marks that would overlap stack upward; the bar grows to make room
   const peak = density ? Math.max(1, ...density) : 1
 
   const seekFrom = e => {
@@ -66,23 +67,24 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
     seekFrom(e)
   }
 
-  const btn = 'p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors'
+  const btn = `${big ? 'p-2.5' : 'p-1.5'} rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors`
+  const ic = big ? 'w-5 h-5' : 'w-4 h-4'
   return (
-    <div className="glass rounded-xl px-4 py-3 space-y-2">
+    <div className={`glass rounded-xl px-4 py-3 space-y-2 ${big ? 'text-base' : ''} ${className}`}>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className={btn} onClick={onPrev || engine.prev} title="Previous event (←)"><SkipBack className="w-4 h-4" /></button>
+        <button type="button" className={btn} onClick={onPrev || engine.prev} title="Previous event (←)"><SkipBack className={ic} /></button>
         <button type="button" onClick={engine.toggle} title={playing ? 'Pause (Space)' : 'Play (Space)'}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+          className={`${big ? 'px-5 py-2.5 text-base' : 'px-3 py-1.5 text-xs'} rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
             playing ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-brand-600 hover:bg-brand-500 text-white'}`}>
-          {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          {playing ? <Pause className={big ? 'w-5 h-5' : 'w-3.5 h-3.5'} /> : <Play className={big ? 'w-5 h-5' : 'w-3.5 h-3.5'} />}
           {playing ? 'Pause' : 'Play'}
         </button>
-        <button type="button" className={btn} onClick={onNext || engine.next} title="Next event (→)"><SkipForward className="w-4 h-4" /></button>
-        <span ref={clockRef} className="font-mono text-sm font-semibold text-white bg-slate-900/70 border border-slate-700 rounded px-2 py-0.5 tabular-nums min-w-[92px] text-center" />
+        <button type="button" className={btn} onClick={onNext || engine.next} title="Next event (→)"><SkipForward className={ic} /></button>
+        <span ref={clockRef} className={`font-mono ${big ? 'text-xl' : 'text-sm'} font-semibold text-white bg-slate-900/70 border border-slate-700 rounded px-2 py-0.5 tabular-nums min-w-[92px] text-center`} />
         <div className="flex items-center bg-slate-900/70 rounded-lg p-0.5 border border-slate-700" role="group" aria-label="Playback speed">
           {speeds.map(s => (
             <button key={s} type="button" onClick={() => engine.setSpeed(s)} title={`${s}x: ${s} second${s > 1 ? 's' : ''} of real time per second (keys 1-4)`}
-              className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold transition-colors ${
+              className={`${big ? 'px-3 py-1 text-sm' : 'px-2 py-0.5 text-[11px]'} rounded font-mono font-semibold transition-colors ${
                 speed === s ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`}>
               {s}×
             </button>
@@ -94,14 +96,14 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
       </div>
 
       <div ref={barRef} onPointerDown={onDown} onPointerMove={e => e.buttons === 1 && seekFrom(e)}
-        className="relative cursor-pointer select-none touch-none" style={{ height: 44 + up }} role="slider" aria-label="Replay time" aria-valuemin={start} aria-valuemax={end}>
+        className="relative cursor-pointer select-none touch-none" style={{ height: 44 + up + (big ? 6 : 0) }} role="slider" aria-label="Replay time" aria-valuemin={start} aria-valuemax={end}>
         {density && (
-          <div className="absolute inset-x-0 h-5 flex items-end gap-px opacity-70" style={{ top: up }} aria-hidden>
+          <div className="absolute inset-x-0 flex items-end gap-px opacity-70" style={{ top: up - x, height: 20 + x }} aria-hidden>
             {density.map((n, i) => <div key={i} className="flex-1 bg-slate-600 rounded-t-sm" style={{ height: `${(n / peak) * 100}%` }} />)}
           </div>
         )}
-        <div className="absolute inset-x-0 h-1.5 rounded-full bg-slate-800" style={{ top: 22 + up }} />
-        <div ref={fillRef} className="absolute left-0 h-1.5 rounded-full bg-brand-500" style={{ top: 22 + up }} />
+        <div className={`absolute inset-x-0 ${big ? 'h-2.5' : 'h-1.5'} rounded-full bg-slate-800`} style={{ top: 22 + up }} />
+        <div ref={fillRef} className={`absolute left-0 ${big ? 'h-2.5' : 'h-1.5'} rounded-full bg-brand-500`} style={{ top: 22 + up }} />
         {marks.map((m, i) => (
           <button key={i} type="button" title={m.label} aria-label={m.label} onPointerDown={e => e.stopPropagation()}
             onClick={() => { engine.pause(); engine.seek(m.t) }}
@@ -110,9 +112,9 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
             {m.Icon && <m.Icon size={11} color="#fff" strokeWidth={2.6} />}
           </button>
         ))}
-        <span ref={headRef} style={{ top: 18 + up }} className="absolute w-3.5 h-3.5 -translate-x-1/2 rounded-full bg-white shadow ring-2 ring-brand-500 pointer-events-none" />
+        <span ref={headRef} style={{ top: 18 + up - (big ? 2 : 0) }} className={`absolute ${big ? 'w-5 h-5' : 'w-3.5 h-3.5'} -translate-x-1/2 rounded-full bg-white shadow ring-2 ring-brand-500 pointer-events-none`} />
         {ticks.map(k => (
-          <span key={k.t} className="absolute -translate-x-1/2 text-[9px] text-slate-500 pointer-events-none" style={{ left: pct(k.t), top: 34 + up }}>{k.label}</span>
+          <span key={k.t} className={`absolute -translate-x-1/2 ${big ? 'text-xs' : 'text-[9px]'} text-slate-500 pointer-events-none`} style={{ left: pct(k.t), top: 34 + up + (big ? 4 : 0) }}>{k.label}</span>
         ))}
       </div>
     </div>
