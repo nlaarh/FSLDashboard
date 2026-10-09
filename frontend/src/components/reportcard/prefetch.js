@@ -1,4 +1,4 @@
-import { fetchReportCardReplay, fetchReportCardCallFlags, fetchCallStoryReplay, fetchCallStoryReplayMap, fetchCallStoryExtras, fetchCallStoryTextThread, fetchCaseTrail } from '../../api'
+import { fetchReportCardReplay, fetchReportCardCallFlags, fetchCallStoryReplay, fetchCallStoryReplayMap, fetchCallStoryExtras, fetchCallStoryPeers, fetchCallStoryTextThread, fetchCaseTrail } from '../../api'
 
 /** One request per key, shared by whoever asks first (a hover that started loading, then the click that needs it).
  *  The Replay page starts these the moment the garage and date are known, in parallel with the day request.
@@ -26,4 +26,5 @@ export const loadCaseTrail = once('cases', woId => fetchCaseTrail(woId), 120_000
 
 // Member calls, texts and the driver's other jobs (after the story), and one text thread (only when a text is clicked).
 export const loadStoryExtras = once('extras', q => fetchCallStoryExtras(q), 90_000)
+export const loadStoryPeers = once('peers', q => fetchCallStoryPeers(q), 90_000)
 export const loadTextThread = once('thread', q => fetchCallStoryTextThread(q), 60_000)

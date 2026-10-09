@@ -189,6 +189,28 @@ def get_replay_map(request: Request, q: str):
     return out
 
 
+@router.get('/api/call-story/peers')
+def get_replay_peers(request: Request, q: str):
+    """The other qualified, on-shift drivers of the garage when the call was given to the driver (wo_replay_peers.py).
+    Read from the day snapshot only: 0 Salesforce calls. Same gates as the map; loaded after the animation."""
+    from wo_replay_peers import pull_peers
+    require_feature('scheduler.replay', request)
+    story = get_story(request, q)
+    if not isinstance(story, dict):
+        return story
+    wo_id = story['resolution']['wo']['id']
+    key = f'cs_peers:{wo_id}'
+    hit = cache.get(key)
+    if hit:
+        return hit
+    bundle = cache.get(f'cs_raw:{wo_id}') or _stored(wo_id, cs1())
+    if not bundle:
+        raise HTTPException(status_code=409, detail='Load the replay first')
+    out = pull_peers(bundle, store.load_snapshot)
+    cache.put(key, out, ttl=MAP_CLOSED_TTL_S if bundle.get('closed') and out['available'] else 600)
+    return out
+
+
 @router.post('/api/call-story/narrative')
 def post_narrative(request: Request, body: dict):
     _gate(request)

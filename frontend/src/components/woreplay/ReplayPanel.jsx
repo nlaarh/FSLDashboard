@@ -4,6 +4,7 @@ import { loadStoryReplay, loadStoryMap } from '../reportcard/prefetch'
 import ReplayTabs from './ReplayTabs'
 import ContactPanel from './ContactPanel'
 import useReplayExtras from './useReplayExtras'
+import useReplayPeers from './useReplayPeers'
 
 const WoReplayStage = lazy(() => import('./WoReplayStage'))   // the map stage loads only when a replay opens
 
@@ -20,12 +21,14 @@ export default function ReplayPanel({ q }) {
   const [state, setState] = useState({ phase: 'idle' })
   const [jump, setJump] = useState(null)             // asks the stage to show a step: { id, n }
   const [locations, setLocations] = useState(undefined)   // undefined = loading, null = unavailable
+  const [peerFocus, setPeerFocus] = useState(null)   // the other driver highlighted on the map
   const [openMark, setOpenMark] = useState(null)     // the open row of the Member contact tab
   const [stageMark, setStageMark] = useState(null)   // the contact icon clicked on the stage: its card opens beside the map
   const { extras, marks } = useReplayExtras(q, state.phase === 'ready', state.data?.steps)
   const load = extras?.driver_load?.[0]
+  const { peers, moments } = useReplayPeers(q, state.phase === 'ready' && locations !== undefined)   // after the trucks, so it never slows the first picture
   const driverJobs = useMemo(() => (load ? [...load.ahead.map(j => ({ ...j, id: `a:${j.wo || j.sa}`, ahead: true })), ...load.after.map(j => ({ ...j, id: `x:${j.wo || j.sa}`, ahead: false }))] : []), [load])
-  const seek = arg => { setJump(j => ({ ...(typeof arg === 'object' ? arg : { id: arg }), n: (j?.n || 0) + 1 })); window.scrollTo?.({ top: 0, behavior: 'smooth' }) }
+  const seek = arg => { setPeerFocus(arg?.peer || null); setJump(j => ({ ...(typeof arg === 'object' ? arg : { id: arg }), n: (j?.n || 0) + 1 })); window.scrollTo?.({ top: 0, behavior: 'smooth' }) }
   useEffect(() => {
     if (!q) { setState({ phase: 'idle' }); return undefined }
     let live = true
@@ -56,9 +59,9 @@ export default function ReplayPanel({ q }) {
     <div className="space-y-3">
       <Suspense fallback={<div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}>
         <WoReplayStage key={header.sa} steps={steps} header={header} locations={locations} jump={jump}
-          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} />
+          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} peers={moments} peerFocus={peerFocus} driverLoad={load} />
       </Suspense>
-      <ReplayTabs q={q} takeaways={takeaways} decision={decision} extras={extras} marks={marks} openMark={openMark} onOpenMark={setOpenMark} onShow={seek} />
+      <ReplayTabs q={q} takeaways={takeaways} decision={decision} peers={peers} extras={extras} marks={marks} openMark={openMark} onOpenMark={setOpenMark} onShow={seek} />
     </div>
   )
 }

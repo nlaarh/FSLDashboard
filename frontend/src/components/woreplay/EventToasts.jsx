@@ -10,9 +10,9 @@ const SHOW_MS = 3500, MAX = 3
 /**
  * Small notes that slide in (bottom left, above the caption) as each step plays: icon, ET time, one line. Red when flagged.
  * `steps` is the story; `times` its epoch seconds. Appears on any change of step (playing, Next, or a click on the scrubber),
- * never for the first step shown on load.
+ * never for the first step shown on load. `notes` [{ ts (epoch s), clock, text }] are extra toasts that appear when the clock crosses their time.
  */
-export default function EventToasts({ engine, steps, times, bottom = 84 }) {
+export default function EventToasts({ engine, steps, times, notes = [], bottom = 84 }) {
   const idx = useEngineIndex(engine, times)
   const prev = useRef(idx)
   const [items, setItems] = useState([])
@@ -26,6 +26,17 @@ export default function EventToasts({ engine, steps, times, bottom = 84 }) {
     setItems(a => [...a.slice(-(MAX - 1)), { ...t, id }])
     setTimeout(() => setItems(a => a.filter(x => x.id !== id)), SHOW_MS)   // each toast leaves on its own clock, so it is not cleared when the next step comes
   }, [idx, steps, engine])
+  useEffect(() => {
+    let last = engine.ref.current.t
+    return engine.subscribe(t => {
+      const hit = notes.find(n => last < n.ts && t >= n.ts && t - n.ts < 120)
+      last = t
+      if (!hit) return
+      const id = `n${hit.ts}:${Date.now()}`
+      setItems(a => [...a.slice(-(MAX - 1)), { text: hit.text, level: 'info', kind: 'mark', clock: hit.clock, id }])
+      setTimeout(() => setItems(a => a.filter(x => x.id !== id)), SHOW_MS * 2)
+    })
+  }, [engine, notes])
   return (
     <div className="absolute left-3 flex flex-col gap-1.5 items-start pointer-events-none" style={{ bottom, zIndex: 1065 }} aria-live="polite">
       <AnimatePresence initial={false}>

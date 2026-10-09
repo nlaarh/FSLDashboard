@@ -4,6 +4,7 @@ import TakeawaysCard from './TakeawaysCard'
 import ContactPanel from './ContactPanel'
 import DriverLoadCard from './DriverLoadCard'
 import InsightStrip from './InsightStrip'
+import PeersCard from './PeersCard'
 import { isFromMember } from './contactMarks'
 
 function Decision({ decision }) {
@@ -22,10 +23,10 @@ function Decision({ decision }) {
 }
 
 /** Everything below the replay stage as tabs, one visible at a time (URL: ?rtab=wrong|contact|jobs|driver), with the insight strip above.
- *  props: q, takeaways, decision (from the replay answer), extras (undefined = loading, null = switched off / unavailable),
+ *  props: q, takeaways, decision (from the replay answer), peers (the other qualified drivers; undefined = loading), extras (undefined = loading, null = switched off / unavailable),
  *  marks (contactMarks), openMark + onOpenMark (the open contact row: the stage's icons set it too), onShow(id | { ts }) seeks the replay.
  *  The contact and jobs tabs exist only when extras loaded, so with the flag off the page looks as it did before. */
-export default function ReplayTabs({ q, takeaways, decision, extras, marks = [], openMark, onOpenMark, onShow }) {
+export default function ReplayTabs({ q, takeaways, decision, peers, extras, marks = [], openMark, onOpenMark, onShow }) {
   const [params, setParams] = useSearchParams()
   const load = extras?.driver_load?.[0]
   const tabs = [{ id: 'wrong', label: 'What went wrong' }]
@@ -56,7 +57,7 @@ export default function ReplayTabs({ q, takeaways, decision, extras, marks = [],
         : <ContactPanel q={q} marks={marks} extras={extras} openId={openMark} onOpen={onOpenMark} onShow={seek} />)}
       {tab === 'jobs' && (extras === undefined ? <div className="glass rounded-xl p-6 text-sm text-slate-400 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Looking at the driver's other jobs…</div>
         : <DriverLoadCard load={load} notes={extras.notes} onShow={seek} />)}
-      {tab === 'driver' && <Decision decision={decision} />}
+      {tab === 'driver' && <div className="space-y-3"><Decision decision={decision} /><PeersCard peers={peers} onShow={onShow} /></div>}
     </div>
   )
 }

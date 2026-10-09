@@ -185,6 +185,9 @@ export const fetchCallStoryReplay = q =>
   api.get(`/call-story/replay?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 90000 }).then(rcResult)
 export const fetchCallStoryReplayMap = q =>
   api.get(`/call-story/replay-map?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 120000 }).then(rcResult)
+// The other qualified drivers when the call was given to the driver: read from the day snapshot, no Salesforce call.
+export const fetchCallStoryPeers = q =>
+  api.get(`/call-story/peers?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 30000 }).then(rcResult)
 // Member calls / texts / the driver's other jobs (flag replay_member_contact: 404 while it is off). The thread is read only on click.
 export const fetchCallStoryExtras = q =>
   api.get(`/call-story/extras?${new URLSearchParams({ q })}`, { ...rcStates, timeout: 60000 }).then(rcResult)
