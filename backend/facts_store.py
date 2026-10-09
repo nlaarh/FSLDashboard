@@ -22,7 +22,7 @@ SETTLE_HOURS = 3             # before the nightly trends run (00:05 Eastern = 04
 FINAL_HOURS = 28            # the last recompute of a day happens this long after it ended
 FRESH_TODAY_MIN = 90
 TODAY_EVERY_MIN = 60
-KEEP_DAYS = 400
+KEEP_DAYS = 15         # owner 2026-10-09: no longer than 15 days; a longer range reads Salesforce (not "covered")
 
 _NUM = ('r_total', 'r_completed', 'r_declined', 'r_cancelled', 'r_first_total', 'r_first_accepted', 'r_second_total',
         'r_second_accepted', 'r_accepted', 'r_accepted_completed', 't_volume', 't_completed', 't_auto', 't_fsl_volume',
