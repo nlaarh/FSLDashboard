@@ -34,9 +34,9 @@ def test_before_the_log_existed_is_no_data_not_a_failure():
 
 
 def test_compose_maps_each_sa_to_its_work_order_flags():
-    wo = {'Id': 'W1', 'CreatedDate': NEW, 'Type__c': 'RAP', 'Out_of_Territory__c': True, 'Coverage__c': 'PLUS', 'SMS_Opt_In__c': True}
+    wo = {'Id': 'W1', 'CreatedDate': NEW, 'Type__c': 'RAP', 'Source__c': 'Call Mover', 'Out_of_Territory__c': True, 'Coverage__c': 'PLUS', 'SMS_Opt_In__c': True}
     out = compose([{'id': 'S1', 'woli_id': 'L1'}, {'id': 'S2', 'woli_id': 'L9'}], {'L1': 'W1'}, {'W1': wo}, {'W1': [SENT]})
-    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None, 'wo_id': 'W1', 'cases': {'total': 0, 'open': 0, 'human': 0, 'auto': 0}}}
+    assert out == {'S1': {'rap': True, 'out_of_territory': True, 'opted_in': True, 'coverage': 'Plus', 'text': out['S1']['text'], 'survey': None, 'wo_id': 'W1', 'source': 'Call Mover', 'cases': {'total': 0, 'open': 0, 'human': 0, 'auto': 0}}}
 
 
 def test_pull_flags_uses_two_queries_and_skips_the_log_for_old_calls():
@@ -78,3 +78,9 @@ def test_case_counts_split_by_who_opened_them_and_whether_still_open():
             return []
     out = pull_flags([{'id': 'S1', 'woli_id': 'L1', 'status': 'Completed'}], P())
     assert out['S1']['cases'] == {'total': 4, 'open': 1, 'human': 1, 'auto': 3}
+
+
+def test_each_flag_carries_the_call_source_for_the_channel_split():
+    wos = {'W1': {'Id': 'W1', 'CreatedDate': NEW, 'Source__c': 'IVR'}, 'W2': {'Id': 'W2', 'CreatedDate': NEW}}
+    out = compose([{'id': 'S1', 'woli_id': 'L1'}, {'id': 'S2', 'woli_id': 'L2'}], {'L1': 'W1', 'L2': 'W2'}, wos, {})
+    assert out['S1']['source'] == 'IVR' and out['S2']['source'] is None

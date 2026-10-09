@@ -8,6 +8,8 @@ import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import DayReplayMap from '../replay/DayReplayMap'
 import DriverDayCard from '../replay/DriverDayCard'
 import DayGantt from './DayGantt'
+import ChannelSplit from './ChannelSplit'
+import { channelOf } from './channels'
 import ReplayPanel from '../woreplay/ReplayPanel'
 import { shortDriverName } from '../../utils/driverName'
 import { verdictColour } from './reportCardStyles'
@@ -138,7 +140,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
 
 const hhmm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 
-const NONE = { rap: false, ooT: false, text: false, late: false, cases: '', job: '', cover: '', survey: '' }
+const NONE = { rap: false, ooT: false, text: false, late: false, cases: '', job: '', cover: '', survey: '', channel: '' }
 const missedPta = c => c.verdict?.evidence?.pta_met === false
 // Survey score = the member's 0-10 NPS answer x10 (0-100). Below 80 means NPS 7 or lower.
 const surveyMatch = (mode, sv) => mode === 'none' ? !sv : !sv ? false
@@ -180,9 +182,9 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
     const x = flags[c.id] || {}
     return (!f.job || c.work_type === f.job) && (!f.cover || x.coverage === f.cover) && (!f.rap || x.rap)
       && (!f.ooT || x.out_of_territory) && (!f.text || x.text?.state === 'missing') && (!f.late || missedPta(c)) && (!f.cases || (f.cases === 'any' ? x.cases?.total > 0 : f.cases === 'human' ? x.cases?.human > 0 : x.cases?.auto > 0))
-      && (!f.survey || surveyMatch(f.survey, x.survey))
+      && (!f.survey || surveyMatch(f.survey, x.survey)) && (!f.channel || channelOf(x.source).key === f.channel)
   })
-  const on = f.rap || f.ooT || f.text || f.late || f.cases || f.job || f.cover || f.survey
+  const on = f.rap || f.ooT || f.text || f.late || f.cases || f.job || f.cover || f.survey || f.channel
   const surveyed = Object.values(flags).filter(x => x.survey)
   const tsPct = surveyed.length ? Math.round(100 * surveyed.filter(x => x.survey.totally).length / surveyed.length) : null
   const chip = (key, label, n) => (
@@ -202,6 +204,7 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
         <span>Work orders · {on ? `${shown.length} of ${calls.length}` : calls.length}</span>
         {on && <button onClick={() => setF(NONE)} className="text-[11px] font-normal text-brand-400 hover:text-brand-300">Clear</button>}
       </div>
+      <ChannelSplit calls={calls} flags={flags} active={f.channel} onPick={channel => setF({ ...f, channel })} />
       <div className="px-3 py-2 border-b border-slate-700/60 space-y-1.5">
         <div className="flex gap-1.5">{sel('job', f.job, jobs, 'All job types')}{covers.length > 0 && sel('cover', f.cover, covers, 'All members')}</div>
         {all.length > 0 && (
@@ -263,6 +266,7 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
                       <FolderOpen className="w-3 h-3" />{x.cases.total}
                     </span>
                   )}
+                  {x.wo_id && <span title={`Came in through: ${channelOf(x.source).long}`} className="px-1 rounded text-[9px] font-bold leading-4" style={{ background: `${channelOf(x.source).bar}33`, color: channelOf(x.source).bar }}>{channelOf(x.source).code}</span>}
                   {x.rap && <span title="RAP call" className="px-1 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold leading-4">RAP</span>}
                   {x.out_of_territory && <span title="Out of territory"><Compass className="w-3.5 h-3.5 text-amber-400" /></span>}
                   {x.text?.state === 'missing' && <span title={x.text.tip} className="flex items-center gap-0.5 px-1 rounded bg-rose-500/20 text-rose-400 text-[10px] font-bold leading-4"><MessageSquareOff className="w-3 h-3" />SMS</span>}

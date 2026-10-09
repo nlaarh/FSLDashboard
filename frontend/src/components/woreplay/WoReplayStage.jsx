@@ -6,9 +6,12 @@ import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion }
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import { buildPath } from '../replay/roadPath'
 import { indexAt } from '../replay/engineMath'
+import { shortDriverName } from '../../utils/driverName'
 import { truckKindFor, markColour } from '../replay/gameIcons'
 import { createStageLayers } from './stageLayers'
 import { FlowPulse, pulsePath, pickDock } from './flowPulse'
+import DriverQueue from './DriverQueue'
+import { queueFromLoad, queueFromPeer } from './peerNotes'
 import StageHud from './StageHud'
 import FlowDrawer from './FlowDrawer'
 import EventToasts, { KIND_ICON } from './EventToasts'
@@ -17,6 +20,7 @@ import { KINDS, HUD, isSlot, slotX, stepTimes, hudState, driverPhase, onSceneTs,
 
 const MARK_ICON = { call: PhoneCall, call_other: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
 const PAD = { tl: L.point(110, 118), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
+const NO_PEERS = []
 const toS = v => (typeof v === 'number' ? v : Date.parse(v) / 1000)
 const Chip = ({ on, children }) => on && <span className="rp-shimmer rounded-full px-3 py-1 text-[11px] text-slate-200">{children}</span>
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v) } catch { /* private window */ } return null }
@@ -25,9 +29,10 @@ const store = (k, v) => { try { if (v === undefined) return localStorage.getItem
  * The Work Order Replay stage: a game-style live operations map. The replay engine (60 fps, no React per frame) drives the layers in
  * stageLayers.js; React only re-renders on a new step, a pause or a click. Everything is clickable at once: the story shows first,
  * trucks fade in when the GPS arrives (locations: undefined = still loading, null = unavailable), contact marks when B's extras arrive.
+ * peers (peerNotes.peerMoments) are the other qualified drivers at the moment the call was given / accepted; peerFocus is the name to highlight.
  * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node).
  */
-export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop }) {
+export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null }) {
   const where = header?.where
   const loc = useMemo(() => locations || (where ? { wo: where.member, garage: where.garage, drivers: [], notes: [] } : null), [locations, where])
   const times = useMemo(() => stepTimes(steps), [steps])
@@ -65,7 +70,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const step = idx >= 0 ? steps[idx] : null
 
   const [ref, map] = useLeafletMap([42.9, -78.8])
-  const [light, setLight] = useState(() => store('woReplayLight') === '1')
+  const [light, setLight] = useState(() => store('woReplayLight') !== '0')   // light street map unless the viewer picked dark
   useEffect(() => setMapTheme(ref.current, light), [light, map]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const z = map && ref.current.querySelector('.leaflet-top.leaflet-left'); if (z) z.style.marginTop = `${HUD.h + 22}px` }, [map]) // eslint-disable-line react-hooks/exhaustive-deps
   const [size, setSize] = useState({ w: 1100, h: 640 })
@@ -106,9 +111,17 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   // Layers: built once per data change, then moved by the engine every frame.
   const jobs = driverJobs
   const onMarkRef = useRef(onMark); onMarkRef.current = onMark
+  const [queue, setQueue] = useState(null)   // the popover of the clicked truck: its calls when the call was given
+  const onDriverRef = useRef(null)
+  onDriverRef.current = d => {
+    if (d.peer) return setQueue(queueFromPeer(d.peer, new Date(d.at * 1000).toISOString()))
+    const mine = d.truck.est || (driverLoad && shortDriverName(driverLoad.driver) === d.truck.name)
+    setQueue((mine && queueFromLoad(driverLoad, loc?.wo)) || { title: d.truck.name, rows: [], next: null, note: mine ? 'The other jobs of this driver are not loaded.' : 'This driver held the call earlier. Only the driver it went to has a job queue here.' })
+  }
+  useEffect(() => { if (!map) return undefined; const close = () => setQueue(null); map.on('click', close); return () => map.off('click', close) }, [map])
   useEffect(() => {
     if (!map) return undefined
-    const layers = createStageLayers(map, { loc, header, trucks, actor, wait, marks, onMark: m => onMarkRef.current?.(m), jobs })
+    const layers = createStageLayers(map, { loc, header, trucks, actor, wait, marks, onMark: m => onMarkRef.current?.(m), jobs, peers: { moments: peers, focus: peerFocus }, onDriver: d => onDriverRef.current?.(d) })
     let gliding = false
     const follow = r => {   // the truck leaving the middle 60% of the view makes the camera glide after it until it is centred again
       if (modeRef.current !== 'follow' || !r.pos || flying.current > Date.now()) return
@@ -126,7 +139,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     run(engine.ref.current.t)
     const off = engine.subscribe(run)
     return () => { off(); layers.destroy() }
-  }, [map, loc, header, trucks, actor, wait, marks, jobs, engine])
+  }, [map, loc, header, trucks, actor, wait, marks, jobs, engine, peers, peerFocus])
 
   // Once per new step (wall time): the message flies, the card moves to the quietest corner, and the camera re-frames.
   const [fx, setFx] = useState(null)
@@ -164,6 +177,8 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     if (!jump?.n) return
     const ts = jump.ts != null ? toS(jump.ts) : times[steps.findIndex(x => x.id === jump.id)]
     if (ts != null && Number.isFinite(ts)) { engine.pause(); engine.seek(ts + 0.01) }
+    const p = jump.peer && peers.flatMap(m => m.drivers).find(d => d.name === jump.peer)   // "Show on the map": frame the member and that driver
+    if (p && map && loc?.wo) { setMode('free'); map.fitBounds(L.latLngBounds([[loc.wo.lat, loc.wo.lon], [p.lat, p.lon]]), { paddingTopLeft: PAD.tl, paddingBottomRight: PAD.br, maxZoom: 15 }) }
   }, [jump?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {   // it starts by itself as soon as the story is in: nobody should have to find Play
     if (prefersReducedMotion()) return undefined
@@ -202,7 +217,8 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
             <Chip on={locations === undefined}>Loading trucks…</Chip><Chip on={!!extrasLoading}>Loading calls and texts…</Chip>
           </div>
           <div style={{ position: 'absolute', left: '50%', top: HUD.h + 22, transform: 'translateX(-50%)', zIndex: 1060, pointerEvents: 'none' }}><SkipChip engine={engine} /></div>
-          <EventToasts engine={engine} steps={steps} times={times} />
+          {queue && <DriverQueue q={queue} onClose={() => setQueue(null)} />}
+          <EventToasts engine={engine} steps={steps} times={times} notes={peers} />
           {step && fx?.dock && !drawerTop && <StepCard step={step} dock={{ ...fx.dock, x: Math.max(10, Math.min(fx.dock.x, size.w - fx.cardW - 10)) }} w={fx.cardW} maxH={Math.max(220, size.h - HUD.edgeY - 96)}
             onEnter={() => { if (engine.ref.current.playing) { heldBy.current = true; engine.pause() } }} onLeave={() => { if (heldBy.current) { heldBy.current = false; engine.play() } }} />}
           {step && <StepCaption step={step} i={idx} n={steps.length} />}

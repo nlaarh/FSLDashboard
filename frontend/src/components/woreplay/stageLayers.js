@@ -1,21 +1,23 @@
 import L from 'leaflet'
 import { shortDriverName } from '../../utils/driverName'
-import { truckHtml, garageHtml, memberHtml, markHtml, jobHtml, STATUS } from '../replay/gameIcons'
+import { truckHtml, truckKindFor, garageHtml, memberHtml, markHtml, jobHtml, STATUS } from '../replay/gameIcons'
 import { waitState, fmtWait } from './woReplayModel'
 
 const icon = (html, w, h, ax = w / 2, ay = h / 2) => L.divIcon({ className: '', html, iconSize: [w, h], iconAnchor: [ax, ay] })
 const diff = (a, b) => ((b - a + 540) % 360) - 180   // shortest signed turn from a to b, so a truck never spins the long way round
 const ROUTE_EVERY_MS = 100
+export const PEER_WINDOW_S = 300   // the other drivers stay on the map this long (replay seconds) after the call was given / accepted
 
 /**
  * Every Leaflet layer of the Work Order stage, created once and moved straight from the replay engine's frame (no React).
  * Markers are never re-created while playing: position by setLatLng, heading by one CSS rotate, status by one CSS variable.
  *
  * opts: { loc, header, trucks: [{ key, name, garage, kind, est, path }], actor(t) -> { name, phase }, wait: { created, promise, onScene },
- *         marks: [{ id, ts, type, title }], onMark(mark), jobs: [{ id, lat, lon, ahead }] }
+ *         marks: [{ id, ts, type, title }], onMark(mark), jobs: [{ id, lat, lon, ahead }],
+ *         peers: { moments: [{ at (epoch s), drivers: [{ name, label, miles, lat, lon }] }], focus: driver name | null } }
  */
 export function createStageLayers(map, opts) {
-  const { loc, header, trucks, actor, wait, marks = [], onMark, jobs = [] } = opts
+  const { loc, header, trucks, actor, wait, marks = [], onMark, jobs = [], peers, onDriver } = opts
   const root = L.layerGroup().addTo(map)
   const own = { interactive: false, keyboard: false }
   const line = (o, cls) => L.polyline([], { interactive: false, lineCap: 'round', lineJoin: 'round', className: cls, ...o }).addTo(root)
@@ -45,8 +47,26 @@ export function createStageLayers(map, opts) {
   })
 
   const items = trucks.map(tr => {
-    const mk = L.marker([0, 0], { ...own, icon: icon(truckHtml({ ...tr, name: shortDriverName(tr.name) }), 60, 60) })
+    const mk = L.marker([0, 0], { keyboard: false, icon: icon(truckHtml({ ...tr, name: shortDriverName(tr.name) }), 60, 60) }).on('click', () => onDriver?.({ truck: tr }))
     return { tr, mk, shown: false, rot: null, key: '', st: 'idle', lastH: null, el: null }
+  })
+
+  // The other qualified drivers at the moment the call was given / accepted: ghosted trucks, a thin line to the member, miles in the tag.
+  const kind = truckKindFor({ service: header?.service })
+  const peerSets = loc?.wo ? (peers?.moments || []).filter(m => m.drivers.length).map(m => ({
+    at: m.at, on: false, items: m.drivers.map(p => ({
+      p, focus: p.name === peers.focus,
+      mk: L.marker([p.lat, p.lon], { keyboard: false, zIndexOffset: 200, icon: icon(truckHtml({ name: p.name, garage: `${p.miles} mi · ${p.label}`, kind }), 60, 60) }).on('click', () => onDriver?.({ peer: p, at: m.at })),
+      ln: L.polyline([[loc.wo.lat, loc.wo.lon], [p.lat, p.lon]], { ...own, weight: p.name === peers.focus ? 3 : 1.5, dashArray: '4 6', color: p.name === peers.focus ? '#fbbf24' : '#94a3b8', opacity: p.name === peers.focus ? 0.95 : 0.55 }),
+    })),
+  })) : []
+  const showPeers = (set, on) => set.items.forEach(it => {
+    if (on) {
+      it.ln.addTo(root); it.mk.addTo(root)
+      const el = it.mk.getElement()?.firstElementChild
+      el?.style.setProperty('--c', it.focus ? '#fbbf24' : '#94a3b8')
+      if (el) el.style.opacity = it.focus ? 1 : 0.5
+    } else { root.removeLayer(it.ln); root.removeLayer(it.mk) }
   })
 
   const sizeIcons = () => map.getContainer().style.setProperty('--rp-s', Math.max(0.55, Math.min(1, 0.55 + (map.getZoom() - 10) * 0.09)).toFixed(2))
@@ -110,6 +130,8 @@ export function createStageLayers(map, opts) {
       const on = t >= mi.m.ts
       if (on !== mi.on) { mi.on = on; mi.mk.getElement()?.firstElementChild?.classList.toggle('on', on) }
     }
+    const live = peerSets.filter(x => t >= x.at && t < x.at + PEER_WINDOW_S).pop()
+    for (const set of peerSets) { const on = set === live; if (on !== set.on) { set.on = on; showPeers(set, on) } }
     return { pos: actingPos, name: act.name }
   }
 
