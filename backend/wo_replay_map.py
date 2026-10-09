@@ -17,6 +17,8 @@ import re
 import time
 from datetime import timedelta
 
+import gps_store
+from feature_flags import is_on
 from report_card_build import Puller, _in, _iso
 from report_card_timeline import Timelines
 from utils import parse_dt, to_eastern
@@ -161,15 +163,19 @@ def pull_map(raw: dict, puller: Puller | None = None, snapshot_for=None) -> dict
     wins = _windows(raw, list(who), sa) if who else {}
     tracks = _snapshot_tracks(raw, sa, who, wins, snapshot_for)
     todo, pings = {n: i for n, i in who.items() if n not in tracks}, {}
-    if todo:
-        cond = " OR ".join(f"(ServiceResourceId = '{i}' AND CreatedDate >= {_iso(wins[n][0])} AND CreatedDate <= {_iso(wins[n][1])})" for n, i in todo.items())
-        t0, t1 = min(wins[n][0] for n in todo), max(wins[n][1] for n in todo)
+    rows, stored = [], set()
+    if todo and is_on(gps_store.FLAG):                          # our own 60 s record of driver positions (flag replay_gps_store)
+        rows, stored = gps_store.stored_gps_rows({i: wins[n] for n, i in todo.items()})
+    sf_todo = {n: i for n, i in todo.items() if i not in stored}
+    if sf_todo:
+        cond = " OR ".join(f"(ServiceResourceId = '{i}' AND CreatedDate >= {_iso(wins[n][0])} AND CreatedDate <= {_iso(wins[n][1])})" for n, i in sf_todo.items())
         try:
-            rows = p.all(f"""SELECT ServiceResourceId, Field, NewValue, CreatedDate FROM ServiceResourceHistory
+            rows += p.all(f"""SELECT ServiceResourceId, Field, NewValue, CreatedDate FROM ServiceResourceHistory
                 WHERE Field IN ('LastKnownLatitude','LastKnownLongitude') AND ({cond})""")
         except RuntimeError as e:
-            rows = []
             notes.append(f'Driver GPS could not be read from Salesforce ({e}).')
+    if todo:
+        t0, t1 = min(wins[n][0] for n in todo), max(wins[n][1] for n in todo)
         tl = Timelines({'gps': rows}, t0, t1)
         for name, rid in todo.items():
             a, b = wins[name]
@@ -182,7 +188,7 @@ def pull_map(raw: dict, puller: Puller | None = None, snapshot_for=None) -> dict
     for name in who:
         track = tracks.get(name) or []
         drivers.append({'name': _short(name), 'track': track, 'pings': pings.get(name, len(track)),
-                        'source': 'snapshot' if name not in todo else 'salesforce'})
+                        'source': 'snapshot' if name not in todo else ('store' if who[name] in stored else 'salesforce')})
         if not track:
             notes.append(f'No GPS pings for {_short(name)} while this call was open.')
     roads = {'garage_to_member': garage_route(garage, wo, timeout=ROAD_BUDGET_S)}

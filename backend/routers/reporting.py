@@ -11,6 +11,7 @@ from typing import List
 from openpyxl.utils import get_column_letter
 
 import cache
+import facts_reporting
 import users
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -95,6 +96,28 @@ def _accepted(lst):
     return [s for s in lst if not s.get('ERS_Facility_Decline_Reason__c')]
 
 
+def _fetch_surveys(since: str, until: str) -> list:
+    """Survey rows for work orders created in the range (always read live: surveys arrive days late)."""
+    return sf_query_all(f"""
+        SELECT ERS_Work_Order__r.ServiceTerritoryId,
+               ERS_Overall_Satisfaction__c,
+               ERS_Response_Time_Satisfaction__c,
+               ERS_Technician_Satisfaction__c,
+               ERSSatisfaction_With_Being_Kept_Informed__c
+        FROM Survey_Result__c
+        WHERE ERS_Work_Order__r.CreatedDate >= {since}
+          AND ERS_Work_Order__r.CreatedDate < {until}
+          AND ERS_Overall_Satisfaction__c != null
+    """)
+
+
+def _bulk_rows(territory_ids: list, start_date: str, end_date: str) -> list:
+    """Daily facts when the flag is on and the whole range is covered; otherwise today's Salesforce path."""
+    since, until = soql_date_range(start_date, end_date)
+    rows = facts_reporting.rows_or_none(territory_ids, start_date, end_date, lambda: _fetch_surveys(since, until))
+    return rows if rows is not None else _compute_bulk_report(territory_ids, start_date, end_date)
+
+
 def _compute_bulk_report(territory_ids: list, start_date: str, end_date: str) -> list:
     """3 round-trips total: SAs + surveys in parallel, then SA history batched by ID.
     Groups everything by territory in Python — ~10x faster than per-garage queries."""
@@ -123,17 +146,7 @@ def _compute_bulk_report(territory_ids: list, start_date: str, end_date: str) ->
                              'Unable to Complete','No-Show')
               {tid_filter}
         """),
-        surveys=lambda: sf_query_all(f"""
-            SELECT ERS_Work_Order__r.ServiceTerritoryId,
-                   ERS_Overall_Satisfaction__c,
-                   ERS_Response_Time_Satisfaction__c,
-                   ERS_Technician_Satisfaction__c,
-                   ERSSatisfaction_With_Being_Kept_Informed__c
-            FROM Survey_Result__c
-            WHERE ERS_Work_Order__r.CreatedDate >= {since}
-              AND ERS_Work_Order__r.CreatedDate < {until}
-              AND ERS_Overall_Satisfaction__c != null
-        """),
+        surveys=lambda: _fetch_surveys(since, until),
     )
 
     all_sas = step1['sas']
@@ -318,7 +331,7 @@ def api_reporting_garage_summary(
         cache_key = f'bulk_report_{key_hash}_{start_date}_{end_date}'
         rows = cache.cached_query_persistent(
             cache_key,
-            lambda: _compute_bulk_report(clean_ids, start_date, end_date),
+            lambda: _bulk_rows(clean_ids, start_date, end_date),
             max_stale_hours=2,
         )
     else:
