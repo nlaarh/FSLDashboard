@@ -24,7 +24,7 @@ def test_the_ddl_can_run_twice(speed3_sqlite):
 
 
 def test_all_three_flags_default_off():
-    for name in ('replay_gps_store', 'daily_facts'):
+    for name in ('replay_gps_store', 'daily_facts', 'revenue_semijoin'):
         assert DEFAULT_FEATURES[name] is False
 
 

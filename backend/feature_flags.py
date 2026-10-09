@@ -44,6 +44,8 @@ DEFAULT_FEATURES = {
     'replay_gps_store': False,
     # Reporting and 30-day trends read a daily facts table instead of pulling a month of history from Salesforce.
     'daily_facts': False,
+    # Garage revenue: AssetHistory and work-order lookups as semi-join / folded queries instead of ID-chunk fan-out.
+    'revenue_semijoin': False,
 }
 
 

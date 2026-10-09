@@ -21,6 +21,7 @@ from fastapi import APIRouter, Query, Request
 from sf_client import sf_query_all, sf_parallel, sanitize_soql
 from utils import parse_dt, _ET
 import cache
+from feature_flags import is_on
 from permissions import require_feature
 
 router = APIRouter()
@@ -130,6 +131,56 @@ def _process_asset_hours(ah_all: list, driver_names: set, since: str, until: str
     return result
 
 
+def _asset_history_futures(pool: ThreadPoolExecutor, truck_ids: list, ah_since: str, ah_until: str, semi: bool) -> list:
+    """Submit the AssetHistory reads (driver login/logout rows). Flag revenue_semijoin: ONE query whose truck list is a
+    semi-join on Asset (the same set _get_trucks returns); off: one query per 200 truck ids, as before."""
+    base = ("SELECT AssetId, OldValue, NewValue, CreatedDate FROM AssetHistory WHERE {scope} "
+            "AND Field = 'ERS_Driver__c' AND CreatedDate >= {s} AND CreatedDate < {u}")
+    if semi:
+        scope = "AssetId IN (SELECT Id FROM Asset WHERE RecordType.Name = 'ERS Truck')"
+        return [pool.submit(sf_query_all, base.format(scope=scope, s=ah_since, u=ah_until))]
+    futs = []
+    for i in range(0, max(len(truck_ids), 1), 200):
+        chunk = truck_ids[i:i + 200]
+        ids_str = "'" + "','".join(chunk) + "'"
+        futs.append(pool.submit(sf_query_all, base.format(scope=f"AssetId IN ({ids_str})", s=ah_since, u=ah_until)))
+    return futs
+
+
+def _woli_futures(pool: ThreadPoolExecutor, woli_ids: list, semi: bool) -> list:
+    """Submit the WorkOrderLineItem reads that map line item to work order. Flag revenue_semijoin: the work order's
+    number and member mileage cost ride along (WorkOrder.*), so the separate work-order lookup is not needed."""
+    cols = "Id, WorkOrderId"
+    if semi:
+        cols += ", WorkOrder.WorkOrderNumber, WorkOrder.Est_Tow_Over_Mileage_Cost_to_Member1__c"
+    futs = []
+    for i in range(0, max(len(woli_ids), 1), 200):
+        chunk = woli_ids[i:i + 200]
+        ids_str = "'" + "','".join(chunk) + "'"
+        futs.append(pool.submit(sf_query_all, f"SELECT {cols} FROM WorkOrderLineItem WHERE Id IN ({ids_str})"))
+    return futs
+
+
+def _member_work_orders(pool: ThreadPoolExecutor, service_wolis: list, wo_ids: list, semi: bool):
+    """Future (or None) of the rows {Id, WorkOrderNumber, Est_Tow_Over_Mileage_Cost_to_Member1__c} for the work orders."""
+    if not wo_ids:
+        return None
+    if semi:
+        rows, seen = [], set()
+        for w in service_wolis:
+            wo = w.get('WorkOrder') or {}
+            if w['WorkOrderId'] not in seen:
+                seen.add(w['WorkOrderId'])
+                rows.append({'Id': w['WorkOrderId'], 'WorkOrderNumber': wo.get('WorkOrderNumber'),
+                             'Est_Tow_Over_Mileage_Cost_to_Member1__c': wo.get('Est_Tow_Over_Mileage_Cost_to_Member1__c')})
+        return pool.submit(lambda: rows)
+    return pool.submit(lambda ids=wo_ids: _batch_parallel(
+        "SELECT Id, WorkOrderNumber, Est_Tow_Over_Mileage_Cost_to_Member1__c "
+        "FROM WorkOrder",
+        "Id", ids,
+    ))
+
+
 def _work_type(sa: dict) -> str:
     wt = sa.get('WorkType')
     return (wt.get('Name') if wt else None) or 'Other'
@@ -153,7 +204,8 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
 
     # Phase 1 — ONE merged AR+SA query (trucks served from cache)
     # Merging SA fields into AR query eliminates a separate SF round-trip.
-    truck_ids = _get_trucks()   # cached 6h — never blocks after first call
+    semi = is_on('revenue_semijoin')       # flag: AssetHistory semi-join + work-order fields folded into the line-item read
+    truck_ids = [] if semi else _get_trucks()   # cached 6h — never blocks after first call
     ars = sf_query_all(f"""
         SELECT ServiceAppointmentId, ServiceResource.Name,
                ServiceAppointment.ParentRecordId,
@@ -215,28 +267,10 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
     with ThreadPoolExecutor(max_workers=24) as pool:
 
         # Submit WOLI batches
-        woli_futs = []
-        for i in range(0, max(len(woli_ids), 1), 200):
-            chunk   = woli_ids[i:i + 200]
-            ids_str = "'" + "','".join(chunk) + "'"
-            woli_futs.append(pool.submit(
-                sf_query_all,
-                f"SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE Id IN ({ids_str})"
-            ))
+        woli_futs = _woli_futures(pool, woli_ids, semi)
 
         # Submit AssetHistory batches
-        ah_futs = []
-        for i in range(0, max(len(truck_ids), 1), 200):
-            chunk   = truck_ids[i:i + 200]
-            ids_str = "'" + "','".join(chunk) + "'"
-            ah_futs.append(pool.submit(
-                sf_query_all,
-                f"""SELECT AssetId, OldValue, NewValue, CreatedDate
-                    FROM AssetHistory
-                    WHERE AssetId IN ({ids_str})
-                    AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
-            ))
+        ah_futs = _asset_history_futures(pool, truck_ids, ah_since, ah_until, semi)
 
         # Collect WOLI results (needed to build WO ID list for Phase 3)
         service_wolis: list = []
@@ -253,11 +287,7 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
                 "Premier_Cost__c, RV_Cost__c, Other_Cost__c FROM WorkOrderLineItem",
                 "WorkOrderId", ids,
             ))
-            member_fut = pool.submit(lambda ids=wo_ids: _batch_parallel(
-                "SELECT Id, WorkOrderNumber, Est_Tow_Over_Mileage_Cost_to_Member1__c "
-                "FROM WorkOrder",
-                "Id", ids,
-            ))
+            member_fut = _member_work_orders(pool, service_wolis, wo_ids, semi)
 
         # Collect AssetHistory (likely finishes while Phase 3 is running)
         ah_all: list = []
@@ -390,7 +420,8 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
     safe_name = sanitize_soql(driver_name)
 
     # Phase 1 — single AR+SA query; trucks from cache
-    truck_ids = _get_trucks()
+    semi = is_on('revenue_semijoin')
+    truck_ids = [] if semi else _get_trucks()
     ars = sf_query_all(f"""
         SELECT ServiceAppointmentId, ServiceAppointment.CreatedDate,
                ServiceAppointment.WorkType.Name, ServiceAppointment.ParentRecordId
@@ -429,27 +460,8 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
     # Phase 2+3 overlapped (same pattern as _compute_revenue)
     with ThreadPoolExecutor(max_workers=24) as pool:
 
-        woli_futs = []
-        for i in range(0, max(len(woli_ids), 1), 200):
-            chunk   = woli_ids[i:i + 200]
-            ids_str = "'" + "','".join(chunk) + "'"
-            woli_futs.append(pool.submit(
-                sf_query_all,
-                f"SELECT Id, WorkOrderId FROM WorkOrderLineItem WHERE Id IN ({ids_str})"
-            ))
-
-        ah_futs = []
-        for i in range(0, max(len(truck_ids), 1), 200):
-            chunk   = truck_ids[i:i + 200]
-            ids_str = "'" + "','".join(chunk) + "'"
-            ah_futs.append(pool.submit(
-                sf_query_all,
-                f"""SELECT AssetId, OldValue, NewValue, CreatedDate
-                    FROM AssetHistory
-                    WHERE AssetId IN ({ids_str})
-                    AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
-            ))
+        woli_futs = _woli_futures(pool, woli_ids, semi)
+        ah_futs = _asset_history_futures(pool, truck_ids, ah_since, ah_until, semi)
 
         service_wolis: list = []
         for f in woli_futs:
@@ -465,11 +477,7 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
                 "Premier_Cost__c, RV_Cost__c, Other_Cost__c FROM WorkOrderLineItem",
                 "WorkOrderId", ids,
             ))
-            member_fut = pool.submit(lambda ids=wo_ids: _batch_parallel(
-                "SELECT Id, WorkOrderNumber, Est_Tow_Over_Mileage_Cost_to_Member1__c "
-                "FROM WorkOrder",
-                "Id", ids,
-            ))
+            member_fut = _member_work_orders(pool, service_wolis, wo_ids, semi)
 
         ah_all: list = []
         for f in ah_futs:
