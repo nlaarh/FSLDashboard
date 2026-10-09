@@ -12,6 +12,7 @@ in production stores). Append-only: a rebuild first renames the current file to
 
 import json
 import os
+import threading
 import re
 import time
 from pathlib import Path
@@ -36,7 +37,7 @@ def _path(territory_id: str, service_date: str, suffix: str) -> Path:
 
 
 def _write(path: Path, data: dict):
-    tmp = path.with_suffix(f'.tmp{os.getpid()}')
+    tmp = path.with_suffix(f'.tmp{os.getpid()}.{threading.get_ident()}')   # per thread: two requests can save the same file at once
     tmp.write_text(json.dumps(data, separators=(',', ':'), default=str))
     os.replace(tmp, path)
 
