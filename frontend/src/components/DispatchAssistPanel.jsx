@@ -419,7 +419,7 @@ function OnPlatformView({ data }) {
         <div className="h-80 min-h-[320px] border-b border-slate-700/30">
           <style>{TOOLTIP_CSS}</style>
           <MapContainer center={saPos} zoom={11} className="h-full w-full" scrollWheelZoom style={{ background: '#1e293b' }}>
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; OpenStreetMap' />
+            <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}" maxZoom={19} attribution='Tiles &copy; Esri' />
             <InvalidateSize />
             <FitBounds points={mapPoints} />
             <Marker position={saPos} icon={customerMarkerIcon(sa.number, sa.member_name, sa.vehicle, sa.vehicle_plate)}>
@@ -479,7 +479,7 @@ function ZeroModeView({ data }) {
         <div className="h-80 min-h-[320px] border-b border-slate-700/30">
           <style>{TOOLTIP_CSS}</style>
           <MapContainer center={saPos} zoom={10} className="h-full w-full" scrollWheelZoom style={{ background: '#1e293b' }}>
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; OpenStreetMap' />
+            <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}" maxZoom={19} attribution='Tiles &copy; Esri' />
             <InvalidateSize />
             <FitBounds points={mapPoints} />
 

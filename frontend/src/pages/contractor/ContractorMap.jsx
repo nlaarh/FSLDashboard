@@ -279,8 +279,8 @@ export default function ContractorMap() {
       <div className="flex-1 relative">
         <MapContainer center={CENTER} zoom={9} className="w-full h-full" scrollWheelZoom>
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            attribution='&copy; OpenStreetMap &copy; CARTO'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
+            attribution='Tiles &copy; Esri' maxZoom={19}
           />
           <FlyTo target={target} />
 

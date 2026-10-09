@@ -11,7 +11,7 @@ import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
 import { clsx } from 'clsx'
 import {
   Search, Clock, Lock, AlertTriangle, HelpCircle,
-  Loader2, User, Radio, CheckCircle2, X, ExternalLink, Map as MapIcon, Mail, Navigation,
+  Loader2, User, Radio, CheckCircle2, X, ExternalLink, PlayCircle, Mail, Navigation,
   ChevronUp, ChevronDown, Clipboard, Check,
 } from 'lucide-react'
 import { SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
@@ -273,7 +273,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 </th>
               ))}
               <th className="w-[38px] px-1 py-2 text-center font-semibold">Assist</th>
-              {!contractorMode && <th className="w-[38px] px-1 py-2 text-center font-semibold">Map</th>}
+              {!contractorMode && <th className="w-[38px] px-1 py-2 text-center font-semibold">Replay</th>}
               <th className="w-[120px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
                 onClick={() => handleSort('kmi_case_number')}>
                 <span className="inline-flex items-center gap-0.5">
@@ -406,12 +406,12 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                     <Navigation className="w-3.5 h-3.5" />
                   </button>}
                 </td>
-                {/* Call map: its own column so the icon lines up on every row (contractors never see other drivers) */}
+                {/* Call replay: its own column so the icon lines up on every row (contractors never see other drivers) */}
                 {!contractorMode && (
                   <td className="px-1 py-1.5 text-center">
-                    {alert.sa_id && <button type="button" onClick={() => setMapAlert(alert)} aria-label="Open the call map" title="Open the call map"
+                    {alert.sa_id && <button type="button" onClick={() => setMapAlert(alert)} aria-label="Replay this call" title="Replay this call (live map, story, contacts)"
                       className="p-1 rounded hover:bg-sky-500/20 text-sky-400 hover:text-sky-200 transition-colors">
-                      <MapIcon className="w-3.5 h-3.5" />
+                      <PlayCircle className="w-3.5 h-3.5" />
                     </button>}
                   </td>
                 )}
