@@ -323,6 +323,7 @@ export default function Admin({ role = '' }) {
                   { key: 'scheduler_report_card', label: 'Report Card', desc: 'Scheduler Report Card: past garage-day Gantt and verdicts' },
                   { key: 'call_story', label: 'Call Story', desc: 'Type a call, see what happened and why' },
                   { key: 'replay_member_contact', label: 'Replay: member contact', desc: 'Replay shows member calls, texts (with message text) and the driver\'s other jobs' },
+                  { key: 'replay_gps_store', label: 'Replay: own GPS record', desc: 'Replay map reads our 60 s driver-position record instead of Salesforce history (needs the new tables)' },
                 ].map(m => {
                   const on = features[m.key] !== false
                   return (
