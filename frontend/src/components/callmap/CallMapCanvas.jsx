@@ -68,7 +68,7 @@ export default function CallMapCanvas({ data, t, isLive, onScene }) {
     peers.forEach(p => addTruck(p, false))
     st.current.trucks = trucks
     if (latest.current.isLive) trucks.addTo(map)
-    if (fitted.current !== data.sa.id && pts.length) { map.fitBounds(L.latLngBounds(pts), { padding: [70, 70], maxZoom: 14 }); fitted.current = data.sa.id }
+    if (fitted.current !== data.sa.id && pts.length) { map.fitBounds(L.latLngBounds(pts), { padding: [70, 70], maxZoom: 14, animate: false }); fitted.current = data.sa.id }
     return () => { root.remove(); trucks.remove(); st.current = {} }
   }, [map, data])
 
