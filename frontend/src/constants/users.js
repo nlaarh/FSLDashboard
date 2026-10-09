@@ -1,4 +1,11 @@
-export const ROLES = ['superadmin', 'admin', 'executive', 'ers', 'finance', 'manager', 'officer', 'contractor', 'viewer']
+// Roles offered when adding or editing a user. The server also still accepts the legacy roles
+// manager, officer, supervisor and viewer (backend/routers/admin.py valid_roles); nobody uses them, so they are not offered.
+export const ROLES = ['superadmin', 'admin', 'executive', 'ers-director', 'ers-manager', 'ers-supervisor', 'ers-member-relations', 'ers',
+  'finance', 'contractor']
+
+/** Dropdown choices for a user whose role is `current`. An unlisted current role stays first, so opening the editor
+ *  and saving never silently changes someone's role. */
+export const roleOptions = current => (!current || ROLES.includes(current) ? ROLES : [current, ...ROLES])
 
 export const DEPTS = [
   { value: '', label: '— None —' },
