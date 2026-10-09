@@ -17,6 +17,23 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.14.2 — 2026-10-09
+
+| | |
+|---|---|
+| Tag | `release/v1.14.2` |
+| Commit | `0c09664` (merge of PR #25, branch `hotfix/v1.14.2`) |
+| Bundle | `index-Ct3_PKVP.js` |
+| Deploy | GitHub Actions run `37977992947`, 2026-10-09, success (owner's explicit "go ahead") |
+| Roll back to | `release/v1.14.1` = `98ee103` (bundle `index-BrHnyEUg.js`) |
+
+**Changed**
+- Watchlist: the "Map" column is now called "Replay" and shows a play icon.
+- Dispatch Assist opens much faster. The busy-driver lookup now covers only the last 3 days: 11.6 s down to 0.23 s with the same results. In production it now answers in about 0.55 s.
+- Assist map, driver popup and contractor maps now use Esri street tiles, which removes the Carto "API KEY" watermark.
+
+---
+
 ## v1.14.1 — 2026-10-09
 
 | | |
