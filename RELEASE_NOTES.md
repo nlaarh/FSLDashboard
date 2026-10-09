@@ -17,6 +17,22 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.16 — 2026-10-09
+
+| | |
+|---|---|
+| Tag | `release/v1.16` |
+| Commit | `a6c4cdb` (merge of PR #27, branch `feature/garage-live`) |
+| Bundle | `index-BUUUNFDP.js` |
+| Deploy | GitHub Actions run `37994530162`, 2026-10-09, success (owner's explicit "put live"; shipped before Tamy QA at owner's request — 779 backend tests passed, build OK, production smoke checked) |
+| Roll back to | `release/v1.15` = `8871f97` (bundle `index-DPmII_UH.js`) |
+
+**What changed**
+- Command Center has a new **Garage Live** tab. You pick a garage and see its open calls and drivers on a live map, refreshed every minute, with trucks moving between refreshes. A "Needs attention" panel ranks the problem calls, and each one has Call garage, Open Replay and Open in Salesforce.
+- Towbook garages show calls only, because Towbook doesn't send driver GPS. Contractors see only their own garages.
+
+**Files:** `backend/garage_live.py`, `backend/garage_live_rules.py`, `backend/routers/garage_live.py`, `frontend/src/components/garagelive/*`, `frontend/src/pages/CommandCenter.jsx`.
+
 ## v1.15 — 2026-10-09
 
 | | |
