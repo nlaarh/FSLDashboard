@@ -175,7 +175,7 @@ from routers import (
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
     issues, pta, chatbot, data_quality, matrix,
     tracking, misc, misc_diagnostics, insights, insights_health, sa_report, search,
-    garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, accounting,
+    garages_scorecard, garages_export, live_dispatch, watchlist, watchlist_assist, watchlist_call_map, accounting,
     accounting_reviews, accounting_ai, optimizer, optimizer_chat, reporting,
     garages_revenue_export, password_reset, dispatch_score, admin_reference, system_health,
     salesforce_diagnostics,
@@ -218,6 +218,7 @@ app.include_router(satisfaction_scorecard.router)
 app.include_router(live_dispatch.router)
 app.include_router(watchlist.router)
 app.include_router(watchlist_assist.router)
+app.include_router(watchlist_call_map.router)
 app.include_router(accounting.router)
 app.include_router(accounting_reviews.router)
 app.include_router(accounting_ai.router)
