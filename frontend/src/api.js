@@ -235,6 +235,7 @@ export const fetchCallMap = (saId, hints = {}) => {
   if (hints.geo) { params.append('geo', 1); params.append('lat', hints.lat); params.append('lon', hints.lon) }
   return api.get(`/watchlist/call-map/${saId}?${params}`, { timeout: 60000 }).then(r => r.data)
 }
+export const fetchGarageLive = id => api.get(`/garage-live/${encodeURIComponent(id)}`, { timeout: 30000 }).then(r => r.data)
 export const followSA = (sa_number, sa_id = '', added_by = '') => api.post('/watchlist/follow', { sa_number, sa_id, added_by }).then(r => r.data)
 export const unfollowSA = (sa_number) => api.delete(`/watchlist/follow/${sa_number}`).then(r => r.data)
 

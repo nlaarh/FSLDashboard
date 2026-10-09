@@ -139,6 +139,17 @@ def watchlist_for(territories: list[str] | None = None) -> dict:
     return assemble(snap, territories) if territories else result
 
 
+def shared_state() -> tuple[dict, dict]:
+    """(snapshot, alerts built from it) for everybody, kept fresh by the same rules as the screen (Garage Live reads from here, so its
+    flags and wording are the Watchlist's own and it never adds a Salesforce read). Raises RuntimeError when no copy can be made."""
+    watchlist_for(None)
+    if _state['snap'] is None:
+        _rebuild(block=True)
+    if _state['snap'] is None:
+        raise RuntimeError('watchlist snapshot unavailable')
+    return _state['snap'], _state['result']
+
+
 def _fallback(territories, snap, result) -> dict:
     """The rebuild failed: serve the last copy we have (its last_updated tells the truth about its age)."""
     if territories:

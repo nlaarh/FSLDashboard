@@ -1,6 +1,6 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, Marker, Polyline, useMap, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import { clsx } from 'clsx'
@@ -11,7 +11,7 @@ import {
   ChevronRight, Search, MapPin, Clock, FileText,
   ChevronDown, ChevronUp, Crosshair, X, Truck, Layers,
   Zap, Shield, Navigation, Users, TrendingUp, AlertCircle, ArrowRight,
-  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity, Eye, Star, MessageSquare, ArrowLeft
+  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity, Eye, Star, MessageSquare, ArrowLeft, Binoculars
 } from 'lucide-react'
 import { StatChip, Div, LegendDot, LegendSmall, fmtPhone, fmtWait } from '../components/CommandCenterUtils'
 import DispatchInsightsFullView, { SuggestionCard } from '../components/DispatchInsights'
@@ -23,6 +23,8 @@ import {
   gridFeatureStyle, onEachGridFeature, driverIcon,
   AutoBounds, FlyTo, TerritoryCard, TerritoryPopup, OpsCockpitPanel,
 } from '../components/CommandCenterCards'
+
+const GarageLive = React.lazy(() => import('../components/garagelive/GarageLive'))   // loads only when the tab is opened
 
 export default function CommandCenter() {
   const navigate = useNavigate()
@@ -40,6 +42,18 @@ export default function CommandCenter() {
     territories, summary, fleet, demand, suggestions, openCalls, atRisk, zones,
     filtered, idleDriverIds,
   } = useCommandCenterData()
+
+  // The Garage Live tab lives in the URL (?tab=garage-live&garage=ID) so it can be shared, reloaded and remembered
+  const [params, setParams] = useSearchParams()
+  useEffect(() => { if (params.get('tab') === 'garage-live') setViewMode('garage-live') }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const shownTab = useRef(viewMode)
+  useEffect(() => {
+    if (shownTab.current === viewMode) return                       // only a real tab change touches the URL (the first pass still shows the default tab)
+    shownTab.current = viewMode
+    const on = params.get('tab') === 'garage-live'
+    if (viewMode === 'garage-live' && !on) setParams(p => { const n = new URLSearchParams(p); n.set('tab', 'garage-live'); return n }, { replace: true })
+    if (viewMode !== 'garage-live' && on && params.get('tab')) setParams(p => { const n = new URLSearchParams(p); n.delete('tab'); n.delete('garage'); return n }, { replace: true })
+  }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="-mx-6 -mt-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
@@ -69,6 +83,13 @@ export default function CommandCenter() {
               : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <MapPin className="w-4 h-4" /> Map
         </button>
+        <button onClick={() => setViewMode('garage-live')}
+          className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
+            viewMode === 'garage-live'
+              ? 'border-emerald-500 text-emerald-300 bg-emerald-600/10'
+              : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
+          <Binoculars className="w-4 h-4" /> Garage Live
+        </button>
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}
@@ -93,6 +114,15 @@ export default function CommandCenter() {
               <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── GARAGE LIVE ── */}
+      {viewMode === 'garage-live' && (
+        <div className="flex-1 overflow-hidden">
+          <React.Suspense fallback={<div className="w-full h-full flex items-center justify-center bg-slate-950"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>}>
+            <GarageLive />
+          </React.Suspense>
         </div>
       )}
 
