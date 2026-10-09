@@ -17,6 +17,24 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.14 — 2026-10-09
+
+| | |
+|---|---|
+| Tag | `release/v1.14` |
+| Commit | `e402daf` (merge of PR #23, branch `release/v1.14-prep`) |
+| Bundle | `index-S8sqGyHC.js` |
+| Deploy | GitHub Actions run `37972898789`, 2026-10-09, success (owner's explicit "test and deploy everything now") |
+| Roll back to | `release/v1.13` = `7b515bc` (bundle `index-BEp2pkZc.js`) |
+
+**Changed**
+- Watchlist call map: a map icon on each row opens a full-window live view of the call. It shows quick info (garage phone and up to 3 contacts), who is working it (falls back to the garage dispatcher), related cases, a map with the qualified drivers and their job badges, the story, and a time slider. It refreshes about once a minute. Only roles with Replay access see texts; contractors are blocked.
+- Replay Expand: big-screen mode on the Garage and Work Order tabs, with Back and Esc, covering the whole window.
+- Watchlist "Potential Duplicate" no longer raises false alarms. The RAP customer name now decides (work orders 05200081 and 05200190 were false alarms).
+- Role dropdown: ERS roles are offered, legacy roles are hidden, and a user's unlisted role is never silently changed.
+
+---
+
 ## v1.13 — 2026-10-08
 
 | | |
