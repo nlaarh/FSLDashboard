@@ -39,7 +39,7 @@ _SNAPSHOT_SOQL = """
                WorkOrderId, WorkOrder.WorkOrderNumber, WorkOrder.Current_Wait__c,
                WorkOrder.Vehicle_Make__c, WorkOrder.Vehicle_Model__c, WorkOrder.License_Plate__c,
                WorkOrder.Type__c, WorkOrder.Customer_Name__c,
-               WorkOrder.ERS_Unable_To_Complete_Dupe__c, WorkOrder.CreatedDate
+               WorkOrder.ERS_Unable_To_Complete_Dupe__c, WorkOrder.CreatedDate, WorkOrder.ServiceTerritory.Name
            END,
            (SELECT Id, ServiceAppointmentId,
                    ServiceResource.Name, ServiceResource.Id,
@@ -88,6 +88,39 @@ _HIST_SOQL = """
       AND Field IN ('Status', 'ERS_Assigned_Resource__c')
     ORDER BY CreatedDate ASC
 """
+
+
+# Active appointments that have no territory at all (the base read requires one). Only the territory flag looks at them,
+# so no drivers/history here. CreatedDate is the indexed filter (explain: Index on CreatedDate, relative cost 0.01).
+_UNROUTED_SOQL = """
+    SELECT Id, AppointmentNumber, Status, StatusCategory,
+           ServiceTerritoryId, ServiceTerritory.Name,
+           WorkType.Name, WorkTypeId, ERS_PTA__c, ParentRecordId,
+           WO_Priority_Code__c, FSL__GanttLabel__c,
+           AccountId, Account.Name, Account.PersonMobilePhone, Account.Phone,
+           Phone, Mobile_Phone__c, CreatedDate, SchedStartTime, LastModifiedDate,
+           Street, City, Latitude, Longitude,
+           TYPEOF ParentRecord WHEN WorkOrderLineItem THEN
+               WorkOrderId, WorkOrder.WorkOrderNumber, WorkOrder.Current_Wait__c,
+               WorkOrder.Vehicle_Make__c, WorkOrder.Vehicle_Model__c, WorkOrder.License_Plate__c,
+               WorkOrder.Type__c, WorkOrder.Customer_Name__c, WorkOrder.ServiceTerritory.Name
+           END
+    FROM ServiceAppointment
+    WHERE RecordType.Name = 'ERS Service Appointment'
+      AND ServiceTerritoryId = null
+      AND CreatedDate >= {cutoff_24h}
+      AND StatusCategory IN ('None', 'Scheduled', 'Dispatched', 'InProgress', 'CheckedIn')
+"""
+
+# Scheduled Start changes of the few candidates only (a day of them across all appointments is >2,000 rows).
+_SCHED_HIST_SOQL = """
+    SELECT ServiceAppointmentId, OldValue, NewValue, CreatedDate
+    FROM ServiceAppointmentHistory
+    WHERE ServiceAppointmentId IN ('{id_list}') AND Field = 'SchedStartTime'
+    ORDER BY CreatedDate ASC
+"""
+
+SCHED_GRACE_SEC = 300      # an appointment younger than this is still being set up
 
 
 def _iso(dt: datetime) -> str:
@@ -158,9 +191,45 @@ def duplicate_candidates(sas: list, wo_by_woli: dict, now_utc: datetime) -> list
     return out
 
 
+def fetch_unrouted(cutoff_24h: str) -> tuple[list, dict]:
+    """(appointments, work-order info by WOLI) for active appointments with no territory. A failed read skips the flag."""
+    try:
+        sas, _, _, wo_by_woli, _ = split_rows(sf_query_all(_UNROUTED_SOQL.format(cutoff_24h=cutoff_24h)))
+        return sas, wo_by_woli
+    except Exception as e:
+        log.warning("Watchlist: no-territory read failed, skipping that flag: %s", e)
+        return [], {}
+
+
+def sched_cleared_ids(sas: list, now_utc: datetime) -> set:
+    """Appointments whose Scheduled Start was cleared and is still blank: active, not a Tow Drop-Off, older than
+    SCHED_GRACE_SEC, SchedStartTime empty now, and the LATEST Scheduled Start history row went from a value to blank
+    (a later row that set it again means it is fine). Only the blank ones are looked up, so this is one small read,
+    and none when there are no candidates. A failed read skips the flag."""
+    cands = []
+    for sa in sas:
+        created = _parse_dt(sa.get('CreatedDate'))
+        if (sa.get('StatusCategory') in _ACTIVE_CATEGORIES and not sa.get('SchedStartTime') and created
+                and ((sa.get('WorkType') or {}).get('Name')) != 'Tow Drop-Off'
+                and (now_utc - created).total_seconds() > SCHED_GRACE_SEC):
+            cands.append(sa['Id'])
+    if not cands:
+        return set()
+    try:
+        rows = batch_soql_parallel(_SCHED_HIST_SOQL, cands, chunk_size=200)
+    except Exception as e:
+        log.warning("Watchlist: Scheduled Start history read failed, skipping that flag: %s", e)
+        return set()
+    latest = {}
+    for r in sorted(rows, key=lambda r: r.get('CreatedDate') or ''):
+        latest[r.get('ServiceAppointmentId')] = r
+    return {i for i, r in latest.items() if r.get('OldValue') and not r.get('NewValue')}
+
+
 def fetch_snapshot(now_utc: datetime | None = None) -> dict:
     """Read everything the Watchlist needs: 1 request for the appointments (+ drivers, history, work orders),
-    1 for Submitted work orders with no appointment (+ 0-3 more only for the few still unresolved)."""
+    1 for Submitted work orders with no appointment (+ 0-3 more only for the few still unresolved),
+    1 for active appointments without a territory, and 1 for the Scheduled Start history of the few blank-start ones."""
     now_utc = now_utc or datetime.now(timezone.utc)
     cutoff_24h = _iso(now_utc - timedelta(hours=24))
     cutoff_recent_terminal = _iso(now_utc - timedelta(minutes=15))
@@ -169,6 +238,9 @@ def fetch_snapshot(now_utc: datetime | None = None) -> dict:
     sas, ar_by_sa, hist_by_sa, wo_by_woli, truncated = split_rows(rows)
     if truncated:
         _fix_truncated(truncated, ar_by_sa, hist_by_sa)
+
+    unrouted_sas, unrouted_wo = fetch_unrouted(cutoff_24h)
+    wo_by_woli.update(unrouted_wo)
 
     # Work orders that already have an appointment in this pull need no further check.
     wo_ids_with_sa = {v['wo_id'] for v in wo_by_woli.values() if v.get('wo_id')}
@@ -179,5 +251,7 @@ def fetch_snapshot(now_utc: datetime | None = None) -> dict:
         'hist_by_sa': hist_by_sa,
         'wo_by_woli': wo_by_woli,
         'dup_candidates': duplicate_candidates(sas, wo_by_woli, now_utc),
+        'unrouted_sas': unrouted_sas,
+        'sched_cleared': sched_cleared_ids(sas, now_utc),
         'no_sa_wos': find_no_sa_wos(now_utc, wo_ids_with_sa),
     }

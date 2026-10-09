@@ -18,11 +18,11 @@ def iso(minutes_ago):
 
 def sa_row(n, *, status='Dispatched', cat='Dispatched', account='001A', territory='0HhT1', woli=None, wo=None,
            work_type='Tow', lat=43.0, lon=-77.0, street='1 Main St', ars=(), hist=(), created=40, pta=None,
-           facility='Facility', prio=''):
+           facility='Facility', prio='', terr_name='100 - Terr A', sched='2026-10-09T16:00:00.000+0000'):
     row = {
         'Id': f'08pS{n}', 'AppointmentNumber': f'SA-{n}', 'Status': status, 'StatusCategory': cat,
-        'ServiceTerritoryId': territory, 'ServiceTerritory': {'Name': 'Terr - A'},
-        'WorkType': {'Name': work_type}, 'WorkTypeId': 'wt1', 'ERS_PTA__c': pta,
+        'ServiceTerritoryId': territory, 'ServiceTerritory': {'Name': terr_name},
+        'WorkType': {'Name': work_type}, 'WorkTypeId': 'wt1', 'ERS_PTA__c': pta, 'SchedStartTime': sched,
         'ParentRecordId': woli, 'WO_Priority_Code__c': prio,
         'AAA_ERS_Account_Facility__r': {'Name': facility, 'Phone': '555'},
         'AccountId': account, 'Account': {'Name': 'Member', 'Phone': '1'},
@@ -38,14 +38,15 @@ def sa_row(n, *, status='Dispatched', cat='Dispatched', account='001A', territor
 def work_order(n, **kw):
     return {'Id': f'0WO{n}', 'WorkOrderNumber': f'WO-{n}', 'Current_Wait__c': 12.0, 'Vehicle_Make__c': 'Ford',
             'Vehicle_Model__c': 'F150', 'License_Plate__c': 'ABC1', 'Type__c': None, 'Customer_Name__c': None,
-            'ERS_Unable_To_Complete_Dupe__c': False, 'CreatedDate': iso(60), **kw}
+            'ERS_Unable_To_Complete_Dupe__c': False, 'CreatedDate': iso(60),
+            'ServiceTerritory': {'Name': '100 - Terr A'}, **kw}
 
 
-def snapshot(rows, no_sa=()):
+def snapshot(rows, no_sa=(), **extra):
     sas, ar, hist, wo_by_woli, trunc = snapmod.split_rows(rows)
     assert not trunc
     return {'now': NOW, 'sas': sas, 'ar_by_sa': ar, 'hist_by_sa': hist, 'wo_by_woli': wo_by_woli,
-            'dup_candidates': snapmod.duplicate_candidates(sas, wo_by_woli, NOW), 'no_sa_wos': list(no_sa)}
+            'dup_candidates': snapmod.duplicate_candidates(sas, wo_by_woli, NOW), 'no_sa_wos': list(no_sa), **extra}
 
 
 @pytest.fixture(autouse=True)
@@ -239,3 +240,114 @@ def test_contractor_is_served_from_the_shared_snapshot(served):
 def test_last_updated_is_when_salesforce_was_read(served):
     out = wl.watchlist_for([])
     assert 0 <= wl._age_of(out['last_updated']) < 5
+
+
+# ── No Service Resource + Service Territory Needs Action ─────────────────────
+
+def row(n, **kw):
+    return sa_row(n, account=f'A{n}', **kw)
+
+
+def flags_of(snap, territories=None):
+    snap.setdefault('kmi_map', {})
+    return {a['sa_id']: a['flag'] for a in wl.assemble(snap, territories)['operational_alerts']}
+
+
+def sched_hist(sa_n, old, new, minutes_ago):
+    return {'ServiceAppointmentId': f'08pS{sa_n}', 'OldValue': old, 'NewValue': new, 'CreatedDate': iso(minutes_ago)}
+
+
+def run_sched_cleared(monkeypatch, rows, history):
+    sas, *_ = snapmod.split_rows(rows)
+    reads = []
+    monkeypatch.setattr(snapmod, 'batch_soql_parallel', lambda soql, ids, chunk_size=200: reads.append(ids) or history)
+    return snapmod.sched_cleared_ids(sas, NOW), reads
+
+
+V = '2026-10-09T16:00:00.000+0000'
+
+
+def test_sched_cleared_flags_only_when_latest_change_cleared_it(monkeypatch):
+    rows = [row(n, sched=None, cat='Scheduled') for n in range(1, 5)] + [row(5, sched=V)]
+    hist = [sched_hist(1, V, None, 20),                                     # cleared -> flagged
+            sched_hist(2, V, None, 20), sched_hist(2, None, V, 10),         # cleared, then set again -> not flagged
+            sched_hist(3, None, V, 20), sched_hist(3, V, None, 10)]         # set, then cleared -> flagged; 4: never had a value
+    cleared, reads = run_sched_cleared(monkeypatch, rows, hist)
+    assert cleared == {'08pS1', '08pS3'}
+    assert reads == [['08pS1', '08pS2', '08pS3', '08pS4']]                 # one small read, only blank-start candidates
+
+
+def test_sched_cleared_skips_young_drop_off_inactive_and_reads_nothing_without_candidates(monkeypatch):
+    rows = [row(1, sched=None, created=4), row(2, sched=None, work_type='Tow Drop-Off'),
+            row(3, sched=None, status='Completed', cat='Completed'), row(4, sched=V)]
+    cleared, reads = run_sched_cleared(monkeypatch, rows, [sched_hist(n, V, None, 1) for n in (1, 2, 3, 4)])
+    assert cleared == set() and reads == []
+
+
+def test_sched_cleared_history_failure_skips_the_flag(monkeypatch):
+    sas, *_ = snapmod.split_rows([row(1, sched=None)])
+    monkeypatch.setattr(snapmod, 'batch_soql_parallel', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('SF down')))
+    assert snapmod.sched_cleared_ids(sas, NOW) == set()
+
+
+def test_no_service_resource_flag_follows_cleared_set_and_current_value():
+    rows = [row(1, sched=None), row(2, sched=None), row(3, sched=V, ), row(4, sched=None, work_type='Tow Drop-Off')]
+    snap = snapshot(rows, sched_cleared={'08pS1', '08pS3', '08pS4'})
+    flags = flags_of(snap)
+    assert flags == {'08pS1': 'No Service Resource'}        # 2 never had a value, 3 has one again, 4 is a drop-off
+
+
+def test_no_service_resource_outranks_call_not_closed_and_sorts_after_received():
+    rows = [row(1, sched=None, status='Received', cat='None'), row(2, sched=None)]
+    out = wl.assemble(snapshot(rows, sched_cleared={'08pS2'}, kmi_map={}), None)['operational_alerts']
+    assert [(a['sa_id'], a['flag']) for a in out] == [('08pS1', 'Call Not Assigned - Received'), ('08pS2', 'No Service Resource')]
+
+
+@pytest.mark.parametrize('name,flagged', [
+    ('LS - LOCKSMITH REQUIRED', True), ('WM016', True), ('RM004', True), ('', True), (None, True),
+    ('000- Unassigned', False), ('100 - Rochester', False), ('0HhT1', False)])
+def test_territory_flag_on_the_appointment_territory(name, flagged):
+    r = row(1, terr_name=name)
+    r['ServiceTerritory'] = {'Name': name} if name is not None else None
+    assert (flags_of(snapshot([r])).get('08pS1') == 'Service Territory Needs Action') is flagged
+
+
+def test_territory_flag_looks_at_the_work_order_territory_and_skips_drop_offs_and_closed():
+    bad_wo = work_order(1, ServiceTerritory={'Name': 'WM035'})
+    ok_wo = work_order(2, ServiceTerritory={'Name': '200 - Buffalo'})
+    rows = [row(1, woli='W1', wo=bad_wo), row(2, woli='W2', wo=ok_wo),
+            row(3, woli='W3', wo=bad_wo, work_type='Tow Drop-Off'),
+            row(4, status='Completed', cat='Completed', terr_name='RM010')]
+    flags = flags_of(snapshot(rows))
+    assert flags == {'08pS1': 'Service Territory Needs Action'}
+
+
+def test_unrouted_appointments_only_get_the_territory_flag_and_only_for_everybody():
+    wo = work_order(7)
+    unrouted = row(7, territory=None, terr_name=None, woli='W7', wo=wo, status='Received', cat='None', prio='P1', sched=None)
+    unrouted['ServiceTerritory'] = None
+    sas, _, _, wo_by_woli, _ = snapmod.split_rows([unrouted])
+    snap = snapshot([row(1)], unrouted_sas=sas, sched_cleared={'08pS7'})
+    snap['wo_by_woli'].update(wo_by_woli)
+    out = {a['sa_id']: a for a in wl.assemble(snap, None)['operational_alerts']}
+    assert out['08pS7']['flag'] == 'Service Territory Needs Action'      # not Received / High Priority / No Service Resource
+    assert out['08pS7']['wo_number'] == 'WO-7' and '08pS1' not in out
+    assert wl.assemble(snap, ['0HhT1'])['operational_alerts'] == []        # contractors only see their territories
+
+
+def test_draft_new_work_orders_are_never_read():
+    """'New' draft work orders (no appointment) are not appointments: the unrouted read is appointment-based, so they can't appear."""
+    assert 'FROM ServiceAppointment' in snapmod._UNROUTED_SOQL and 'WorkOrder\n' not in snapmod._UNROUTED_SOQL.split('FROM')[-1]
+
+
+def test_fetch_snapshot_adds_at_most_two_small_reads(monkeypatch):
+    calls = []
+    def fake_all(soql, **k):
+        calls.append(soql)
+        return [row(1, sched=None, woli='W1', wo=work_order(1))] if 'TYPEOF' in soql and 'ServiceTerritoryId = null' not in soql else []
+    monkeypatch.setattr(snapmod, 'sf_query_all', fake_all)
+    monkeypatch.setattr(wa, 'sf_query_all', lambda soql, **k: calls.append(soql) or [])
+    monkeypatch.setattr(snapmod, 'batch_soql_parallel', lambda soql, ids, chunk_size=200: calls.append(soql) or [sched_hist(1, V, None, 20)])
+    snap = snapmod.fetch_snapshot(NOW)
+    assert snap['sched_cleared'] == {'08pS1'} and snap['unrouted_sas'] == []
+    assert len(calls) == 4          # base + no-SA work orders (as before) + no-territory + Scheduled Start history

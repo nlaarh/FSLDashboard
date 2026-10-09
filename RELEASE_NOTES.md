@@ -17,6 +17,31 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.15 — 2026-10-09
+
+| | |
+|---|---|
+| Tag | `release/v1.15` |
+| Commit | `8871f97` (merge of PR #26, branch `perf/release`) |
+| Bundle | `index-DPmII_UH.js` |
+| Deploy | GitHub Actions run `37993348939`, 2026-10-09, success (owner's explicit "deploy"; Tamy QA PASS) |
+| Roll back to | `release/v1.14.2` = `0c09664` (bundle `index-Ct3_PKVP.js`) |
+| Backup | `backend/local_backups/prod_20261009_210648.dump` (25.5 MB, not in git) + Azure automatic backup 2026-10-08 21:57 UTC |
+
+**Changed (plain English)**
+- Speed batch 1: the app asks Salesforce for less, and never more than 8 things at once. The Watchlist stays fresh (about 35 seconds old at most).
+- Speed batch 2: screens load less data and only refresh while you are looking at them.
+- Speed batch 3: groundwork for stored GPS replay, daily summary numbers and a lighter revenue query. Ships with all three switches OFF (`replay_gps_store`, `daily_facts`, `revenue_semijoin`), so nothing changes until the owner turns them on. The four new tables are only created when a switch is turned on.
+- Watchlist: two new alerts. "No Service Resource" (a call with no driver or resource on it) and "Service Territory Needs Action" (a territory that needs a dispatcher to step in).
+- Housekeeping: two earlier commits had accidentally included build-output `index.html` files; they were restored to the production versions before merge.
+
+**Verified live**
+- `/api/health` ok, Salesforce errors 0, breaker closed. Live bundle changed from `index-Ct3_PKVP.js` to `index-DPmII_UH.js`.
+- `/api/features`: the three batch 3 switches present and OFF.
+- Watchlist loads in under 1 s and shows "No Service Resource" alerts live.
+
+---
+
 ## v1.14.2 — 2026-10-09
 
 | | |

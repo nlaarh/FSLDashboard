@@ -56,6 +56,8 @@ const FLAG_COLORS = {
   'Call Not Assigned': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
   'Call Not Assigned - Rejected': 'bg-rose-500/20 text-rose-400 border-rose-500/40',
   'Call Not Assigned - Received': 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+  'No Service Resource': 'bg-lime-500/20 text-lime-400 border-lime-500/40',
+  'Service Territory Needs Action': 'bg-teal-500/20 text-teal-400 border-teal-500/40',
   'Call Not Closed': 'bg-purple-500/20 text-purple-400 border-purple-500/40',
   'Potential Duplicate': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
   'No Service Appointments on Work Order': 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/40',
@@ -780,7 +782,7 @@ export default function SAWatchlist({ contractorMode = false }) {
               <div>
                 <h3 className="font-bold text-white mb-1">What are Operational Alerts?</h3>
                 <p className="text-slate-400">
-                  SAs and Work Orders that match one of 8 flag conditions indicating dispatcher intervention may be needed.
+                  SAs and Work Orders that match one of 10 flag conditions indicating dispatcher intervention may be needed.
                   The system evaluates all open SAs (and Submitted Work Orders) every 30 seconds and flags those that meet criteria.
                 </p>
               </div>
@@ -802,6 +804,14 @@ export default function SAWatchlist({ contractorMode = false }) {
                   <div>
                     <span className="text-amber-400 font-bold">Call Not Assigned - Received</span>
                     <p className="pl-2 mt-0.5">SA status is 'Received' — call entered the system but hasn't been dispatched yet.</p>
+                  </div>
+                  <div>
+                    <span className="text-lime-400 font-bold">No Service Resource</span>
+                    <p className="pl-2 mt-0.5">The appointment's Scheduled Start had a value and was removed — it is blank now and the call is more than 5 minutes old. The flag clears as soon as Scheduled Start has a value again.</p>
+                  </div>
+                  <div>
+                    <span className="text-teal-400 font-bold">Service Territory Needs Action</span>
+                    <p className="pl-2 mt-0.5">The territory on an active call (appointment or work order) is blank or starts with a letter — it should start with a number.</p>
                   </div>
                   <div>
                     <span className="text-purple-400 font-bold">Call Not Closed</span>

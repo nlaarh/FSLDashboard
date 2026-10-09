@@ -559,6 +559,11 @@ async def startup():
     # The refresher handles leader election — safe to call from all workers
     refresher.start()
 
+    # Speed batch 3: GPS sampler and daily facts job. Both idle (no query, no table) until their flag is switched on.
+    import gps_store, facts_job
+    threading.Thread(target=gps_store.run_forever, daemon=True, name='gps-sampler').start()
+    threading.Thread(target=facts_job.run_forever, daemon=True, name='facts-job').start()
+
     # Optimizer blob sync — disabled until DuckDB is re-enabled
     # import optimizer_blob_sync
     # optimizer_blob_sync.start()
