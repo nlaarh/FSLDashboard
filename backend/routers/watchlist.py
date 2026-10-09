@@ -36,7 +36,7 @@ router = APIRouter()
 log = logging.getLogger('watchlist')
 
 CACHE_KEY = 'dispatch_watchlist'
-FRESH_S = 30          # a copy this young is served as is (the screen polls every 30 s)
+FRESH_S = 20          # a copy this young is served as is; below the 30 s poll so each poll starts one rebuild and the screen stays <= ~30-50 s old
 MAX_STALE_S = 60      # a copy up to this old is served instantly while ONE background rebuild refreshes it;
                       # older than this, the request waits for a rebuild (and falls back to the old copy only if it fails)
 _LOCK_NAME = 'watchlist_rebuild'
