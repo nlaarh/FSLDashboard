@@ -1,7 +1,7 @@
 """Diagnostic/analytics endpoints split from misc.py:
 Scheduler Insights — auto vs manual dispatch quality analysis."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from collections import defaultdict, Counter
 from fastapi import APIRouter
 
@@ -9,9 +9,9 @@ from utils import (
     _ET, parse_dt as _parse_dt,
     haversine,
 )
-from sf_client import sf_query_all_shared as sf_query_all, sf_parallel
 from dispatch_utils import parse_assign_events, classify_dispatch
 import cache
+import ref_data
 from cache import DASHBOARD_TTL
 
 router = APIRouter()
@@ -35,90 +35,18 @@ def scheduler_insights():
     """Scheduler decision quality based on SA history — who actually dispatched. Today from midnight ET; falls back to last 24h if today is empty."""
     now_utc = datetime.now(timezone.utc)
     now_et = now_utc.astimezone(_ET)
-    today_cutoff = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    fallback_cutoff = (now_utc - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    cutoff_utc = today_cutoff  # will switch to fallback if today is empty
+    today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
     def _fetch():
-        from sf_client import sf_parallel
-        nonlocal cutoff_utc
-
-        # 1) Parallel fetch: today's fleet + Towbook SAs, assigned resources, all drivers w/ GPS, territory members, Asset login
-        def _get_sas():
-            return sf_query_all(f"""
-                SELECT Id, AppointmentNumber, Status, CreatedDate,
-                       ActualStartTime, SchedStartTime,
-                       ERS_Dispatch_Method__c, Latitude, Longitude,
-                       ERS_Dispatched_Geolocation__Latitude__s,
-                       ERS_Dispatched_Geolocation__Longitude__s,
-                       ServiceTerritoryId, ServiceTerritory.Name,
-                       WorkType.Name, CreatedBy.Profile.Name
-                FROM ServiceAppointment
-                WHERE CreatedDate >= {cutoff_utc}
-                  AND ServiceTerritoryId != null
-                  AND RecordType.Name = 'ERS Service Appointment'
-                ORDER BY CreatedDate ASC
-            """)
-
-        def _get_assigned():
-            return sf_query_all(f"""
-                SELECT ServiceAppointmentId, ServiceResourceId,
-                       ServiceResource.Name,
-                       ServiceResource.LastKnownLatitude,
-                       ServiceResource.LastKnownLongitude,
-                       ServiceResource.ERS_Driver_Type__c
-                FROM AssignedResource
-                WHERE ServiceAppointment.CreatedDate >= {cutoff_utc}
-                  AND ServiceAppointment.RecordType.Name = 'ERS Service Appointment'
-            """)
-
-        def _get_drivers():
-            return sf_query_all("""
-                SELECT Id, Name, LastKnownLatitude, LastKnownLongitude
-                FROM ServiceResource
-                WHERE IsActive = true AND ResourceType = 'T'
-                  AND LastKnownLatitude != null
-                  AND ERS_Driver_Type__c IN ('Fleet Driver', 'On-Platform Contractor Driver')
-                  AND (NOT Name LIKE 'Towbook%')
-                  AND (NOT Name LIKE 'Test %')
-                  AND (NOT Name LIKE '000-%')
-                  AND (NOT Name LIKE '0 %')
-                  AND (NOT Name LIKE '100A %')
-                  AND Name != 'Travel User'
-            """)
-
-        def _get_members():
-            return sf_query_all("""
-                SELECT ServiceResourceId, ServiceTerritoryId, TerritoryType
-                FROM ServiceTerritoryMember
-                WHERE TerritoryType IN ('P','S')
-                  AND ServiceResource.IsActive = true
-                  AND ServiceResource.ResourceType = 'T'
-            """)
-
-        def _get_trucks():
-            """On-shift drivers from Asset for filtering comparison pool."""
-            return sf_query_all("""
-                SELECT ERS_Driver__c
-                FROM Asset
-                WHERE RecordType.Name = 'ERS Truck'
-                  AND ERS_Driver__c != null
-            """)
-
-        data = sf_parallel(
-            sas=_get_sas,
-            assigned=_get_assigned,
-            drivers=_get_drivers,
-            members=_get_members,
-            trucks=_get_trucks,
-        )
-
-        sas_raw = data['sas']
-        assigned_raw = data['assigned']
-        all_drivers = data['drivers']
-        members_raw = data['members']
+        # 1) Shared reads (ref_data): today's fleet + Towbook SAs, assigned resources, all drivers w/ GPS, territory members, Asset login
+        sas_raw = ref_data.appointments(today_start)
+        assigned_raw = ref_data.assigned(today_start, ers_only=True)
+        all_drivers = ref_data.drivers(exclude_names=('Towbook%', 'Test %', '000-%', '0 %', '100A %'),
+                                       exclude_exact=('Travel User',))
+        members_raw = ref_data.members()
+        trucks_raw = ref_data.trucks(active_only=False)
         # On-shift driver IDs from Asset
-        on_shift_ids = {t.get('ERS_Driver__c') for t in data['trucks'] if t.get('ERS_Driver__c')}
+        on_shift_ids = {t.get('ERS_Driver__c') for t in trucks_raw if t.get('ERS_Driver__c')}
 
         # Exclude Tow Drop-Off
         sas = [s for s in sas_raw if 'drop' not in ((s.get('WorkType') or {}).get('Name', '') or '').lower()]
