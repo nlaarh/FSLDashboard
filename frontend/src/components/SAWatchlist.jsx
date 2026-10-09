@@ -464,17 +464,19 @@ export default function SAWatchlist({ contractorMode = false }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [countdown, setCountdown] = useState(30)
+  const [nowMs, setNowMs] = useState(() => Date.now())   // ticks every second so 'updated Ns ago' stays true
   const [mapDriver, setMapDriver] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [activeTab, setActiveTab] = useState('alerts')
+  const updatedMs = data?.last_updated ? Date.parse(data.last_updated) : NaN
+  const updatedAgo = Number.isNaN(updatedMs) ? null : Math.max(0, Math.round((nowMs - updatedMs) / 1000))
   const searchRef = useRef(null)
 
   // ── Data fetching with auto-refresh ──
   useEffect(() => {
     const load = () => {
       fetchWatchlist()
-        .then(d => { setData(d); setCountdown(30); setError(null) })
+        .then(d => { setData(d); setNowMs(Date.now()); setError(null) })
         .catch(e => setError(e.message))
         .finally(() => setLoading(false))
     }
@@ -484,7 +486,7 @@ export default function SAWatchlist({ contractorMode = false }) {
 
   // ── Countdown ticker ──
   useEffect(() => {
-    const t = setInterval(() => setCountdown(c => Math.max(c - 1, 0)), 1000)
+    const t = setInterval(() => setNowMs(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
@@ -585,7 +587,7 @@ export default function SAWatchlist({ contractorMode = false }) {
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
           <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
           <span>LIVE</span>
-          <span className="tabular-nums">{countdown}s</span>
+          {updatedAgo != null && <span className="tabular-nums" title="When Salesforce was last read for this screen">updated {updatedAgo}s ago</span>}
         </div>
       </div>
 

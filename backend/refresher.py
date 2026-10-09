@@ -56,11 +56,9 @@ def refresh_due(elapsed: float, interval: float, read_recently: bool, warm_once:
 
 
 def _warm_watchlist():
-    """Fill the shared watch-list cache once after a restart (it is not on the refresh schedule)."""
-    from routers.watchlist import _build_watchlist, CACHE_KEY
-    result = _build_watchlist(territories=None)
-    cache.put(CACHE_KEY, result, 120)
-    cache.disk_put(CACHE_KEY, result, 120)
+    """Fill the shared watch-list copy once after a restart (it is not on the refresh schedule)."""
+    from routers.watchlist import warm
+    warm()
 
 
 def initial_refresh_times(keys, now: float, refresh_all: bool, warm_keys=STARTUP_WARM_KEYS) -> dict:
