@@ -220,7 +220,9 @@ AR_SUB = """(SELECT ServiceResourceId, ServiceResource.Name, ServiceResource.Las
    FROM ServiceResources ORDER BY CreatedDate)"""
 JOBS_SUB = f"""(SELECT ServiceAppointment.AppointmentNumber, ServiceAppointment.Status, ServiceAppointment.WorkType.Name,
    ServiceAppointment.Latitude, ServiceAppointment.Longitude, CreatedDate FROM ServiceAppointments
-   WHERE ServiceAppointment.StatusCategory IN ({','.join(OPEN_CATEGORIES)}))"""
+   WHERE CreatedDate = LAST_N_DAYS:3 AND ServiceAppointment.StatusCategory IN ({','.join(OPEN_CATEGORIES)}))"""
+# CreatedDate bound: without it Salesforce walks every driver's whole assignment history (24 s for a 000 call's ~120 drivers, 3.7 s
+# for a 20-driver garage; 0.3-0.6 s with it). Open jobs are assigned within days (2026-10-09: 1 open job in 60 days was older).
 
 
 def queries(sa_id: str, geo: bool, towbook: bool, lat: float | None = None, lon: float | None = None) -> dict:
@@ -235,8 +237,10 @@ def queries(sa_id: str, geo: bool, towbook: bool, lat: float | None = None, lon:
         if lat is None or lon is None:
             towbook = True
         else:
+            fresh = (datetime.now(timezone.utc) - timedelta(minutes=GPS_MAX_AGE_MIN)).strftime('%Y-%m-%dT%H:%M:%SZ')
             scope = (f"AND LastKnownLatitude > {float(lat) - 1} AND LastKnownLatitude < {float(lat) + 1} "
-                     f"AND LastKnownLongitude > {float(lon) - 1.4} AND LastKnownLongitude < {float(lon) + 1.4}")
+                     f"AND LastKnownLongitude > {float(lon) - 1.4} AND LastKnownLongitude < {float(lon) + 1.4} "
+                     f"AND LastKnownLocationDate >= {fresh}")    # stale positions are left off the map anyway
     q = {
         'sa': f"""SELECT Id, AppointmentNumber, Status, StatusCategory, CreatedDate, ERS_PTA__c, ERS_PTA_Due__c, ParentRecordId,
                ERS_Work_Order__c, ERS_Work_Order__r.WorkOrderNumber, WorkType.Name, WO_Priority_Code__c, City, Latitude, Longitude,
