@@ -102,3 +102,9 @@ Format:
 - **Need:** Ruby-B: build B1 from §H2–H4 (`rules.py` in my scratchpad is a reference). Tamy: test with T1 05195827 (Towbook, all three), T2 05194934 (Fleet), T3 05195668 (On-Platform), optional T4 05194797 (towing rule). Owner: may switch `replay_member_contact` on once Tamy passes.
 - **Context:** 10/07 full-day pull (1,560 SAs, 15,175 history rows, counts verified); ~20 sequential read-only SELECTs; no DML, no Postgres.
 - **Status:** open
+
+## 2026-10-09 — Ruby → Tamy, Kathy, Dan, owner (speed batch 3, branch perf/batch-3, 3 commits, not pushed)
+- **Update:** Built F4 (Replay GPS from our own 60 s record), F6/F14 (daily facts for Reporting + 30-day trends) and F14 (revenue semi-join), each behind its own flag, all default OFF: `replay_gps_store`, `daily_facts`, `revenue_semijoin` (Admin > Feature Modules). Flags off = today's behaviour; the new background threads only poll the flag. Revenue facts were not built (output is per driver with work-order lists and billing that changes after completion); the semi-join covers its fan-out.
+- **Need:** Owner: approve the migration (4 new tables in `core`, additive, `CREATE ... IF NOT EXISTS` only, text in `backend/speed3_db.py` GPS_SQL / FACTS_SQL; created by the app the first time a flag is switched on, or by Kathy with psql) and the retention deletes on those tables (GPS 45 days, facts 400 days). Kathy: backup/preview/apply per the usual sequence; then `python facts_job.py backfill FROM TO` (dry run by default, `--yes` to run, one day at a time) before switching `daily_facts` on. Tamy: with each flag on, compare Replay map / Reporting / 30-day trends / garage revenue against the same screen with the flag off (steps in the report); `revenue_semijoin` needs no migration and can be tried first.
+- **Context:** Proofs ran against live Salesforce (SELECT only) with a LOCAL throwaway Postgres; production DB never touched.
+- **Status:** open
