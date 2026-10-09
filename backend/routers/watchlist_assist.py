@@ -225,8 +225,8 @@ def _fetch_territory_drivers(territory: str, sa_lat, sa_lon, work_type: str = No
         """)
 
     def _q_busy():
-        # Flat AssignedResource scan — StatusCategory index is sufficient,
-        # SchedStartTime filter adds a second scan and is redundant here
+        # CreatedDate bound: without it Salesforce walks every member's whole assignment history (11.6 s for 076DO on 2026-10-09,
+        # 0.23 s with it, same 41 rows). Open jobs are assigned within days (1 open job in 60 days was older).
         return sf_query_all(f"""
             SELECT ServiceResourceId,
                    ServiceAppointment.StatusCategory,
@@ -234,6 +234,7 @@ def _fetch_territory_drivers(territory: str, sa_lat, sa_lon, work_type: str = No
                    ServiceAppointment.Status
             FROM AssignedResource
             WHERE ServiceResourceId IN ({mem_sub})
+              AND CreatedDate = LAST_N_DAYS:3
               AND ServiceAppointment.StatusCategory IN ('Scheduled','Dispatched','InProgress')
         """)
 

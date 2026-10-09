@@ -150,7 +150,7 @@ export default function DriverMapPopup({ driver, onClose }) {
         <div style={{ height: 200 }}>
           {(hasDriver || hasCustomer) ? (
             <MapContainer center={center} zoom={12} className="w-full h-full" zoomControl={false} attributionControl={false}>
-              <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+              <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}" maxZoom={19} attribution='Tiles &copy; Esri' />
               {hasDriver && <Marker position={[dLat, dLon]} icon={truckIcon} />}
               {hasCustomer && <Marker position={[cLat, cLon]} icon={customerIcon} />}
               {hasBoth && (
