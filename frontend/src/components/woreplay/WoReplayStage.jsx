@@ -70,7 +70,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const step = idx >= 0 ? steps[idx] : null
 
   const [ref, map] = useLeafletMap([42.9, -78.8])
-  const [light, setLight] = useState(() => store('woReplayLight') === '1')
+  const [light, setLight] = useState(() => store('woReplayLight') !== '0')   // light street map unless the viewer picked dark
   useEffect(() => setMapTheme(ref.current, light), [light, map]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const z = map && ref.current.querySelector('.leaflet-top.leaflet-left'); if (z) z.style.marginTop = `${HUD.h + 22}px` }, [map]) // eslint-disable-line react-hooks/exhaustive-deps
   const [size, setSize] = useState({ w: 1100, h: 640 })

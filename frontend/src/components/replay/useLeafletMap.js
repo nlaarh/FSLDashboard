@@ -5,11 +5,11 @@ import 'leaflet/dist/leaflet.css'
 /**
  * A plain Leaflet map on a div, the way the Studio map drives it: markers are created once and
  * moved imperatively every frame, which react-leaflet re-renders would make far too slow.
- * Basemap: OpenStreetMap, darkened or lightened by a CSS filter on the tile pane (.rp-dark / .rp-light in index.css), so the
+ * Basemap: Esri World Street Map (light by default; dark is a CSS filter on the tile pane (.rp-dark / .rp-light in index.css), so the
  * theme switches with one class and no tile reload. The shared Carto tiles in mapStyles.js answer with an "API KEY REQUIRED"
  * image (checked 2026-10-04), so they are not used here.
  */
-export default function useLeafletMap(center, { light = false } = {}) {
+export default function useLeafletMap(center, { light = true } = {}) {
   const ref = useRef(null)
   const [map, setMap] = useState(null)
 
@@ -17,7 +17,8 @@ export default function useLeafletMap(center, { light = false } = {}) {
     const m = L.map(ref.current, { zoomControl: false, attributionControl: true, preferCanvas: false, zoomSnap: 0.25, zoomDelta: 0.5 })
       .setView(center, 11)
     ref.current.classList.add('rp-map', light ? 'rp-light' : 'rp-dark')
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(m)
+    // A clean street map (Esri World Street Map, no key): plain colours and clear street names, like Apple Maps. Owner, 2026-10-08.
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' }).addTo(m)
     L.control.zoom({ position: 'topleft' }).addTo(m)
     setMap(m)
     return () => { m.remove(); setMap(null) }
