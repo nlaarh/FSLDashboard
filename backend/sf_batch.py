@@ -6,7 +6,7 @@ loop should use one of these instead.
 """
 
 import logging
-from sf_client import sf_query_all, sf_parallel
+from sf_client import TIMEOUT_LONG, sf_query_all, sf_parallel
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def batch_soql_query(
     for i in range(0, len(ids), chunk_size):
         chunk = ids[i : i + chunk_size]
         id_list = "','".join(chunk)
-        rows = sf_query_all(template.format(id_list=id_list))
+        rows = sf_query_all(template.format(id_list=id_list), timeout=TIMEOUT_LONG)
         results.extend(rows)
     return results
 
@@ -65,14 +65,14 @@ def batch_soql_parallel(
     if len(chunks) == 1:
         # No benefit from parallelism — just run directly
         id_list = "','".join(chunks[0])
-        return sf_query_all(template.format(id_list=id_list))
+        return sf_query_all(template.format(id_list=id_list), timeout=TIMEOUT_LONG)
 
     fns = {}
     for idx, chunk in enumerate(chunks):
         id_list = "','".join(chunk)
         query = template.format(id_list=id_list)
         # Default-arg capture to avoid late-binding closure bug
-        fns[f"chunk_{idx}"] = (lambda q=query: sf_query_all(q))
+        fns[f"chunk_{idx}"] = (lambda q=query: sf_query_all(q, timeout=TIMEOUT_LONG))
 
     results_map = sf_parallel(**fns)
     # Combine in chunk order

@@ -87,7 +87,7 @@ def test_failed_bundle_falls_back_to_the_sequential_reads(monkeypatch):
     raw = towbook_cascade_raw()
     monkeypatch.setattr(rb, 'sf_composite_query', lambda named: {'wo': {'status': 400, 'body': [{'errorCode': 'X'}]}})
 
-    def single(soql):
+    def single(soql, timeout=None):
         if 'FROM WorkOrder' in soql:
             return [raw['wo']]
         if 'FROM ServiceAppointment WHERE' in soql:

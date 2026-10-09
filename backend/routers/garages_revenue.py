@@ -18,7 +18,7 @@ from itertools import groupby
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Query, Request
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import TIMEOUT_LONG, sf_query_all, sf_parallel, sanitize_soql
 from utils import parse_dt, _ET
 import cache
 from permissions import require_feature
@@ -235,7 +235,8 @@ def _compute_revenue(territory_id: str, start_date: str, end_date: str) -> dict:
                     FROM AssetHistory
                     WHERE AssetId IN ({ids_str})
                     AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
+                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}""",
+                timeout=TIMEOUT_LONG,
             ))
 
         # Collect WOLI results (needed to build WO ID list for Phase 3)
@@ -448,7 +449,8 @@ def _compute_driver_daily(territory_id: str, driver_name: str,
                     FROM AssetHistory
                     WHERE AssetId IN ({ids_str})
                     AND Field = 'ERS_Driver__c'
-                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}"""
+                    AND CreatedDate >= {ah_since} AND CreatedDate < {ah_until}""",
+                timeout=TIMEOUT_LONG,
             ))
 
         service_wolis: list = []

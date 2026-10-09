@@ -42,7 +42,18 @@ _ENABLE_PER_GARAGE_REFRESH = _env_flag('FSLAPP_ENABLE_PER_GARAGE_REFRESH', False
 # After a restart (every deploy) the in-memory cache is empty and the first person in would wait 2-5 s on
 # Salesforce. Warm just these few screens once, one at a time, instead of waiting a full interval for them.
 # Everything else still waits for its own interval (no Salesforce stampede on start).
-STARTUP_WARM_KEYS = ('queue_live', 'command_center_24', 'garages_list')
+# The landing page asks for the 4-hour Command Center, Ops Brief, Scheduler Insights, GPS health and the driver map;
+# Ops Territories is the next tab. They are refreshed in schedule order, WARM_GAP_S apart.
+STARTUP_WARM_KEYS = ('queue_live', 'command_center_4', 'ops_brief', 'scheduler_insights_today', 'gps_health',
+                     'map_drivers', 'ops_territories', 'command_center_24', 'garages_list')
+WARM_GAP_S = 3
+
+# The dashboards also keep a saved copy in the database (under 'saved:<cache key>', never read by the endpoints, so it
+# can never be served as "fresh"). After a deploy it answers instantly while the first real refresh runs.
+SAVED_COPY_KEYS = ('command_center_4', 'command_center_24', 'ops_brief', 'scheduler_insights_today', 'gps_health',
+                   'map_drivers', 'ops_territories')
+SAVED_COPY_TTL = 86400
+RESTORED_TTL = 60          # a restored copy counts as fresh for one minute, then the refresh replaces it
 
 # A schedule key is refreshed only if somebody read it in this long. Nobody looking (nights, weekends) = zero calls.
 ACTIVE_WINDOW_S = 900
@@ -53,6 +64,21 @@ REAL_CACHE_KEY = {'command_center_24': 'command_center_24h', 'command_center_4':
 def refresh_due(elapsed: float, interval: float, read_recently: bool, warm_once: bool = False) -> bool:
     """Refresh when the interval has passed AND somebody is looking (or it is the one-time warm-up after a restart)."""
     return warm_once or (elapsed >= interval and read_recently)
+
+
+def _saved_key(key: str) -> str:
+    return 'saved:' + REAL_CACHE_KEY.get(key, key)
+
+
+def _restore_saved_copies(keys=SAVED_COPY_KEYS):
+    """After a restart, load the last saved dashboards into memory so the first visitor is answered at once."""
+    for key in keys:
+        real = REAL_CACHE_KEY.get(key, key)
+        if cache.get_stale(real) is not None:
+            continue
+        saved = cache.disk_get_stale(_saved_key(key))
+        if saved is not None:
+            cache.put(real, saved, RESTORED_TTL)
 
 
 def _warm_watchlist():
@@ -188,6 +214,8 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
         # Persist to L2 with a long stale window (24h) so SWR can serve stale
         if persist and result is not None:
             cache.disk_put(key, result, 86400)
+        if key in SAVED_COPY_KEYS and result is not None:
+            cache.disk_put(_saved_key(key), result, SAVED_COPY_TTL)
         return True
     except Exception as e:
         log.warning(f"Refresh failed for '{key}': {e}")
@@ -324,6 +352,10 @@ def _refresh_loop():
             if not watchlist_warmed:      # once per start, before the hot keys below
                 watchlist_warmed = True
                 try:
+                    _restore_saved_copies()
+                except Exception as e:
+                    log.warning(f"Saved dashboard copies could not be restored: {e}")
+                try:
                     _warm_watchlist()
                     log.info("Watch list warmed after start")
                 except Exception as e:
@@ -344,8 +376,8 @@ def _refresh_loop():
                     if _refresh_one(key, fn, interval, persist):
                         refreshed.append(key)
                     last_refreshed[key] = time.time()
-                    # Small sleep between SF calls to avoid bursts
-                    time.sleep(0.5)
+                    # Small sleep between SF calls to avoid bursts (longer for the start-up warm-up)
+                    time.sleep(WARM_GAP_S if warm_once else 0.5)
 
             _renew_leadership()
 

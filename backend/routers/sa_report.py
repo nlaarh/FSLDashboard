@@ -17,7 +17,7 @@ from collections import defaultdict as _dd
 from fastapi import APIRouter, HTTPException
 
 import cache
-from sf_client import sf_query_all, sf_parallel, sanitize_soql
+from sf_client import TIMEOUT_LONG, sf_query_all, sf_parallel, sanitize_soql
 from utils import parse_dt as _parse_dt, to_eastern as _to_eastern, haversine
 from dispatch_utils import (
     parse_assign_events, build_assign_steps,
@@ -465,7 +465,7 @@ def sa_report(sa_number: str):
                   AND ServiceResourceId IN ({skilled_ids_quoted})
                   AND CreatedDate >= {gps_start} AND CreatedDate <= {gps_end}
                 ORDER BY CreatedDate ASC
-            """)
+            """, timeout=TIMEOUT_LONG)         # ServiceResourceHistory: 28-39 s seen
 
         def _get_truck_logins():
             if not all_step_times or not skilled_ids:
@@ -485,7 +485,7 @@ def sa_report(sa_number: str):
                   AND Asset.RecordType.Name = 'ERS Truck'
                   AND CreatedDate >= {login_start}
                   AND CreatedDate <= {login_end}
-            """)
+            """, timeout=TIMEOUT_LONG)
             return [r for r in rows
                     if (r.get('NewValue') or '') in skilled_ids
                     or (r.get('OldValue') or '') in skilled_ids]

@@ -25,7 +25,7 @@ def test_slow_path_is_sequential_and_capped(monkeypatch):
     raw = towbook_cascade_raw()
     calls = []
 
-    def fake_all(soql):
+    def fake_all(soql, timeout=None):
         calls.append(soql)
         if 'FROM WorkOrder WHERE WorkOrderNumber' in soql:
             return [raw['wo']]
@@ -52,7 +52,7 @@ def test_pull_refuses_non_ers_and_old_calls(monkeypatch):
     _composite_refused(monkeypatch)
     raw = towbook_cascade_raw()
     sas = [{**s, 'RecordType': {'Name': 'Travel'}} for s in raw['sas']]
-    monkeypatch.setattr(rb, 'sf_query_all', lambda soql: [raw['wo']] if 'FROM WorkOrder' in soql else sas)
+    monkeypatch.setattr(rb, 'sf_query_all', lambda soql, timeout=None: [raw['wo']] if 'FROM WorkOrder' in soql else sas)
     with pytest.raises(cp.NotSupported):
         cp.pull_story('05164342', cs1(), now=cp.parse_dt('2026-10-04T00:00:00Z'))
     with pytest.raises(cp.NotSupported):

@@ -2,7 +2,7 @@
 
 from refresher import STARTUP_WARM_KEYS, initial_refresh_times
 
-KEYS = ['queue_live', 'command_center_24', 'garages_list', 'ops_brief', 'map_grids', 'pta_advisor']
+KEYS = ['queue_live', 'command_center_24', 'garages_list', 'ops_brief', 'map_grids', 'pta_advisor']   # map_grids, pta_advisor: not warmed
 
 
 def test_only_the_hot_keys_are_due_immediately():
@@ -16,4 +16,4 @@ def test_emergency_flag_still_refreshes_everything():
 
 
 def test_a_hot_key_missing_from_the_schedule_is_ignored():
-    assert initial_refresh_times(['ops_brief'], now=5.0, refresh_all=False) == {'ops_brief': 5.0}
+    assert initial_refresh_times(['map_grids'], now=5.0, refresh_all=False) == {'map_grids': 5.0}

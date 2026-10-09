@@ -19,6 +19,11 @@ log = logging.getLogger('sf_client')
 
 SF_API_VERSION = 'v65.0'
 
+# (connect, read) seconds. A Salesforce call that has not answered in 20 s is hung, and it holds one of the org's
+# 25 long-running slots while it hangs. Reports and history pulls that really take longer pass TIMEOUT_LONG.
+TIMEOUT_DEFAULT = (5, 20)
+TIMEOUT_LONG = (10, 60)
+
 
 def sanitize_soql(value: str) -> str:
     """Sanitize a value for safe SOQL interpolation. Prevents SOQL injection."""
@@ -242,7 +247,7 @@ def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dic
     headers = kwargs.pop('headers', {}) or {}
     headers.setdefault('Authorization', f'Bearer {token}')
     headers.setdefault('Content-Type', 'application/json')
-    timeout = kwargs.pop('timeout', (10, 45))
+    timeout = kwargs.pop('timeout', TIMEOUT_DEFAULT)
 
     method_name = method.lower()
     request_fn = getattr(_session, method_name)
@@ -363,7 +368,7 @@ def sf_composite_query(named: dict[str, str]) -> dict[str, dict]:
     body = {'allOrNone': False,
             'compositeRequest': [{'method': 'GET', 'url': _composite_url(soql), 'referenceId': key}
                                  for key, soql in named.items()]}
-    result = sf_rest_post('/composite', body=body)
+    result = sf_rest_post('/composite', body=body, timeout=TIMEOUT_LONG)
     if not isinstance(result, dict) or 'compositeResponse' not in result:
         raise RuntimeError(f"SF composite returned an unexpected response: {str(result)[:200]}")
     return {r['referenceId']: {'status': r['httpStatusCode'], 'body': r['body']} for r in result['compositeResponse']}
@@ -390,7 +395,8 @@ def sf_graphql(query: str, variables: dict | None = None, operation_name: str | 
 
 # ── Query ───────────────────────────────────────────────────────────────────
 
-def sf_query(soql: str, _retries: int = 2) -> dict:
+def sf_query(soql: str, _retries: int = 2, timeout=None) -> dict:
+    timeout = timeout or TIMEOUT_DEFAULT
     # Gate 1: circuit breaker
     _breaker_check()
     # Gate 2: rate limiter
@@ -406,7 +412,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
         try:
             _t0 = _time.time()
             r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                             headers=headers, params={'q': soql}, timeout=(10, 45))
+                             headers=headers, params={'q': soql}, timeout=timeout)
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
                 _record_slow_query('SOQL', _elapsed, soql)
@@ -442,7 +448,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
             headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
             _rate_limit_check()
             r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                             headers=headers, params={'q': soql}, timeout=(10, 45))
+                             headers=headers, params={'q': soql}, timeout=timeout)
         break
 
     result = r.json()
@@ -457,7 +463,7 @@ def sf_query(soql: str, _retries: int = 2) -> dict:
         headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
         _rate_limit_check()
         r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                         headers=headers, params={'q': soql}, timeout=(10, 45))
+                         headers=headers, params={'q': soql}, timeout=timeout)
         result = r.json()
     if isinstance(result, list):
         _breaker_failure()
@@ -523,8 +529,9 @@ def sf_query_all_shared(soql: str, ttl: int = 300) -> list[dict]:
         return copy.deepcopy(rows)
 
 
-def sf_query_all(soql: str) -> list[dict]:
-    result = sf_query(soql)
+def sf_query_all(soql: str, timeout=None) -> list[dict]:
+    timeout = timeout or TIMEOUT_DEFAULT
+    result = sf_query(soql, timeout=timeout)
     if isinstance(result, list) or 'records' not in result:
         return []
     records = result.get('records', [])
@@ -540,7 +547,7 @@ def sf_query_all(soql: str) -> list[dict]:
             try:
                 _t0 = _time.time()
                 resp = _session.get(f'{instance}{result["nextRecordsUrl"]}',
-                                    headers=headers, timeout=(10, 45))
+                                    headers=headers, timeout=timeout)
                 _elapsed = _time.time() - _t0
                 if _elapsed > 5:
                     _record_slow_query('SOQL pagination', _elapsed, soql)
