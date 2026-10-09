@@ -211,3 +211,20 @@ def test_towbook_calls_never_name_a_driver():
     sf = {'sa': [SA_ROW], 'skills': [], 'contacts': [], 'cases': [], 'drivers': []}
     out = w.assemble(sf, {'towbook': True, 'steps': [], 'history': []}, NOW)
     assert out['driver'] is None and out['peers'] == [] and out['sa']['towbook'] is True
+
+
+def _step(actor, role, mins, title='Assigned'):
+    return {'actor': actor, 'role': role, 'ts': ago(mins), 'title': title}
+
+
+def test_garage_dispatcher_is_the_fallback_when_no_call_center_dispatcher_acted():
+    steps = [_step('Joel Isaman', 'Garage dispatcher', 20), _step('Joel Isaman', 'Garage dispatcher', 7), _step('Mary', 'Garage dispatcher', 30),
+             _step('IT System User', 'Integration', 1), _step('Platform Integration User', 'FSL optimizer', 2), _step('Some Admin', 'AAA staff', 1)]
+    got = w.working_now([_hist('Contact Center', 'Cc', 2)], [], 'SA1', NOW, steps)
+    assert (got['name'], got['minutes_ago'], got['kind']) == ('Joel Isaman', 7, 'garage')
+    assert w.working_now([], [], 'SA1', NOW, [_step('IT System User', 'Integration', 1)]) is None
+
+
+def test_call_center_dispatcher_wins_over_the_garage_dispatcher():
+    got = w.working_now([_hist('Membership User', 'Jane Dee', 15)], [], 'SA1', NOW, [_step('Joel Isaman', 'Garage dispatcher', 1)])
+    assert got['name'] == 'Jane Dee' and 'kind' not in got

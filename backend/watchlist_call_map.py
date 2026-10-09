@@ -41,7 +41,7 @@ def lateness(minutes_late) -> dict:
     return {'level': level, 'minutes': int(round(minutes_late))}
 
 
-def working_now(history: list, assigned: list, member_sa_id: str, now: datetime) -> dict | None:
+def working_now(history: list, assigned: list, member_sa_id: str, now: datetime, steps: list | None = None) -> dict | None:
     """The human dispatcher on the call: the most recent action on this SA (its history) or on its assigned-resource rows made by a
     user whose profile is 'Membership User'. AssignedResource.CreatedBy is the reliable assigner. Anyone else (Contact Center,
     System Admin, integration users, the optimizer) is NOT a dispatcher. Returns {name, at, minutes_ago, what} or None."""
@@ -56,8 +56,20 @@ def working_now(history: list, assigned: list, member_sa_id: str, now: datetime)
         if ((who.get('Profile') or {}).get('Name') or '').lower() == HUMAN_PROFILE:
             best = _later(best, who.get('Name'), a.get('CreatedDate'), 'assigned a driver')
     if not best:
-        return None
+        return _garage_dispatcher(steps, now)
     best['minutes_ago'] = max(0, int((now - parse_dt(best['at'])).total_seconds() // 60))
+    return best
+
+
+def _garage_dispatcher(steps: list | None, now: datetime) -> dict | None:
+    """Fallback for contractor (On-Platform) calls: the garage's own dispatcher, the latest story step whose actor the story labels
+    'Garage dispatcher'. Integration, System and IT users carry other labels, so they never count."""
+    best = None
+    for s in steps or []:
+        if s.get('role') == 'Garage dispatcher' and s.get('actor') and s.get('ts') and (not best or parse_dt(s['ts']) > parse_dt(best['at'])):
+            best = {'name': s['actor'], 'at': s['ts'], 'what': s.get('title') or 'acted', 'kind': 'garage'}
+    if best:
+        best['minutes_ago'] = max(0, int((now - parse_dt(best['at'])).total_seconds() // 60))
     return best
 
 
@@ -302,7 +314,7 @@ def assemble(sf: dict, story_bits: dict, now: datetime, geo_radius_mi: float = 6
                    'contacts': contacts},
         'driver': mine, 'peers': peers, 'peer_counts': counts, 'required_skills': sorted(required),
         'suggestion': suggestion(sa.get('Status'), mine, peers),
-        'working': working_now(story_bits.get('history'), [a for a in ars], sa['Id'], now),
+        'working': working_now(story_bits.get('history'), [a for a in ars], sa['Id'], now, story_bits.get('steps')),
         'contact': contact_counts(story_bits.get('extras'), story_bits.get('steps') or []),
         'cases': {**case_summary(cases), 'events': case_events(cases)},
         'errors': sf.get('errors', []), 'fetched_at': now.isoformat(timespec='seconds'),

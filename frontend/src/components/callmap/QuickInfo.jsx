@@ -55,7 +55,7 @@ export default function QuickInfo({ data, pin, nowS }) {
       </Card>
 
       <Card icon={UserCog} title="Who is working it">
-        {working ? <div className="text-sm text-white">Being worked by <b>{shortPerson(working.name)}</b> <span className="text-slate-400">· last action {agoText(minutesSince(working.at, nowS))}</span></div>
+        {working ? <div className="text-sm text-white">{working.kind === 'garage' ? 'Garage dispatcher:' : 'Being worked by'} <b>{working.kind === 'garage' ? working.name : shortPerson(working.name)}</b> <span className="text-slate-400">· last action {agoText(minutesSince(working.at, nowS))}</span></div>
           : <div className="text-sm text-slate-400">No dispatcher has touched it yet</div>}
         <div className="text-xs text-slate-300 mt-1 flex items-center gap-1.5 flex-wrap">
           {contact.available ? (
