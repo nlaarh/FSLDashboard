@@ -39,7 +39,7 @@ function Thread({ q }) {
   )
 }
 
-function Detail({ mark, extras, q }) {
+export function Detail({ mark, extras, q }) {
   if (mark.ref.kind === 'call') {
     const c = (extras?.calls || []).find(x => x.id === mark.ref.id)
     if (!c) return null

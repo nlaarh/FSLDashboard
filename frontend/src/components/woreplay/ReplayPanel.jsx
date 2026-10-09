@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { loadStoryReplay, loadStoryMap } from '../reportcard/prefetch'
+import useExpand, { expandShell } from '../replay/useExpand'
+import { ExpandBar } from '../replay/ExpandControls'
 import ReplayTabs from './ReplayTabs'
 import ContactPanel from './ContactPanel'
 import useReplayExtras from './useReplayExtras'
@@ -19,6 +21,7 @@ const MSG = {
 /** Fetches one call's replay and plays it. Shared by the Work Order tab and the Garage tab. */
 export default function ReplayPanel({ q }) {
   const [state, setState] = useState({ phase: 'idle' })
+  const expand = useExpand()
   const [jump, setJump] = useState(null)             // asks the stage to show a step: { id, n }
   const [locations, setLocations] = useState(undefined)   // undefined = loading, null = unavailable
   const [peerFocus, setPeerFocus] = useState(null)   // the other driver highlighted on the map
@@ -56,12 +59,13 @@ export default function ReplayPanel({ q }) {
     </div>
   )
   return (
-    <div className="space-y-3">
-      <Suspense fallback={<div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}>
+    <div ref={expand.ref} className={expandShell(expand.expanded, 'space-y-3', 'lg:grid-rows-[auto_minmax(0,1fr)]')}>
+      <ExpandBar expand={expand} title={`Work order replay · ${q}`} className="lg:col-span-2" />
+      <div className={expand.expanded ? 'min-h-0 min-w-0 h-[85vh] lg:h-auto' : 'min-w-0'}><Suspense fallback={<div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}>
         <WoReplayStage key={header.sa} steps={steps} header={header} locations={locations} jump={jump}
-          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} peers={moments} peerFocus={peerFocus} driverLoad={load} />
-      </Suspense>
-      <ReplayTabs q={q} takeaways={takeaways} decision={decision} peers={peers} extras={extras} marks={marks} openMark={openMark} onOpenMark={setOpenMark} onShow={seek} />
+          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} peers={moments} peerFocus={peerFocus} driverLoad={load} expand={expand} />
+      </Suspense></div>
+      <div className={expand.expanded ? 'min-h-0 lg:overflow-y-auto' : ''}><ReplayTabs q={q} takeaways={takeaways} decision={decision} peers={peers} extras={extras} marks={marks} openMark={openMark} onOpenMark={setOpenMark} onShow={seek} /></div>
     </div>
   )
 }

@@ -5,6 +5,8 @@ import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
 import useReplayEngine, { useEngineState } from '../replay/useReplayEngine'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
+import useExpand, { expandShell } from '../replay/useExpand'
+import { ExpandButton, ExpandBar } from '../replay/ExpandControls'
 import DayReplayMap from '../replay/DayReplayMap'
 import DriverDayCard from '../replay/DriverDayCard'
 import DayGantt from './DayGantt'
@@ -88,24 +90,28 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
   const roster = frame.drivers.filter(d => d.pos || ['en_route', 'on_scene', 'assigned', 'idle'].includes(d.status.key)).sort((a, b) => (ORDER[a.status.key] ?? 9) - (ORDER[b.status.key] ?? 9) || a.name.localeCompare(b.name))
   const counts = roster.reduce((o, d) => ({ ...o, [d.status.key]: (o[d.status.key] || 0) + 1 }), {})
 
+  const ex = useExpand(), big = ex.expanded
+  // One grid whose children are the same in both modes (slider, map, side panel), so Expand only re-places them: the playhead, the picked driver and the map survive.
   return (
     <div className="space-y-3 min-w-0">
-      <ReplayPlayer engine={engine} start={win[0]} end={win[1]} density={density}>
-        <span className="text-[11px] text-slate-400">{frame.open.length} open · {frame.late.length} past promise</span>
+      <div ref={ex.ref} className={expandShell(big, 'grid grid-cols-1 xl:grid-cols-3 gap-3 items-start', 'lg:grid-rows-[auto_minmax(0,1fr)_auto]')}>
+      <ExpandBar expand={ex} title="Garage day replay" className="lg:col-span-2" />
+      <ReplayPlayer engine={engine} start={win[0]} end={win[1]} density={density} big={big} className={big ? 'lg:row-start-3 lg:col-start-1' : 'xl:col-span-3'}>
+        <span className={big ? 'text-sm text-slate-300' : 'text-[11px] text-slate-400'}>{frame.open.length} open · {frame.late.length} past promise</span>
       </ReplayPlayer>
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 items-start">
-        <div className="xl:col-span-2 glass rounded-xl overflow-hidden relative" style={{ height: 460 }}>
+        <div className={`glass rounded-xl overflow-hidden relative ${big ? 'h-[70vh] lg:h-auto lg:row-start-2 lg:col-start-1' : 'xl:col-span-2'}`} style={big ? undefined : { height: 460 }}>
           <div className="absolute left-14 top-3 z-[1000] pointer-events-none rounded-xl bg-slate-900/90 text-white px-4 py-2 shadow-lg">
-            <div className="text-2xl font-extrabold tabular-nums leading-none">{clockLabel(t, true)}</div>
-            <div className="text-[11px] text-slate-300 mt-1">
+            <div className={`${big ? 'text-4xl' : 'text-2xl'} font-extrabold tabular-nums leading-none`}>{clockLabel(t, true)}</div>
+            <div className={`${big ? 'text-sm' : 'text-[11px]'} text-slate-300 mt-1`}>
               {counts.en_route || 0} en route · {counts.on_scene || 0} on scene · {counts.idle || 0} idle · {frame.open.length} calls open{frame.late.length ? ` · ${frame.late.length} past promise` : ''}
             </div>
           </div>
           <DayReplayMap replay={replay} engine={engine} dayDrivers={dayDrivers} sasById={sasById} verdictById={verdictById} selectedDriver={driverId}
             selectedSa={selected} onSelectDriver={setDriverId} onSelectSa={id => callIds[id] && onSelectSa(id)} />
           <SkipChip engine={engine} className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[1000]" />
+          {!big && <ExpandButton expand={ex} className="absolute right-3 top-3 z-[1000]" />}
         </div>
-        <div className="space-y-2">
+        <div className={big ? 'space-y-2 min-h-0 lg:row-start-2 lg:row-span-2 lg:col-start-2 lg:overflow-y-auto' : 'space-y-2'}>
           {driver ? (
             <DriverDayCard driver={dayDrivers[driver.id]} replayDriver={driver} frameDriver={frame.drivers.find(d => d.id === driver.id)}
               sas={data.sas.filter(s => s.final_driver_id === driver.id)} sasById={sasById} t={t} onSeek={engine.seek}
@@ -116,7 +122,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
                 <div className="text-xs font-semibold text-slate-200">What each driver is doing at {clockLabel(t, true)}</div>
                 <div className="text-[11px] text-slate-500">Click a driver for their whole day.</div>
               </div>
-              <div className="max-h-[390px] overflow-y-auto">
+              <div className={big ? '' : 'max-h-[390px] overflow-y-auto'}>
                 {roster.map(d => (
                   <button key={d.id} onClick={() => setDriverId(d.id)} className="w-full text-left px-3 py-1.5 border-b border-slate-800/80 hover:bg-slate-800/60 flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.status.colour }} />

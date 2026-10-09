@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { ListOrdered, ChevronLeft, ChevronRight, Maximize2, Minimize2, Sun, Moon, Crosshair, Globe2, Hand, PauseOctagon, PhoneCall, PhoneIncoming, MessageSquareText, MessageCircleReply } from 'lucide-react'
+import { ListOrdered, ChevronLeft, ChevronRight, Sun, Moon, Crosshair, Globe2, Hand, PauseOctagon, PhoneCall, PhoneIncoming, MessageSquareText, MessageCircleReply } from 'lucide-react'
 import useLeafletMap, { setMapTheme } from '../replay/useLeafletMap'
 import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion } from '../replay/useReplayEngine'
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
+import { ExpandButton } from '../replay/ExpandControls'
 import { buildPath } from '../replay/roadPath'
 import { indexAt } from '../replay/engineMath'
 import { shortDriverName } from '../../utils/driverName'
@@ -30,9 +31,10 @@ const store = (k, v) => { try { if (v === undefined) return localStorage.getItem
  * stageLayers.js; React only re-renders on a new step, a pause or a click. Everything is clickable at once: the story shows first,
  * trucks fade in when the GPS arrives (locations: undefined = still loading, null = unavailable), contact marks when B's extras arrive.
  * peers (peerNotes.peerMoments) are the other qualified drivers at the moment the call was given / accepted; peerFocus is the name to highlight.
+ * expand (useExpand) makes the stage fill the window next to the details; the map and slider then take all the room it is given.
  * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node).
  */
-export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null }) {
+export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null, expand }) {
   const where = header?.where
   const loc = useMemo(() => locations || (where ? { wo: where.member, garage: where.garage, drivers: [], notes: [] } : null), [locations, where])
   const times = useMemo(() => stepTimes(steps), [steps])
@@ -78,13 +80,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const [mode, setMode] = useState('follow')            // follow | all | free
   const modeRef = useRef(mode); modeRef.current = mode
   const flying = useRef(0)
-  const fsRef = useRef(null)
-  const [isFs, setIsFs] = useState(false)
-  useEffect(() => {
-    const on = () => setIsFs(document.fullscreenElement === fsRef.current)
-    document.addEventListener('fullscreenchange', on)
-    return () => document.removeEventListener('fullscreenchange', on)
-  }, [])
+  const big = expand.expanded
   useEffect(() => {   // the map re-measures whenever its box changes size (window, full screen, flow column)
     if (!map || typeof ResizeObserver === 'undefined') return undefined
     const ro = new ResizeObserver(() => { map.invalidateSize({ animate: false }); setSize({ w: ref.current.clientWidth, h: ref.current.clientHeight }) })
@@ -193,9 +189,8 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     ...marks.map(m => ({ t: m.ts, label: m.title, colour: markColour(m.type), Icon: MARK_ICON[m.type] })),
   ], [steps, times, marks])
   const toggleDrawer = () => setOpen(o => { store('woReplayFlowOpen', o ? '0' : '1'); return !o })
-  const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : fsRef.current?.requestFullscreen?.())
   const toggleTheme = () => setLight(v => { store('woReplayLight', v ? '0' : '1'); return !v })
-  const btn = on => `px-2 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
+  const btn = on => `${big ? 'px-3 py-2.5 text-sm' : 'px-2 py-1.5 text-[11px]'} rounded-lg font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
 
   const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise
   const posTruck = trucks.find(k => k.est || k.name === act.name), pos = posTruck?.path.at(tNow), estNow = !!posTruck?.est
@@ -207,11 +202,12 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const ModeIcon = { follow: Crosshair, all: Globe2, free: Hand }[mode]
 
   return (
-    <div ref={fsRef} className="space-y-2" style={isFs ? { background: '#020617', padding: 12, height: '100vh', display: 'flex', flexDirection: 'column' } : undefined}>
-      <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={isFs ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 230px), 820px)' }}>
+    <div className={big ? 'h-full flex flex-col gap-2' : 'space-y-2'}>
+      <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={big ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 230px), 820px)' }}>
         <div className="relative flex-1 min-w-0" style={{ background: '#0b1220' }}>
           <div ref={ref} style={{ position: 'absolute', inset: 0 }} />
           <FlowPulse fx={fx} />
+          {!big && <ExpandButton expand={expand} className="absolute right-3 top-[74px] z-[1060]" />}
           <StageHud engine={engine} hud={hud} stageW={size.w} t0={t0} pastPromise={pastPromise} pulse={idx} />
           <div style={{ position: 'absolute', left: 64, top: HUD.h + 22, zIndex: 1060, display: 'flex', gap: 8 }}>
             <Chip on={locations === undefined}>Loading trucks…</Chip><Chip on={!!extrasLoading}>Loading calls and texts…</Chip>
@@ -231,13 +227,12 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
         <FlowDrawer steps={steps} i={idx} open={open || !!drawerTop} onStep={stepTo} top={drawerTop} />
       </div>
 
-      <ReplayPlayer engine={engine} start={t0 - 60} end={end} marks={scrub} onPrev={() => engine.prev()} onNext={() => engine.next()}>
+      <ReplayPlayer engine={engine} start={t0 - 60} end={end} marks={scrub} big={big} onPrev={() => engine.prev()} onNext={() => engine.next()}>
         <button onClick={() => setHold(h => !h)} aria-pressed={hold} className={btn(hold)} title="Pause by itself at each problem, so it can be read. Press Play to carry on."><PauseOctagon className="w-3.5 h-3.5" />Pause at problems</button>
         <button onClick={() => setMode(m => (m === 'follow' ? 'all' : 'follow'))} className={btn(mode !== 'free')} title="Follow the truck, or show everyone. Dragging or zooming the map switches to free; click to follow again.">
           <ModeIcon className="w-3.5 h-3.5" />{mode === 'follow' ? 'Follow truck' : mode === 'all' ? 'Show all' : 'Free camera'}
         </button>
         <button onClick={toggleTheme} className={btn(false)} aria-label={light ? 'Dark map' : 'Light map'} title={light ? 'Dark map' : 'Light map'}>{light ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}</button>
-        <button onClick={toggleFs} className={btn(false)} aria-label={isFs ? 'Exit full screen' : 'Full screen'} title={isFs ? 'Exit full screen' : 'Full screen'}>{isFs ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</button>
       </ReplayPlayer>
       <div className="text-xs text-slate-300">{readout}</div>
       {loc?.towbook?.truck && <div className="text-xs text-slate-400">Towbook Driver 1 drove truck <b>{loc.towbook.truck}</b>. Towbook does not tell us who the driver is.</div>}

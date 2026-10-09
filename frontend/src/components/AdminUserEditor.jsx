@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { AlertTriangle, CheckCircle2, Copy, Eye, EyeOff, ExternalLink, KeyRound, Loader2, Mail, RefreshCw, X } from 'lucide-react'
 import { clsx } from 'clsx'
-import { DEPTS, ROLES } from '../constants/users'
+import { DEPTS, roleOptions } from '../constants/users'
 import { FORM_PASSWORD_COPY_KEY, passwordChecks, passwordIssues } from '../utils/passwords'
 import AdminGaragePicker from './AdminGaragePicker'
 
@@ -84,7 +84,7 @@ export default function AdminUserEditor({
                 onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
                 className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200 outline-none transition focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20"
               >
-                {ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                {roleOptions(userForm.role).map(role => <option key={role} value={role}>{role}</option>)}
               </select>
             </Field>
             <Field label="Department">
