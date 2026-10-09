@@ -39,6 +39,11 @@ _DUPLICATE_RADIUS_MI = 0.5
 # Skip pairwise O(n²) check for groups larger than this; flag all members instead
 _DUP_CHECK_MAX_GROUP = 15
 
+# RAP calls (WorkOrder.Type__c = 'RAP') share one sponsor account (e.g. "Hyundai RAP") across many different drivers,
+# so the account alone doesn't identify the member: RAP Information > Customer Name (WorkOrder.Customer_Name__c) does.
+# Names the call taker types when the customer's name is unknown:
+_RAP_PLACEHOLDER_NAMES = {'', 'NA', 'NA NA', 'N/A', 'N/A N/A', 'UNKNOWN', 'UNKNOWN UNKNOWN'}
+
 NO_SA_FLAG = 'No Service Appointments on Work Order'
 
 # The SA is normally created within seconds of the WO turning 'Submitted'
@@ -71,6 +76,47 @@ def _haversine_mi(lat1, lon1, lat2, lon2):
     dlon = radians(lon2 - lon1)
     a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
     return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+
+def _rap_customer(wo: dict | None) -> tuple[bool, str | None]:
+    """(is a RAP call, normalised RAP customer name or None when unknown) for a WorkOrder row."""
+    if not wo or (wo.get('Type__c') or '') != 'RAP':
+        return False, None
+    name = ' '.join((wo.get('Customer_Name__c') or '').split()).upper()
+    return True, (None if name in _RAP_PLACEHOLDER_NAMES else name)
+
+
+def _is_duplicate_pair(s1: dict, s2: dict, rap1=(False, None), rap2=(False, None)) -> bool:
+    """Two active SAs on the same account are a potential duplicate when they are at the same place:
+    within _DUPLICATE_RADIUS_MI, or the same street. RAP calls: two different customer names are never a duplicate;
+    if either name is unknown the radius is too loose (the sponsor account covers a whole area), so only the same street counts."""
+    street1 = (s1.get('Street') or '').strip().lower()
+    street2 = (s2.get('Street') or '').strip().lower()
+    same_street = bool(street1 and street1 == street2)
+    if rap1[0] or rap2[0]:
+        if rap1[1] and rap2[1]:
+            if rap1[1] != rap2[1]:
+                return False
+        else:
+            return same_street
+    lat1, lon1 = s1.get('Latitude'), s1.get('Longitude')
+    lat2, lon2 = s2.get('Latitude'), s2.get('Longitude')
+    if lat1 and lon1 and lat2 and lon2 and _haversine_mi(lat1, lon1, lat2, lon2) <= _DUPLICATE_RADIUS_MI:
+        return True
+    return same_street
+
+
+def _rap_info_by_woli(woli_ids: list) -> dict:
+    """WOLI Id -> (is RAP, customer name) for the duplicate check. One small read, only for accounts with 2+ active calls."""
+    if not woli_ids:
+        return {}
+    ids = ','.join(f"'{i}'" for i in woli_ids)
+    try:
+        rows = sf_query_all(f"SELECT Id, WorkOrder.Type__c, WorkOrder.Customer_Name__c FROM WorkOrderLineItem WHERE Id IN ({ids})")
+    except Exception as e:
+        log.warning(f"RAP customer lookup failed, duplicate check falls back to account only: {e}")
+        return {}
+    return {r['Id']: _rap_customer(r.get('WorkOrder')) for r in rows}
 
 
 def _is_tow_drop_off(sa: dict) -> bool:
@@ -244,7 +290,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     _dup_candidates: list = []
     try:
         _dup_candidates = sf_query_all(f"""
-            SELECT Id, AccountId, AppointmentNumber, Latitude, Longitude, Street
+            SELECT Id, AccountId, AppointmentNumber, Latitude, Longitude, Street, ParentRecordId
             FROM ServiceAppointment
             WHERE RecordType.Name = 'ERS Service Appointment'
               AND ServiceTerritoryId != null
@@ -272,28 +318,23 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
     for a in alerts:
         alert_by_sa[a['sa_id']] = a
 
+    rap_by_woli = _rap_info_by_woli(sorted({c.get('ParentRecordId') for g in acct_groups.values() if len(g) >= 2
+                                            for c in g if c.get('ParentRecordId')}))
+    rap_of = lambda s: rap_by_woli.get(s.get('ParentRecordId'), (False, None))
+
     for acct_id, sa_group in acct_groups.items():
         if len(sa_group) < 2:
             continue
 
         duplicates = set()
-        if len(sa_group) > _DUP_CHECK_MAX_GROUP:
+        # A big RAP sponsor account is many different customers, so it is always checked pair by pair.
+        if len(sa_group) > _DUP_CHECK_MAX_GROUP and not any(rap_of(s)[0] for s in sa_group):
             duplicates = {s['Id'] for s in sa_group}
         for i, s1 in enumerate(sa_group):
-            if duplicates:
+            if len(sa_group) > _DUP_CHECK_MAX_GROUP and duplicates:
                 break
             for s2 in sa_group[i + 1:]:
-                lat1, lon1 = s1.get('Latitude'), s1.get('Longitude')
-                lat2, lon2 = s2.get('Latitude'), s2.get('Longitude')
-                nearby = False
-                if lat1 and lon1 and lat2 and lon2:
-                    nearby = _haversine_mi(lat1, lon1, lat2, lon2) <= _DUPLICATE_RADIUS_MI
-                if not nearby:
-                    street1 = (s1.get('Street') or '').strip().lower()
-                    street2 = (s2.get('Street') or '').strip().lower()
-                    if street1 and street2 and street1 == street2:
-                        nearby = True
-                if nearby:
+                if _is_duplicate_pair(s1, s2, rap_of(s1), rap_of(s2)):
                     duplicates.add(s1['Id'])
                     duplicates.add(s2['Id'])
 
