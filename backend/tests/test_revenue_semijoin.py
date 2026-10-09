@@ -32,7 +32,7 @@ def fake_salesforce(monkeypatch, log):
     def ids_in(soql):
         return re.findall(r"'([0-9A-Za-z]{15,18})'", soql.split(' IN (', 1)[1].split(')')[0]) if ' IN (' in soql else []
 
-    def sf_query_all(soql):
+    def sf_query_all(soql, timeout=None):
         log.append(soql)
         if 'FROM AssignedResource' in soql:
             return json.loads(json.dumps(ars))
