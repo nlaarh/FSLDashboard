@@ -5,7 +5,7 @@ import copy
 
 CS1 = {
     'rules_version': 'cs1',
-    'inputs': {'sa': r'^(SA-)?\d{7}$', 'wo': r'^(WO-)?0\d{7}$', 'call_key': r'^\d{3}-\d{8}-\d{8}$',
+    'inputs': {'sa': r'^(SA-)?\d{6,7}$', 'wo': r'^(WO-)?0\d{7}$', 'call_key': r'^\d{3}-\d{8}-\d{8}$',
                'source_call_id': r'^\d{8}$', 'id': r'^(08p|0WO|1WL)[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$',
                'source_call_id_field': 'ERS_Source_Call_ID__c'},
     'event_group_window_sec': 0,
