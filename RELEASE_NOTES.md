@@ -17,6 +17,25 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.13 — 2026-10-08
+
+| | |
+|---|---|
+| Tag | `release/v1.13` |
+| Commit | `7b515bc` (merge of PR #22, branch `fix/replay-click-and-500`) |
+| Bundle | `index-BEp2pkZc.js` |
+| Deploy | GitHub Actions run `37870902780`, 2026-10-08 about 9:45 PM ET (after hours, on the owner's explicit "deploy when done"), success |
+| Roll back to | `release/v1.12` = `a6c1c02` (bundle `index-9Xcf0DNE.js`) |
+
+**Changed**
+- Work Order replay now shows the other qualified drivers (right skills and truck) on the map when the call was given or accepted, with distance and status. The "Right driver?" tab lists them, and clicking any truck shows its job queue. Needs the garage-day built; Towbook garages do not show other drivers.
+- The garage-day view shows how calls came in (DRR, Replicant, call center, partner and so on) with counts and percent. Click one to filter.
+- Maps default to a clean light street map; dark is still a toggle.
+- Fixed a rare error on Replay when two requests saved the same day file at the same time.
+- Replay accepts 6-digit SA numbers, and truck numbers are removed from driver names everywhere.
+
+---
+
 ## v1.12 — 2026-10-08
 
 | | |
