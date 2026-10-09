@@ -17,6 +17,22 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.14.1 — 2026-10-09
+
+| | |
+|---|---|
+| Tag | `release/v1.14.1` |
+| Commit | `98ee103` (merge of PR #24, branch `hotfix/v1.14.1`) |
+| Bundle | `index-BrHnyEUg.js` |
+| Deploy | GitHub Actions run `37976886382`, 2026-10-09, success (owner's explicit "deploy now") |
+| Roll back to | `release/v1.14` = `e402daf` (bundle `index-S8sqGyHC.js`) |
+
+**Changed**
+- Watchlist: the map icon now sits in its own "Map" column next to Assist, so it lines up on every row and no longer covers Work Type.
+- Call map opens much faster. The driver search now looks only at jobs assigned in the last 3 days, and for unassigned 000 calls it skips drivers whose location is over 1 hour old. 000 calls went from about 24 s to 0.3 s; a 20-driver garage from 3.7 s to 0.6 s.
+
+---
+
 ## v1.14 — 2026-10-09
 
 | | |
