@@ -30,8 +30,8 @@ export default function useExpand() {
   return { ref, expanded, isFs, open: () => setExpanded(true), close: () => setExpanded(false), toggleFs }
 }
 
-/** Classes for the element that holds the replay: a normal block, or the whole window on a dark page. Expanded it is one column that scrolls on a phone,
+/** Classes for the element that holds the replay: a normal block, or the whole window on a dark page (`!m-0`: a `space-y-*` parent adds a margin-top to later siblings, which pushed the fixed shell 12px down). Expanded it is one column that scrolls on a phone,
  *  and map + details side by side from `lg` up (rows = the Tailwind grid-rows class for that screen). */
 export const expandShell = (expanded, normal, rows) => (expanded
-  ? `fixed inset-0 z-[3000] bg-slate-950 p-3 gap-3 grid grid-cols-1 overflow-y-auto lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_clamp(360px,26vw,560px)] ${rows}`
+  ? `fixed inset-0 !m-0 z-[3000] bg-slate-950 p-3 gap-3 grid grid-cols-1 overflow-y-auto lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_clamp(360px,26vw,560px)] ${rows}`
   : normal)
