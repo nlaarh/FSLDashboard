@@ -392,3 +392,16 @@ def test_contractor_never_sees_another_garages_call_number_in_a_shared_drivers_j
     assert 'SA-9' not in str(out) and out['drivers'][0]['job']['number'] == 'Another garage'
     assert [i['text'] for i in out['attention']] == ['mine', '5 calls waiting']
     assert 'SA-9' in str(body)                                                     # the shared cached copy is untouched
+
+
+def test_road_endpoint_uses_the_shared_osrm_lookup_and_refuses_jumps(api, monkeypatch):
+    client, _ = api
+    from routers import garage_live as router
+    calls = []
+    monkeypatch.setattr(router.osrm, 'route', lambda pts, timeout=8, cached=True: calls.append(pts) or {'coords': [[43.0, -78.8], [43.001, -78.801]], 'miles': 0.1})
+    r = client.get('/api/garage-live-road?a=43.0,-78.8&b=43.001,-78.801')
+    assert r.status_code == 200 and r.json()['coords'][1] == [43.001, -78.801] and calls == [[(43.0, -78.8), (43.001, -78.801)]]
+    assert client.get('/api/garage-live-road?a=43.0,-78.8&b=44.0,-78.8').status_code == 400      # ~69 miles: a jump, not a drive
+    assert client.get('/api/garage-live-road?a=x&b=1,2').status_code == 400
+    monkeypatch.setattr(router.osrm, 'route', lambda *a, **k: None)
+    assert client.get('/api/garage-live-road?a=43.0,-78.8&b=43.001,-78.801').status_code == 204  # OSRM down: the screen draws a straight line

@@ -6,7 +6,7 @@ import GaragePicker from './GaragePicker'
 import GarageLiveMap from './GarageLiveMap'
 import AttentionDrawer from './AttentionDrawer'
 import useGarageLive from './useGarageLive'
-import { DRIVER_STATUS, dataAgeS, initialGarage, readLast, replayAlert, writeLast } from './garageLiveModel'
+import { DRIVER_STATUS, attentionCount, dataAgeS, initialGarage, readLast, replayAlert, writeLast } from './garageLiveModel'
 
 const CallMapView = lazy(() => import('../callmap/CallMapView'))     // the full-window call map loads only when opened
 const KIND = { fleet: 'Fleet', on_platform: 'On-Platform contractor', towbook: 'Towbook' }
@@ -64,7 +64,7 @@ export default function GarageLive() {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />LIVE · updated {age}s ago</span>}
           {garageId && <button type="button" onClick={reload} aria-label="Refresh now" className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700"><RefreshCw className="w-4 h-4" /></button>}
           {data && <button type="button" onClick={() => setDrawer(o => !o)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 font-semibold">
-            {drawer ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}Needs attention{data.attention.length ? ` (${data.attention.length})` : ''}</button>}
+            {drawer ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}Needs attention{attentionCount(data.attention) ? ` (${attentionCount(data.attention)})` : ''}</button>}
         </div>
       </div>
 

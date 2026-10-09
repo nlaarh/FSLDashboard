@@ -1,32 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { fmtMin, glidePoint, easeInOut, bearing, turn, milesBetween, filterGarages, initialGarage, dataAgeS, replayAlert, GLIDE_MS } from './garageLiveModel.js'
+import { fmtMin, turn, filterGarages, initialGarage, dataAgeS, replayAlert, attentionCount } from './garageLiveModel.js'
 
 test('minutes read as people say them', () => {
   assert.deepEqual([0, 52, 59.6, 60, 125, null].map(fmtMin), ['0 min', '52 min', '1 h 00 min', '1 h 00 min', '2 h 05 min', ''])
 })
 
-test('a gliding truck starts at the old spot, ends at the new one and only moves forward', () => {
-  const a = [43.0, -78.8], b = [43.1, -78.6]
-  assert.deepEqual(glidePoint(a, b, 0), a)
-  assert.deepEqual(glidePoint(a, b, GLIDE_MS), b)
-  assert.deepEqual(glidePoint(a, b, GLIDE_MS * 5), b)
-  const mid = glidePoint(a, b, GLIDE_MS / 2)
-  assert.ok(Math.abs(mid[0] - 43.05) < 1e-9 && Math.abs(mid[1] + 78.7) < 1e-9)
-  let last = -1
-  for (let t = 0; t <= GLIDE_MS; t += 250) { const p = glidePoint(a, b, t)[0]; assert.ok(p >= last); last = p }
-  assert.ok(easeInOut(0.25) < 0.25 && easeInOut(0.75) > 0.75)
-})
-
-test('heading and the shortest turn', () => {
-  assert.equal(Math.round(bearing([43, -78], [44, -78])), 0)
-  assert.equal(Math.round(bearing([43, -78], [43, -77])), 90)
-  assert.equal(Math.round(bearing([43, -78], [42, -78])), 180)
-  assert.equal(Math.round(bearing([43, -78], [43, -79])), 270)
+test('the shortest turn', () => {
   assert.equal(turn(350, 10), 20)
   assert.equal(turn(10, 350), -20)
-  const m = milesBetween([43, -78], [43.0145, -78])
-  assert.ok(m > 0.99 && m < 1.01)
+  assert.equal(turn(0, 180), -180)
+})
+
+test('one attention number: everything but the info line', () => {
+  const items = [{ severity: 'red' }, { severity: 'yellow' }, { severity: 'info' }]
+  assert.equal(attentionCount(items), 2)
+  assert.equal(attentionCount([{ severity: 'info' }]), 0)
+  assert.equal(attentionCount(null), 0)
 })
 
 test('picker: every typed word must match, busiest first', () => {

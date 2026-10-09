@@ -10,17 +10,20 @@ Same gate as the Command Center; a contractor only gets their own garages and ne
 
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 import cache
 import garage_live
+import osrm
 import ref_data
 import users as _users
 from routers import watchlist
 from routers.auth import get_request_username
 from routers.garages import _check_territory_access
+from report_card_snapshot import miles
 from sf_client import sanitize_soql, sf_query_all
 
 router = APIRouter()
@@ -30,6 +33,8 @@ TTL_WOLI_SKILLS = 6 * 3600
 TTL_DRIVER_SKILLS = 3600
 _ID = re.compile(r'^[A-Za-z0-9]{15,18}$')
 CHUNK = 150
+ROAD_MAX_MILES = 15              # a truck that moved further than this is a jump, not a drive: no road is asked for
+ROAD_SLOTS = threading.BoundedSemaphore(4)   # at most this many road lookups at once, however many screens are open
 
 
 def _cached_skills(prefix: str, ids: list, ttl: int, fetch) -> dict:
@@ -128,3 +133,26 @@ def get_garage_live(request: Request, garage_id: str):
     if role == 'contractor':
         body = _redact_for_contractor(body, garage_id)
     return {**body, 'can_replay': role != 'contractor', 'contractor': role == 'contractor', 'now': _now().isoformat(timespec='seconds')}
+
+
+@router.get('/api/garage-live-road')
+def get_road(a: str, b: str):
+    """The street route between a truck's old and new position (lat,lon each), for the truck to drive along between two refreshes.
+    The same OSRM lookup and 7-day cache the Replay maps use (osrm.route). No Salesforce. 204 = no road (the screen draws a straight line)."""
+    try:
+        (la1, lo1), (la2, lo2) = [tuple(float(x) for x in v.split(',')) for v in (a, b)]
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Invalid position')
+    if not all(-90 <= x <= 90 for x in (la1, la2)) or not all(-180 <= x <= 180 for x in (lo1, lo2)):
+        raise HTTPException(status_code=400, detail='Invalid position')
+    if miles(la1, lo1, la2, lo2) > ROAD_MAX_MILES:
+        raise HTTPException(status_code=400, detail='Too far for a road lookup')
+    if not ROAD_SLOTS.acquire(timeout=2):
+        raise HTTPException(status_code=503, detail='Road lookups are busy')
+    try:
+        res = osrm.route([(la1, lo1), (la2, lo2)], timeout=4)
+    finally:
+        ROAD_SLOTS.release()
+    if not res:
+        return Response(status_code=204)
+    return {'coords': [[round(c[0], 5), round(c[1], 5)] for c in res['coords']], 'miles': res['miles']}

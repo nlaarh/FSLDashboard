@@ -1,6 +1,6 @@
 import { Phone, PlayCircle, ExternalLink, CheckCircle2, ChevronRight, X } from 'lucide-react'
 import { SF_LIGHTNING_BASE, contractorSaLink } from '../../utils/sfLinks'
-import { SEVERITY } from './garageLiveModel'
+import { SEVERITY, attentionCount } from './garageLiveModel'
 
 const btn = 'inline-flex items-center gap-1 rounded-md border border-slate-600 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-2 py-1 min-h-[28px]'
 
@@ -19,7 +19,8 @@ export default function AttentionDrawer({ data, activeId, onFocus, onReplay, onC
     <aside className="flex flex-col min-h-0 h-full rounded-xl border border-slate-700/70 bg-slate-900/70" aria-label="Needs attention">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-slate-800">
         <h2 className="text-sm font-bold text-white">Needs attention</h2>
-        <div className="flex gap-1 ml-1">
+        <span className="rounded-full bg-slate-700 px-2 text-[11px] font-bold text-white" title="Things needing attention">{attentionCount(items)}</span>
+        <div className="flex gap-1">
           {['red', 'orange', 'yellow'].filter(k => counts[k]).map(k => (
             <span key={k} className={`rounded-full border px-1.5 text-[11px] font-bold ${SEVERITY[k].chip}`}>{counts[k]}</span>))}
         </div>

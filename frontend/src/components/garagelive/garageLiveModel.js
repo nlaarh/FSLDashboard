@@ -1,9 +1,7 @@
 /** Garage Live: the pure parts (formatting, gliding maths, the garage picker's rules). No React, no DOM, no Leaflet. */
 
 export const REFRESH_MS = 60_000
-export const GLIDE_MS = 6000                    // a truck slides from its old to its new position over this long after each refresh
 export const STORE_KEY = 'fslapp.garageLive.last'
-export const STILL_MILES = 0.01                 // a move smaller than this (about 15 m) is GPS jitter: no slide, no turning
 
 export const SEVERITY = {
   red: { label: 'Urgent', bar: 'bg-red-500', chip: 'bg-red-500/15 text-red-300 border-red-500/40', dot: '#ef4444' },
@@ -27,6 +25,10 @@ export function fmtMin(m) {
   return r < 60 ? `${r} min` : `${Math.floor(r / 60)} h ${String(r % 60).padStart(2, '0')} min`
 }
 
+/** THE number of things needing attention, used by the header button, the drawer and its badge: every ranked line except the plain
+ *  information line (the capacity count). Red + orange + yellow always add up to it. */
+export const attentionCount = items => (items || []).filter(i => i.severity !== 'info').length
+
 /** Minutes since an ISO time at `nowS` (epoch seconds). */
 export const minutesSince = (iso, nowS) => (iso ? Math.max(0, Math.floor((nowS - Date.parse(iso) / 1000) / 60)) : null)
 
@@ -38,31 +40,9 @@ export function dataAgeS(data, receivedAtMs, nowMs) {
   return Math.round(atArrival + Math.max(0, nowMs - receivedAtMs) / 1000)
 }
 
-// ── gliding ──
-export const easeInOut = x => (x < 0.5 ? 2 * x * x : 1 - ((-2 * x + 2) ** 2) / 2)
-export const lerp = (a, b, k) => a + (b - a) * k
-
-/** Where a truck is `elapsed` ms into a slide from `from` to `to` ([lat, lon] each). */
-export function glidePoint(from, to, elapsed, dur = GLIDE_MS) {
-  const k = dur <= 0 ? 1 : easeInOut(Math.min(1, Math.max(0, elapsed / dur)))
-  return [lerp(from[0], to[0], k), lerp(from[1], to[1], k)]
-}
-
-/** Compass heading in degrees (0 = north, clockwise) from one point to another. */
-export function bearing(a, b) {
-  const p1 = (a[0] * Math.PI) / 180, p2 = (b[0] * Math.PI) / 180, dl = ((b[1] - a[1]) * Math.PI) / 180
-  const y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)
-  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360
-}
-
+// ── turning ──
 /** Shortest signed turn from heading a to heading b, so a truck never spins the long way round. */
 export const turn = (a, b) => ((b - a + 540) % 360) - 180
-
-export function milesBetween(a, b) {
-  const R = 3958.8, p1 = (a[0] * Math.PI) / 180, p2 = (b[0] * Math.PI) / 180
-  const x = Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(((b[1] - a[1]) * Math.PI) / 360) ** 2
-  return 2 * R * Math.asin(Math.sqrt(x))
-}
 
 // ── the garage picker ──
 /** Garages matching what was typed (case-insensitive, every word must appear), busiest first, capped for a short list. */
