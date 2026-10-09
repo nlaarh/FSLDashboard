@@ -182,7 +182,8 @@ def assemble(snap: dict, territories: list[str] | None = None) -> dict:
     # WO-level flag: Submitted WOs with no SA can't be found from the SA list below
     no_sa_alerts = build_no_sa_wo_alerts(snap['no_sa_wos'], now_utc, territories)
 
-    if not sas:
+    unrouted = [] if scope else snap.get('unrouted_sas', [])   # no territory: nobody's scope, so everybody-view only
+    if not sas and not unrouted:
         if no_sa_alerts:
             _kmi(no_sa_alerts)
         return {'watchlist': [], 'total': 0, 'operational_alerts': no_sa_alerts,
@@ -233,12 +234,17 @@ def assemble(snap: dict, territories: list[str] | None = None) -> dict:
 
     # ── Operational Alerts (new flag-based table) ──
     rap_by_woli = {woli: _rap_customer(v.get('wo')) for woli, v in wo_by_woli.items()}
-    operational_alerts = build_operational_alerts(sas, sa_map, hist_by_sa, now_utc,
-                                                  snap['dup_candidates'], rap_by_woli)
+    wo_territory_by_woli = {woli: ((v['wo'].get('ServiceTerritory') or {}).get('Name') or '')
+                            for woli, v in wo_by_woli.items() if v.get('wo')}
+    alert_sa_map = {**sa_map, **{s['Id']: s for s in unrouted}}
+    operational_alerts = build_operational_alerts(
+        sas + unrouted, alert_sa_map, hist_by_sa, now_utc, snap['dup_candidates'], rap_by_woli,
+        sched_cleared=snap.get('sched_cleared'), unrouted_ids={s['Id'] for s in unrouted},
+        wo_territory_by_woli=wo_territory_by_woli)
 
     # ── Enrich alerts with WO data + phases for timeline hover ──
     for alert in operational_alerts:
-        sa = sa_map.get(alert['sa_id'], {})
+        sa = alert_sa_map.get(alert['sa_id'], {})
         wo_info = _wo_info(wo_by_woli.get(sa.get('ParentRecordId', '')))
         alert['wo_number'] = wo_info.get('wo_number', '')
         alert['wo_id'] = wo_info.get('wo_id', '')

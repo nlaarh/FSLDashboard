@@ -10,6 +10,8 @@ Evaluates active SAs against 7 categories:
 7. Potential Duplicate — same member with 2+ active SAs at similar location
 8. No Service Appointments on Work Order — WO is 'Submitted' but has no SA
    (WO-level: see find_no_sa_wos / build_no_sa_wo_alerts)
+9. No Service Resource — Scheduled Start was cleared (SAHistory) and is still blank
+10. Service Territory Needs Action — territory blank or starts with a letter (should start with a number)
 """
 
 import logging
@@ -51,6 +53,9 @@ NO_SA_FLAG = 'No Service Appointments on Work Order'
 # Wait this long after Submitted before flagging, to skip in-flight creation.
 _NO_SA_GRACE_SEC = 120
 
+SCHED_CLEARED_FLAG = 'No Service Resource'
+TERRITORY_FLAG = 'Service Territory Needs Action'
+
 # Sort order shared by build_operational_alerts and the WO-level flag.
 _FLAG_PRIORITY = {
     'Call At Risk of Missing PTA': 0,
@@ -58,9 +63,11 @@ _FLAG_PRIORITY = {
     'Call Not Assigned': 2,
     'Call Not Assigned - Rejected': 3,
     'Call Not Assigned - Received': 4,
-    NO_SA_FLAG: 5,
-    'Call Not Closed': 6,
-    'Potential Duplicate': 7,
+    SCHED_CLEARED_FLAG: 5,
+    TERRITORY_FLAG: 6,
+    NO_SA_FLAG: 7,
+    'Call Not Closed': 8,
+    'Potential Duplicate': 9,
 }
 
 
@@ -112,6 +119,15 @@ def _is_tow_drop_off(sa: dict) -> bool:
     return work_type == 'Tow Drop-Off'
 
 
+def _territory_needs_action(sa: dict, wo_territory: str | None) -> bool:
+    """An active ERS call's territory (on the appointment, and on its work order when known) must start with a number:
+    blank or a letter ('LS - LOCKSMITH REQUIRED', 'WM016') means someone has to fix it. wo_territory None = work order unknown."""
+    names = [(sa.get('ServiceTerritory') or {}).get('Name')]
+    if wo_territory is not None:
+        names.append(wo_territory)
+    return any(not (n or '').strip() or (n or '').strip()[0].isalpha() for n in names)
+
+
 def _time_in_status_from_hist(hist_list: list, current_status: str, now_utc: datetime) -> int | None:
     """Minutes since the SA entered its current status (from SAHistory)."""
     status_transitions = [
@@ -131,14 +147,22 @@ def _time_in_status_from_hist(hist_list: list, current_status: str, now_utc: dat
 
 
 def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc: datetime,
-                             dup_candidates: list | None = None, rap_by_woli: dict | None = None) -> list:
-    """Evaluate all active SAs against the 6 operational flag categories.
+                             dup_candidates: list | None = None, rap_by_woli: dict | None = None,
+                             sched_cleared: set | None = None, unrouted_ids: set | None = None,
+                             wo_territory_by_woli: dict | None = None) -> list:
+    """Evaluate all active SAs against the operational flag categories.
 
     dup_candidates: the appointments the Potential Duplicate flag looks at (see watchlist_snapshot.duplicate_candidates);
-    rap_by_woli: WOLI Id -> (is RAP, customer name) for the duplicate check.
+    rap_by_woli: WOLI Id -> (is RAP, customer name) for the duplicate check;
+    sched_cleared: SA ids whose Scheduled Start was cleared (watchlist_snapshot.sched_cleared_ids);
+    unrouted_ids: SAs with no territory at all — only the territory flag is evaluated for them;
+    wo_territory_by_woli: WOLI Id -> territory name of its work order ('' when blank), for the territory flag.
     Returns a list of alert dicts for the UI table.
     """
     alerts = []
+    sched_cleared = sched_cleared or set()
+    unrouted_ids = unrouted_ids or set()
+    wo_territory_by_woli = wo_territory_by_woli or {}
 
     for sa in sas:
         sa_id = sa.get('Id', '')
@@ -183,6 +207,14 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         if status == 'Received':
             flags_hit.append('Call Not Assigned - Received')
 
+        # ── Flag: No Service Resource (Scheduled Start cleared and still blank; age check done with the history read) ──
+        if not is_drop_off and sa_id in sched_cleared and not sa.get('SchedStartTime'):
+            flags_hit.append(SCHED_CLEARED_FLAG)
+
+        # ── Flag: Service Territory Needs Action ──
+        if not is_drop_off and _territory_needs_action(sa, wo_territory_by_woli.get(sa.get('ParentRecordId'))):
+            flags_hit.append(TERRITORY_FLAG)
+
         # ── Flag 5: Call Not Closed ──
         if status in ('On Location', 'En Route'):
             if status == 'En Route' and is_drop_off:
@@ -204,6 +236,10 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                     age_min = (now_utc - created).total_seconds() / 60
                     if age_min > 30:
                         flags_hit.append('High Priority Call Late')
+
+        # Appointments without a territory were read only for the territory flag
+        if sa_id in unrouted_ids:
+            flags_hit = [f for f in flags_hit if f == TERRITORY_FLAG]
 
         if not flags_hit:
             continue
