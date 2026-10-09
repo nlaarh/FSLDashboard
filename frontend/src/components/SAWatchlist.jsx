@@ -273,6 +273,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 </th>
               ))}
               <th className="w-[38px] px-1 py-2 text-center font-semibold">Assist</th>
+              {!contractorMode && <th className="w-[38px] px-1 py-2 text-center font-semibold">Map</th>}
               <th className="w-[120px] px-2 py-2 text-left font-semibold cursor-pointer hover:text-slate-300 select-none"
                 onClick={() => handleSort('kmi_case_number')}>
                 <span className="inline-flex items-center gap-0.5">
@@ -343,15 +344,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 </td>
                 {/* City */}
                 <td className="px-2 py-1.5 text-slate-300">
-                  <div className="flex items-center gap-1">
-                    {alert.city || '—'}
-                    {alert.sa_id && !contractorMode && (
-                      <button type="button" onClick={() => setMapAlert(alert)} aria-label="Open the call map" title="Open the call map"
-                        className="inline-flex items-center justify-center shrink-0 min-w-[44px] w-11 h-11 -my-2 rounded-lg text-sky-400 hover:text-sky-200 hover:bg-sky-500/15 transition-colors">
-                        <MapIcon className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
+                  {alert.city || '—'}
                 </td>
                 {/* Work Type */}
                 <td className="px-2 py-1.5 text-slate-300 text-xs">
@@ -413,6 +406,15 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                     <Navigation className="w-3.5 h-3.5" />
                   </button>}
                 </td>
+                {/* Call map: its own column so the icon lines up on every row (contractors never see other drivers) */}
+                {!contractorMode && (
+                  <td className="px-1 py-1.5 text-center">
+                    {alert.sa_id && <button type="button" onClick={() => setMapAlert(alert)} aria-label="Open the call map" title="Open the call map"
+                      className="p-1 rounded hover:bg-sky-500/20 text-sky-400 hover:text-sky-200 transition-colors">
+                      <MapIcon className="w-3.5 h-3.5" />
+                    </button>}
+                  </td>
+                )}
                 {/* KMI Case + status */}
                 <td className="px-2 py-1.5">
                   {alert.kmi_case_number ? (
