@@ -2,10 +2,13 @@
 
 Protects the production Salesforce org from being overwhelmed by FSLAPP:
 1. Rate limiter: max 60 API calls/minute (configurable)
-2. Circuit breaker: if SF fails 5x in a row, stop calling for 60s
+2. Circuit breaker: if SF is down (5xx, timeouts, connection errors) 5x in a row, or says REQUEST_LIMIT_EXCEEDED,
+   stop calling for 60s. A query mistake (4xx) is not an outage and never counts.
 3. Connection pooling: reuse TCP connections across 25+ dispatchers
+4. In-flight cap: at most SF_MAX_INFLIGHT (8) requests on the wire at once, however many threads ask
 """
 
+import contextvars
 import copy
 import os, threading, time as _time, logging, re, requests
 from urllib.parse import quote
@@ -91,6 +94,45 @@ def _rate_limit_check():
         _call_timestamps.append(_time.time())
 
 
+# ── In-flight cap + per-endpoint counters ───────────────────────────────────
+# Salesforce allows 25 concurrent long (>20 s) requests for the WHOLE org (~800 users). No burst from here may pile up.
+_MAX_INFLIGHT = int(os.getenv('SF_MAX_INFLIGHT', '8'))
+_INFLIGHT_WAIT = 30                       # seconds a request may queue for a slot before it gives up
+_inflight = threading.BoundedSemaphore(_MAX_INFLIGHT)
+_inflight_now = 0
+_inflight_peak = 0
+
+# Who is asking: the web layer sets the endpoint, the refresher sets 'refresh:<key>'; anything else is 'background'.
+sf_endpoint: contextvars.ContextVar = contextvars.ContextVar('sf_endpoint', default='background')
+_by_endpoint: dict = {}
+_MAX_ENDPOINTS = 200
+
+
+def endpoint_label(path: str) -> str:
+    """'/api/garages/0HhPb0000004Cb5/scorecard' -> '/api/garages/{id}/scorecard' (keeps the counter list short)."""
+    return re.sub(r'/[^/]*\d[^/]*', '/{id}', path)
+
+
+def _http(fn, *args, **kwargs):
+    """Run one HTTP request to Salesforce inside the in-flight cap and count it against the calling endpoint."""
+    global _inflight_now, _inflight_peak
+    if not _inflight.acquire(timeout=_INFLIGHT_WAIT):
+        raise SalesforceUnavailable(f"{_MAX_INFLIGHT} Salesforce requests already in flight; gave up waiting {_INFLIGHT_WAIT}s")
+    try:
+        name = sf_endpoint.get()
+        with _stats_lock:
+            _inflight_now += 1
+            _inflight_peak = max(_inflight_peak, _inflight_now)
+            if name not in _by_endpoint and len(_by_endpoint) >= _MAX_ENDPOINTS:
+                name = 'other'
+            _by_endpoint[name] = _by_endpoint.get(name, 0) + 1
+        return fn(*args, **kwargs)
+    finally:
+        with _stats_lock:
+            _inflight_now -= 1
+        _inflight.release()
+
+
 # ── Circuit Breaker ─────────────────────────────────────────────────────────
 # If SF fails repeatedly, stop calling it to let it recover
 _BREAKER_THRESHOLD = 5       # consecutive failures before opening circuit (detect outages fast)
@@ -129,6 +171,17 @@ def _breaker_success():
         _breaker_open_until = 0.0
 
 
+def _breaker_trip(reason: str):
+    """Open the breaker now (Salesforce told us to back off)."""
+    global _breaker_failures, _breaker_open_until
+    with _breaker_lock:
+        _breaker_failures = max(_breaker_failures, _BREAKER_THRESHOLD)
+        _breaker_open_until = _time.time() + _BREAKER_COOLDOWN
+    with _stats_lock:
+        _stats['breaker_trips'] += 1
+    log.error(f"Circuit breaker OPEN — {reason}. No SF calls for {_BREAKER_COOLDOWN}s.")
+
+
 def _breaker_failure():
     """Record a failed SF call — may open the breaker."""
     global _breaker_failures, _breaker_open_until
@@ -136,6 +189,7 @@ def _breaker_failure():
         _breaker_failures += 1
         if _breaker_failures >= _BREAKER_THRESHOLD:
             _breaker_open_until = _time.time() + _BREAKER_COOLDOWN
+            _stats['breaker_trips'] += 1
             log.error(f"Circuit breaker OPEN — {_breaker_failures} consecutive SF failures. "
                       f"No SF calls for {_BREAKER_COOLDOWN}s.")
 
@@ -189,6 +243,9 @@ def get_stats():
         s['breaker_open'] = _breaker_failures >= _BREAKER_THRESHOLD and _time.time() < _breaker_open_until
     s['calls_last_60s'] = recent
     s['rate_limit'] = _RATE_LIMIT
+    with _stats_lock:
+        s['in_flight'], s['in_flight_peak'], s['max_in_flight'] = _inflight_now, _inflight_peak, _MAX_INFLIGHT
+        s['requests_by_endpoint'] = dict(sorted(_by_endpoint.items(), key=lambda kv: -kv[1])[:30])   # real HTTP requests
     return s
 
 
@@ -217,11 +274,29 @@ def get_auth() -> tuple[str, str]:
     return _token, _instance
 
 
-def refresh_auth() -> tuple[str, str]:
+def refresh_auth(stale_token: str | None = None) -> tuple[str, str]:
+    """Log in again. When `stale_token` (the token that just failed) is given and another thread has already
+    replaced it, use that one instead of logging in a second time."""
     global _token, _instance
     with _lock:
+        if stale_token is not None and _token not in (None, stale_token):
+            return _token, _instance
         _token, _instance = _authenticate()
     return _token, _instance
+
+
+def _error_code(result) -> str:
+    """Salesforce errorCode of a response body (a list of errors or one object), '' when it is not an error."""
+    if isinstance(result, list):
+        result = result[0] if result and isinstance(result[0], dict) else {}
+    return str(result.get('errorCode', '')) if isinstance(result, dict) else ''
+
+
+def _limit_exceeded(what: str, detail: str):
+    """The org's API limit is hit: do not retry or log in again, stop asking for 60 s."""
+    _breaker_trip('Salesforce REQUEST_LIMIT_EXCEEDED')
+    _record_error(f"{what} REQUEST_LIMIT_EXCEEDED: {detail}", what)
+    raise RuntimeError(f"Salesforce REQUEST_LIMIT_EXCEEDED ({what}); backing off {_BREAKER_COOLDOWN}s")
 
 
 # ── REST Helpers ─────────────────────────────────────────────────────────────
@@ -255,7 +330,8 @@ def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dic
     for attempt in range(_retries):
         try:
             _t0 = _time.time()
-            resp = request_fn(
+            resp = _http(
+                request_fn,
                 f'{instance}{url_path}',
                 headers=headers,
                 timeout=timeout,
@@ -280,12 +356,6 @@ def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dic
             _record_error(f"SF REST {method.upper()} connection failed: {ce}", url_path)
             raise RuntimeError(f"SF REST {method.upper()} connection failed after retries")
 
-        if resp.status_code in (401, 403):
-            token, instance = refresh_auth()
-            headers['Authorization'] = f'Bearer {token}'
-            _rate_limit_check()
-            resp = request_fn(f'{instance}{url_path}', headers=headers, timeout=timeout, **kwargs)
-
         if resp.status_code in (500, 502, 503):
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
@@ -296,26 +366,22 @@ def _sf_rest_request(method: str, path: str, _retries: int = 2, **kwargs) -> dic
         break
 
     result = resp.json()
-    if isinstance(result, list):
-        has_error = bool(result and result[0].get('errorCode'))
-        is_expired = has_error and 'INVALID_SESSION' in result[0].get('errorCode', '').upper()
-    elif isinstance(result, dict):
-        has_error = 'errorCode' in result
-        is_expired = 'INVALID_SESSION' in result.get('errorCode', '').upper()
-    else:
-        has_error = False
-        is_expired = False
-
-    if is_expired:
-        token, instance = refresh_auth()
+    code = _error_code(result)
+    if code == 'REQUEST_LIMIT_EXCEEDED':
+        _limit_exceeded(f'SF REST {method.upper()}', url_path)
+    if resp.status_code == 401 or 'INVALID_SESSION' in code.upper():       # expired token: log in again, once
+        token, instance = refresh_auth(headers['Authorization'].removeprefix('Bearer '))
         headers['Authorization'] = f'Bearer {token}'
         _rate_limit_check()
-        resp = request_fn(f'{instance}{url_path}', headers=headers, timeout=timeout, **kwargs)
+        resp = _http(request_fn, f'{instance}{url_path}', headers=headers, timeout=timeout, **kwargs)
         result = resp.json()
-        has_error = isinstance(result, dict) and 'errorCode' in result
+        code = _error_code(result)
+        if code == 'REQUEST_LIMIT_EXCEEDED':
+            _limit_exceeded(f'SF REST {method.upper()}', url_path)
 
-    if has_error:
-        _breaker_failure()
+    if code:
+        # Salesforce answered, so it is up: a rejected request (bad field, no access...) is not an outage
+        _breaker_success()
         _record_error(f"SF REST error: {result}", url_path)
         raise RuntimeError(f"SF REST error: {result}")
 
@@ -407,12 +473,12 @@ def sf_query(soql: str, _retries: int = 2, timeout=None) -> dict:
 
     token, instance = get_auth()
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+    url = f'/services/data/{SF_API_VERSION}/query'
 
     for attempt in range(_retries):
         try:
             _t0 = _time.time()
-            r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                             headers=headers, params={'q': soql}, timeout=timeout)
+            r = _http(_session.get, f'{instance}{url}', headers=headers, params={'q': soql}, timeout=timeout)
             _elapsed = _time.time() - _t0
             if _elapsed > 5:
                 _record_slow_query('SOQL', _elapsed, soql)
@@ -441,36 +507,27 @@ def sf_query(soql: str, _retries: int = 2, timeout=None) -> dict:
             _breaker_failure()
             _record_error(f"SF server error {r.status_code} after {_retries} retries", soql)
             raise RuntimeError(f"SF server error {r.status_code} after {_retries} retries")
-
-        # Handle expired session
-        if r.status_code in (401, 403):
-            token, instance = refresh_auth()
-            headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-            _rate_limit_check()
-            r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                             headers=headers, params={'q': soql}, timeout=timeout)
         break
 
     result = r.json()
-    if isinstance(result, list):
-        is_expired = result and 'INVALID_SESSION' in result[0].get('errorCode', '').upper()
-    elif isinstance(result, dict):
-        is_expired = 'INVALID_SESSION' in result.get('errorCode', '').upper()
-    else:
-        is_expired = False
-    if is_expired:
-        token, instance = refresh_auth()
+    code = _error_code(result)
+    if code == 'REQUEST_LIMIT_EXCEEDED':
+        _limit_exceeded('SF query', soql[:100])
+    if r.status_code == 401 or 'INVALID_SESSION' in code.upper():           # expired token: log in again, once
+        token, instance = refresh_auth(token)
         headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
         _rate_limit_check()
-        r = _session.get(f'{instance}/services/data/{SF_API_VERSION}/query',
-                         headers=headers, params={'q': soql}, timeout=timeout)
+        r = _http(_session.get, f'{instance}{url}', headers=headers, params={'q': soql}, timeout=timeout)
         result = r.json()
-    if isinstance(result, list):
-        _breaker_failure()
-        _record_error(f"SF query error: {result}", soql)
-        raise RuntimeError(f"SF query error: {result}")
-    if isinstance(result, dict) and 'errorCode' in result:
-        _breaker_failure()
+        code = _error_code(result)
+        if code == 'REQUEST_LIMIT_EXCEEDED':
+            _limit_exceeded('SF query', soql[:100])
+    if code or isinstance(result, list):
+        # Salesforce answered, so it is up: a rejected query (bad field, malformed SOQL...) is not an outage
+        _breaker_success()
+        if isinstance(result, list):
+            _record_error(f"SF query error: {result}", soql)
+            raise RuntimeError(f"SF query error: {result}")
         _record_error(f"SF error: {result.get('message', result)}", soql)
         raise RuntimeError(f"SF error: {result.get('message', result)}")
 
@@ -484,7 +541,8 @@ def sf_parallel(**fns) -> dict:
     import concurrent.futures
     _t0 = _time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-        futures = {name: pool.submit(fn) for name, fn in fns.items()}
+        # each thread runs in a copy of this context, so its Salesforce requests are counted for the same endpoint
+        futures = {name: pool.submit(contextvars.copy_context().run, fn) for name, fn in fns.items()}
         results = {name: fut.result() for name, fut in futures.items()}
     _elapsed = _time.time() - _t0
     log.info(f"sf_parallel({', '.join(fns.keys())}) completed in {_elapsed:.1f}s")
@@ -529,7 +587,12 @@ def sf_query_all_shared(soql: str, ttl: int = 300) -> list[dict]:
         return copy.deepcopy(rows)
 
 
-def sf_query_all(soql: str, timeout=None) -> list[dict]:
+ROW_WARN = 50_000      # a result this big is logged: it is almost certainly a missing filter
+
+
+def sf_query_all(soql: str, timeout=None, max_records: int | None = None) -> list[dict]:
+    """All rows of a query, following result pages. `max_records` (optional) stops early and returns that many rows
+    with a log warning, so one runaway query cannot pull the whole table."""
     timeout = timeout or TIMEOUT_DEFAULT
     result = sf_query(soql, timeout=timeout)
     if isinstance(result, list) or 'records' not in result:
@@ -539,6 +602,9 @@ def sf_query_all(soql: str, timeout=None) -> list[dict]:
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     page = 1
     while not result.get('done', True) and result.get('nextRecordsUrl'):
+        if max_records and len(records) >= max_records:
+            log.warning(f"SOQL stopped at max_records={max_records} (more rows exist): {soql[:120]}")
+            break
         page += 1
         with _stats_lock:
             _stats['pages'] = _stats.get('pages', 0) + 1     # every extra result page is another Salesforce API request
@@ -546,20 +612,19 @@ def sf_query_all(soql: str, timeout=None) -> list[dict]:
         for attempt in range(2):
             try:
                 _t0 = _time.time()
-                resp = _session.get(f'{instance}{result["nextRecordsUrl"]}',
-                                    headers=headers, timeout=timeout)
+                resp = _http(_session.get, f'{instance}{result["nextRecordsUrl"]}', headers=headers, timeout=timeout)
                 _elapsed = _time.time() - _t0
                 if _elapsed > 5:
                     _record_slow_query('SOQL pagination', _elapsed, soql)
                     log.warning(f"Slow SOQL pagination p{page} ({_elapsed:.1f}s): {soql[:120]}")
                 result = resp.json()
+                if _error_code(result) == 'REQUEST_LIMIT_EXCEEDED':
+                    _limit_exceeded('SF query page', soql[:100])
                 _breaker_success()
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
                 if attempt < 1:
-                    _time.sleep(2 ** attempt)
-                    token, instance = refresh_auth()
-                    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+                    _time.sleep(2 ** attempt)       # a timeout is not an expired login: no new login, just try the page again
                     continue
                 # Only count after all retries exhausted
                 _breaker_failure()
@@ -567,6 +632,10 @@ def sf_query_all(soql: str, timeout=None) -> list[dict]:
         if isinstance(result, list) or 'records' not in result:
             break
         records.extend(result.get('records', []))
+    if max_records and len(records) > max_records:
+        records = records[:max_records]
+    if len(records) >= ROW_WARN:
+        log.warning(f"SOQL returned {len(records)} rows (over {ROW_WARN}): {soql[:120]}")
     return records
 
 

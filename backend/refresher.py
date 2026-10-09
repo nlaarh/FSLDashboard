@@ -17,8 +17,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import cache
+import sf_client
 
-log = logging.getLogger('refresher')
+log =logging.getLogger('refresher')
 _ET = ZoneInfo('America/New_York')
 _nightly_last_run: str = ''  # 'YYYY-MM-DD' — prevent running twice on same day
 
@@ -196,6 +197,7 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
     atomically updated with fresh data. Other users see stale → fresh
     with zero interruption.
     """
+    sf_client.sf_endpoint.set(f'refresh:{key}')      # its Salesforce requests are counted under this name
     try:
         # Mark L1 as expired — stale data stays available for other readers
         with cache._lock:
@@ -220,6 +222,8 @@ def _refresh_one(key: str, endpoint_fn, interval: int, persist: bool) -> bool:
     except Exception as e:
         log.warning(f"Refresh failed for '{key}': {e}")
         return False
+    finally:
+        sf_client.sf_endpoint.set('background')
 
 
 # ── Nightly jobs (3 AM ET) ────────────────────────────────────────────────────
