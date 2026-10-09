@@ -1,6 +1,6 @@
 /** Watchlist call map: the pure parts (colours, the waiting clock, the events of the call). No React, no DOM. */
 import { contactMarks, MARK_TYPES } from '../woreplay/contactMarks.js'
-import { KINDS, waitState } from '../woreplay/woReplayModel.js'
+import { KINDS, waitState, onSceneTs } from '../woreplay/woReplayModel.js'
 
 /** Member pin colour by how late the call is: green on time, yellow up to 30 min late, orange up to (not including) 90, red from 90. */
 export function latenessLevel(minLate) {
@@ -40,6 +40,26 @@ export function pinState(data, t, onScene) {
   const late = promise != null && !(onScene != null && t >= onScene) ? (t - promise) / 60 : promise != null && onScene != null ? (onScene - promise) / 60 : null
   const level = w.state === 'done' ? 'ok' : latenessLevel(late)
   return { ...w, level, lateMin: late != null && late > 0 ? Math.round(late) : 0 }
+}
+
+/** The call map's answer in the shape Garage Live's map draws ({ garage, tickets, drivers }), so ONE map shows both screens: this call as the only
+ *  ticket, the assigned driver first (it is also what `link` points at), then the qualified on-shift drivers. Status words are Garage Live's own. */
+export function asGarageLive(data) {
+  const { sa, garage, driver, peers } = data
+  const now = Date.parse(data.now) / 1000
+  const onScene = onSceneTs(data.steps || [])
+  const one = (d, job) => ({
+    id: d.id, name: d.name, truck: d.truck, caps: d.skills, phone: d.phone, status: d.status, label: d.label, held: d.held, status_since: null,
+    lat: d.lat, lon: d.lon, stale_position: d.lat == null, gps_at: d.gps_at, gps_age_min: d.gps_at ? Math.max(0, Math.floor((now - toS(d.gps_at)) / 60)) : null,
+    job, queue: (d.queue || []).map(j => ({ sa_id: j.sa, number: j.sa, work_type: j.work_type, label: j.label })),
+  })
+  return {
+    garage: { id: sa.id, name: garage.name, lat: garage.lat, lon: garage.lon },
+    tickets: [{ sa_id: sa.id, number: sa.number, wo_number: sa.wo_number, status: sa.status, work_type: sa.work_type || '', city: sa.city || '', lat: sa.lat, lon: sa.lon,
+      created_at: sa.created_at, promise_at: sa.promise_at, waiting: onScene == null, on_scene_at: onScene == null ? null : new Date(onScene * 1000).toISOString(),
+      status_since: null, towbook: sa.towbook, driver_name: driver?.name || null, flags: [] }],
+    drivers: [...(driver ? [one(driver, { number: sa.number, work_type: sa.work_type })] : []), ...peers.map(p => one(p, null))],
+  }
 }
 
 export const minutesSince = (iso, nowS) => Math.max(0, Math.floor((nowS - toS(iso)) / 60))

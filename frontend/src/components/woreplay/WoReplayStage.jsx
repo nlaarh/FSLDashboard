@@ -9,7 +9,7 @@ import { buildPath } from '../replay/roadPath'
 import { indexAt } from '../replay/engineMath'
 import { shortDriverName } from '../../utils/driverName'
 import { truckKindFor, markColour } from '../replay/gameIcons'
-import { createStageLayers } from './stageLayers'
+import { createStageLayers, PEER_WINDOW_S } from './stageLayers'
 import { FlowPulse, pulsePath, pickDock } from './flowPulse'
 import DriverQueue from './DriverQueue'
 import { queueFromLoad, queueFromPeer } from './peerNotes'
@@ -32,9 +32,10 @@ const store = (k, v) => { try { if (v === undefined) return localStorage.getItem
  * trucks fade in when the GPS arrives (locations: undefined = still loading, null = unavailable), contact marks when B's extras arrive.
  * peers (peerNotes.peerMoments) are the other qualified drivers at the moment the call was given / accepted; peerFocus is the name to highlight.
  * expand (useExpand) makes the stage fill the window next to the details; the map and slider then take all the room it is given.
- * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node).
+ * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node),
+ * startAt (epoch s: open there instead of at the first step, then play: the Watchlist call map's "replay from this moment").
  */
-export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null, expand }) {
+export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null, expand, startAt = null }) {
   const where = header?.where
   const loc = useMemo(() => locations || (where ? { wo: where.member, garage: where.garage, drivers: [], notes: [] } : null), [locations, where])
   const times = useMemo(() => stepTimes(steps), [steps])
@@ -60,7 +61,8 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     return out
   }, [loc, steps, header])
 
-  const end = Math.max(times[times.length - 1] ?? t0, t0) + 180
+  const trackEnd = useMemo(() => Math.max(0, ...trucks.map(k => k.path.verts.at(-1)?.[0] ?? 0)), [trucks])   // a call still open: the GPS runs past its last step
+  const end = Math.max(Math.max(times[times.length - 1] ?? t0, t0) + 180, trackEnd)
   const busy = useMemo(() => t => trucks.some(k => { const p = k.path.at(t); return p && p.heading != null && !p.stale }), [trucks])
   const eventTimes = useMemo(() => [...times, ...marks.map(m => m.ts)].sort((a, b) => a - b), [times, marks])
   const [hold, setHold] = useState(false)
@@ -157,6 +159,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     if (!loc?.wo || modeRef.current === 'free') return
     const pts = [[loc.wo.lat, loc.wo.lon]]
     for (const k of modeRef.current === 'all' ? trucks : trk ? [trk] : []) { const q = k.path.at(t); if (q) pts.push([q.lat, q.lon]) }
+    if (modeRef.current === 'all') for (const m of peers) if (t >= m.at && t < m.at + PEER_WINDOW_S) m.drivers.forEach(p => pts.push([p.lat, p.lon]))   // "Show all" includes the other qualified drivers on the map now
     if (loc.garage && (pts.length === 1 || modeRef.current === 'all' || pts.some(q => miles({ lat: q[0], lon: q[1] }, loc.garage) < 4)) && miles(loc.garage, loc.wo) < 60) pts.push([loc.garage.lat, loc.garage.lon])
     const b = L.latLngBounds(pts), tight = pts.length < 2 || b.getNorthEast().distanceTo(b.getSouthWest()) < 40
     const z = tight ? 16 : Math.min(map.getBoundsZoom(b, false, PAD.tl.add(PAD.br)), 17)
@@ -177,6 +180,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     if (p && map && loc?.wo) { setMode('free'); map.fitBounds(L.latLngBounds([[loc.wo.lat, loc.wo.lon], [p.lat, p.lon]]), { paddingTopLeft: PAD.tl, paddingBottomRight: PAD.br, maxZoom: 15 }) }
   }, [jump?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {   // it starts by itself as soon as the story is in: nobody should have to find Play
+    if (startAt != null) engine.seek(startAt)
     if (prefersReducedMotion()) return undefined
     const start = engine.ref.current.t
     const h = setTimeout(() => { if (engine.ref.current.t === start) engine.play() }, 400)   // not if the user already moved the playhead

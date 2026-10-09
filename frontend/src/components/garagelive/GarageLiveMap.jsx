@@ -28,12 +28,13 @@ const TIP = { className: 'cm-tip-wrap', direction: 'top', offset: [0, -26], opac
  * where it is drawn to its new position (street route from the same OSRM service Replay uses, fetched once per move and cached), at constant
  * speed over the refresh interval, turning with the road, with a fading trail. No road (OSRM down) or a long jump: a straight line.
  * Markers are created once and moved straight on the Leaflet layer, never re-rendered by React.
+ * link = { driverId, saId } (optional): that driver is highlighted and a dashed line follows it to that ticket (the Watchlist call map's picked driver).
  */
-export default function GarageLiveMap({ data, focus, canReplay, onReplay }) {
+export default function GarageLiveMap({ data, focus, canReplay, onReplay, link }) {
   const [ref, map] = useLeafletMap([data.garage.lat ?? 42.9, data.garage.lon ?? -78.8])
   const st = useRef({ root: null, tickets: new Map(), drivers: new Map(), garageId: null, fitted: null })
   const latest = useRef({})
-  latest.current = { canReplay, onReplay }
+  latest.current = { canReplay, onReplay, link }
   const t0 = useMemo(() => nowS(), [])
   const engine = useReplayEngine({ start: t0, end: t0 + 1e7, initial: t0, speed: 1, busy: () => true, keys: false })
   const roads = useMemo(() => createRoadFetcher((a, b) => fetchGarageRoad(a, b)), [])
@@ -42,7 +43,7 @@ export default function GarageLiveMap({ data, focus, canReplay, onReplay }) {
     if (!map) return undefined
     const s = st.current
     s.root = L.layerGroup().addTo(map)
-    return () => { s.root.remove(); Object.assign(s, { root: null, tickets: new Map(), drivers: new Map(), garageId: null, fitted: null }) }
+    return () => { s.root.remove(); Object.assign(s, { root: null, tickets: new Map(), drivers: new Map(), garageId: null, fitted: null, link: null }) }
   }, [map])
 
   useEffect(() => { engine.play(); return () => engine.pause() }, [engine])
@@ -75,6 +76,11 @@ export default function GarageLiveMap({ data, focus, canReplay, onReplay }) {
         }
         if (end) { it.cur = leg.to; it.mk.setLatLng(leg.to); it.leg = null; setTimeout(() => clearTrail(it), 4000) }
       }
+      const s = st.current, lk = latest.current.link, from = lk && s.drivers.get(lk.driverId), to = lk && s.tickets.get(lk.saId)
+      if (from && to) {                                       // the picked driver's line to its call follows the truck
+        if (!s.link) s.link = L.polyline([], { interactive: false, weight: 4, color: '#2563eb', dashArray: '8 10', opacity: 0.9 }).addTo(s.root)
+        if (trailDue) s.link.setLatLngs([from.mk.getLatLng(), to.mk.getLatLng()])
+      } else if (s.link) { s.link.remove(); s.link = null }
     })
   }, [engine])
 
@@ -90,7 +96,7 @@ export default function GarageLiveMap({ data, focus, canReplay, onReplay }) {
     if (!map || !s.root) return
     const { garage, tickets, drivers } = data
     if (s.garageId !== garage.id) {
-      s.root.clearLayers(); s.tickets.clear(); s.drivers.clear(); s.fitted = null; s.garageId = garage.id
+      s.root.clearLayers(); s.tickets.clear(); s.drivers.clear(); s.fitted = null; s.link = null; s.garageId = garage.id
       if (garage.lat != null) L.marker([garage.lat, garage.lon], { interactive: false, keyboard: false, zIndexOffset: -500, icon: icon(garageHtml((garage.name || '').replace(/^\w+\s+-\s+/, '')), 46, 42) }).addTo(s.root)
     }
 
@@ -151,6 +157,7 @@ export default function GarageLiveMap({ data, focus, canReplay, onReplay }) {
       if (it.el) {
         it.el.style.setProperty('--c', DRIVER_STATUS[d.status].colour)
         it.el.classList.toggle('live', d.status === 'driving' || d.status === 'towing')
+        it.el.classList.toggle('glive-focus', latest.current.link?.driverId === d.id)
         it.el.style.opacity = (d.gps_age_min ?? 0) >= 30 ? 0.55 : 1
         it.trail?.forEach(l => l.setStyle({ color: DRIVER_STATUS[d.status].colour }))
       }

@@ -10,16 +10,21 @@ Drivers who were on shift but not qualified are only counted. Towbook garages do
 Never returns a phone number or street address."""
 
 import re
+from datetime import timedelta
 
+import gps_store
+from feature_flags import is_on
 from report_card_health import _Driver
 from report_card_snapshot import GPS_MAX_AGE_MIN, miles
 from utils import parse_dt, to_eastern
-from wo_replay_map import _towbook
+from wo_replay_map import _ID, _member_sa, _towbook
 
 _SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
-LABELS = {'free': 'free', 'en_route': 'driving to a job', 'on_location': 'on a job', 'towing': 'towing', 'waiting': 'has a job, not started'}
+LABELS = {'busy': 'has a job', 'free': 'free', 'en_route': 'driving to a job', 'on_location': 'on a job', 'towing': 'towing', 'waiting': 'has a job, not started'}
 RANK = {'towing': 4, 'on_location': 3, 'en_route': 2, 'waiting': 1, 'free': 0}
 TOWBOOK_NOTE = 'This call went through a Towbook garage. Towbook does not report where its other drivers are, so they are not visible.'
+OPEN_NOTE = ('This call is still open and its garage-day is not built yet, so the other drivers are today\'s qualified, on-shift drivers. '
+             'Their positions are from our own GPS record at each moment; the calls they held are the ones still open now.')
 DISTANCE_NOTE = 'Distances are straight-line miles, not road distance.'
 
 
@@ -140,3 +145,61 @@ def pull_peers(raw: dict, snapshot_for) -> dict:
         return build_peers(None, '')
     snap = snapshot_for(sa['ServiceTerritoryId'], to_eastern(sa['CreatedDate']).date().isoformat())
     return {**build_peers(snap, sa['Id']), 'sf_calls': 0}
+
+
+def _moments(raw: dict, sa: dict) -> tuple:
+    """([(kind, time)], name of the driver it went to): when the member leg was last given to a driver, and when that driver accepted (Status history)."""
+    rows = [h for h in raw.get('history') or [] if h.get('ServiceAppointmentId') == sa['Id']]
+    picks = [h for h in rows if h.get('Field') == 'ERS_Assigned_Resource__c' and h.get('NewValue') and not _ID.match(h['NewValue'])]
+    if not picks:
+        return [], None
+    last = max(picks, key=lambda h: parse_dt(h['CreatedDate']))
+    given = parse_dt(last['CreatedDate'])
+    acc = min((parse_dt(h['CreatedDate']) for h in rows if h.get('Field') == 'Status' and h.get('NewValue') == 'Accepted' and parse_dt(h['CreatedDate']) > given), default=None)
+    return [('given', given)] + ([('accepted', acc)] if acc else []), last['NewValue']
+
+
+def _stored_position(rows: list, rid: str, t) -> tuple | None:
+    """The last stored fix of the driver at or before t, from gps_store rows (a latitude row and a longitude row share one stamp)."""
+    fix = {}
+    for r in rows:
+        if r['ServiceResourceId'] == rid and parse_dt(r['CreatedDate']) <= t:
+            fix.setdefault(r['CreatedDate'], {})[r['Field']] = float(r['NewValue'])
+    both = [(parse_dt(k), (v['LastKnownLatitude'], v['LastKnownLongitude'])) for k, v in fix.items() if len(v) == 2]
+    return max(both, key=lambda x: x[0])[1] if both else None
+
+
+def open_peers(raw: dict, live: dict | None, stored=gps_store.stored_gps_rows) -> dict | None:
+    """The peers answer for a call that is still open, when no day snapshot exists: `live` is the Watchlist call map's answer (the qualified,
+    on-shift drivers now, each with the open calls it holds and when each was given). Position at each moment = our own GPS record (Postgres,
+    no Salesforce); a driver whose record does not cover the moment is counted as 'no recent GPS', never guessed. None when it cannot be done."""
+    sa = _member_sa(raw.get('sas') or [])
+    member = ((live or {}).get('sa') or {})
+    if not is_on(gps_store.FLAG) or not sa or not live or member.get('lat') is None:
+        return None
+    moments, picked = _moments(raw, sa)
+    if not moments:
+        return None
+    roster = [p for p in live.get('peers') or [] if p['name'] != picked]       # the driver it went to is not a candidate (he may be a peer NOW if the call moved since)
+    out = {'available': True, 'channel': None, 'moments': [], 'member': {'lat': round(member['lat'], 4), 'lon': round(member['lon'], 4)},
+           'notes': [OPEN_NOTE, DISTANCE_NOTE], 'sf_calls': 0}
+    ids = [p['id'] for p in roster]
+    for kind, t in moments:
+        window = {i: (t - timedelta(minutes=GPS_MAX_AGE_MIN), t) for i in ids}
+        rows, covered = stored(window) if ids else ([], set())
+        shown, no_gps = [], 0
+        for p in roster:
+            pos = _stored_position(rows, p['id'], t) if p['id'] in covered else None
+            if pos is None:
+                no_gps += 1
+                continue
+            held = [j for j in p['queue'] if j.get('given_at') and parse_dt(j['given_at']) <= t]
+            queue = [{'sa': j['sa'], 'work_type': j.get('work_type'), 'label': j['label'], 'given_at': j['given_at'],
+                      'miles': None if j.get('lat') is None else round(miles(j['lat'], j['lon'], member['lat'], member['lon']), 1)} for j in held]
+            status = 'busy' if held else 'free'
+            shown.append({'name': _short(p['name']), 'status': status, 'label': LABELS[status], 'held': len(held), 'queue': queue, 'next': None,
+                          'miles': round(miles(pos[0], pos[1], member['lat'], member['lon']), 1), 'lat': round(pos[0], 5), 'lon': round(pos[1], 5)})
+        shown.sort(key=lambda d: d['miles'])
+        out['moments'].append({'kind': kind, 'at': t.isoformat().replace('+00:00', 'Z'), 'drivers': shown,
+                               'not_qualified': (live.get('peer_counts') or {}).get('not_qualified', 0), 'no_gps': no_gps})
+    return out if any(m['drivers'] for m in out['moments']) else None
