@@ -7,11 +7,11 @@
  * Auto-refreshes every 30 seconds.
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
 import { clsx } from 'clsx'
 import {
   Search, Clock, Lock, AlertTriangle, HelpCircle,
-  Loader2, User, Radio, CheckCircle2, X, ExternalLink, MapPin, Mail, Navigation,
+  Loader2, User, Radio, CheckCircle2, X, ExternalLink, Map as MapIcon, Mail, Navigation,
   ChevronUp, ChevronDown, Clipboard, Check,
 } from 'lucide-react'
 import { SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
@@ -20,6 +20,8 @@ import DriverMapPopup from './DriverMapPopup'
 import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
 import { fetchWatchlist } from '../api'
+
+const CallMapView = lazy(() => import('./callmap/CallMapView'))   // the full-window call map loads only when opened
 
 // ── Salesforce URL helpers ──────────────────────────────────────────────────
 const SF_BASE = 'https://aaawcny.lightning.force.com'
@@ -73,6 +75,7 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
   const [assistSaId, setAssistSaId] = useState(null)
   const [assistHints, setAssistHints] = useState(null)
   const [assistAlert, setAssistAlert] = useState(null)
+  const [mapAlert, setMapAlert] = useState(null)
   const [sortCol, setSortCol] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
   const [clipError, setClipError] = useState(false)
@@ -342,8 +345,11 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
                 <td className="px-2 py-1.5 text-slate-300">
                   <div className="flex items-center gap-1">
                     {alert.city || '—'}
-                    {alert.latitude && alert.longitude && (
-                      <MapPin className="w-2.5 h-2.5 text-slate-500" title={`${alert.latitude}, ${alert.longitude}`} />
+                    {alert.sa_id && !contractorMode && (
+                      <button type="button" onClick={() => setMapAlert(alert)} aria-label="Open the call map" title="Open the call map"
+                        className="inline-flex items-center justify-center shrink-0 min-w-[44px] w-11 h-11 -my-2 rounded-lg text-sky-400 hover:text-sky-200 hover:bg-sky-500/15 transition-colors">
+                        <MapIcon className="w-5 h-5" />
+                      </button>
                     )}
                   </div>
                 </td>
@@ -433,6 +439,12 @@ function OperationalAlertsTable({ alerts, onShowHelp, contractorMode = false }) 
           </tbody>
         </table>
       </div>
+
+      {mapAlert && (
+        <Suspense fallback={null}>
+          <CallMapView alert={mapAlert} flagClass={FLAG_COLORS[mapAlert.flag]} onClose={() => setMapAlert(null)} />
+        </Suspense>
+      )}
 
       {/* Dispatch Assist Panel */}
       {assistSaId && (
