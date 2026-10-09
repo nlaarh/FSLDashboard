@@ -17,6 +17,28 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.12 — 2026-10-08
+
+| | |
+|---|---|
+| Tag | `release/v1.12` |
+| Commit | `a6c1c02` (merge of PR #21, branch `fix/replay-click-and-500`) |
+| Bundle | `index-9Xcf0DNE.js` (css `index-BAYTOnuD.css`) |
+| Deploy | GitHub Actions run `37869316070`, 2026-10-08 about 9:20 PM ET (after hours, on the owner's explicit "deploy it"), success |
+| Roll back to | `release/v1.11` = `e8e9d1f` (bundle `index-YDV7zsZ_.js`) |
+
+**Changed**
+- Replay now starts playing in about one second and uses far fewer Salesforce calls.
+- Replay plays like a game: smooth animation, speeds of 1x / 10x / 60x / 300x, jump to next event, follow a truck, real truck types and driver names, a waiting timer for the member, pop-up notices, and a dark or light map.
+- Member phone calls, callbacks and texts show on the timeline and map; click one to open the conversation (each view is logged). New setting `replay_member_contact`, on by default (prod shows it on).
+- New tab with the driver's other jobs that day, and short insight call-outs.
+- Fixes: Replay can be clicked while it is still loading; work order 1084964 no longer errors (calls with no promise time); drivers who are off shift are hidden on the day map.
+- ERS managers can now use Replay.
+- A few places say "contractor" instead of "vendor".
+- Tests: backend 577 passing, frontend 14 passing; Tamy passed Replay v2 on real read-only Salesforce data.
+
+---
+
 ## v1.11 — 2026-10-05
 
 | | |
