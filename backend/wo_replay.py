@@ -27,7 +27,7 @@ ROLE = {'FSL_AUTO_SCHEDULE': 'FSL auto-schedule', 'FSL_ENGINE': 'FSL optimizer',
         'CALL_TAKER': 'Call taker', 'OTHER': 'Other'}
 SYSTEM_VIA = {'FSL_AUTO_SCHEDULE': 'fsl', 'FSL_ENGINE': 'fsl', 'INTEGRATION': 'intake', 'TOWBOOK_SYNC': 'towbook'}
 HUMAN_CLASSES = {'HUMAN', 'GARAGE_DISPATCHER', 'CALL_TAKER', 'OTHER'}
-_SUFFIX = re.compile(r'\s+\d{2,3}[A-Z]{0,2}$')
+_SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
 _GARAGE_CODE = re.compile(r'^\w+\s+-\s+')
 
 
@@ -262,10 +262,11 @@ def attach_explain(steps: list, story: dict):
             pre[2]['flag'] = {'text': f'Assigned {len(pre)} times before it was released', 'level': 'warn'}
 
 
-def build_replay(story: dict) -> dict:
+def build_replay(story: dict, where: dict | None = None) -> dict:
+    header = _header(story, where)
     steps = sorted(event_steps(story) + sms_steps(story) + problem_steps(story) + ([promise_step(story)] if promise_step(story) else []), key=lambda s: _dt(s['ts']))
     if not steps:
-        return {'header': _header(story), 'steps': [], 'problems': [], 'decision': None, 'takeaways': None}
+        return {'header': header, 'steps': [], 'problems': [], 'decision': None, 'takeaways': None}
     t0 = _dt(steps[0]['ts'])
     for s in steps:
         s['clock'] = _clock(s['ts'])
@@ -275,13 +276,13 @@ def build_replay(story: dict) -> dict:
     ids = {s['id'] for s in steps}
     problems = [{'text': b['text'], 'headline': bool(b.get('headline')), 'step_ids': [i for i in b.get('event_ids') or [] if i in ids]}
                 for b in story.get('bullets') or []]
-    return {'header': _header(story), 'steps': steps, 'problems': problems, 'decision': _decision(story), 'takeaways': takeaways(story, steps)}
+    return {'header': header, 'steps': steps, 'problems': problems, 'decision': _decision(story), 'takeaways': takeaways(story, steps)}
 
 
-def _header(story: dict) -> dict:
+def _header(story: dict, where: dict | None = None) -> dict:
     h, leg = story['header'], next((x for x in story['resolution']['legs'] if x['selected']), {})
     return {'sa': leg.get('number'), 'wo': story['resolution']['wo']['number'], 'service': h.get('work_type'),
-            'garage': _garage(h.get('final_garage')), 'channel': INTAKE.get(h.get('source'), h.get('source')),
+            'garage': _garage(h.get('final_garage')), 'where': where or {'member': None, 'garage': None}, 'channel': INTAKE.get(h.get('source'), h.get('source')),
             'date': _dt(story['events'][0]['ts']).astimezone(ET).strftime('%a %b %d, %Y') if story['events'] else None}
 
 

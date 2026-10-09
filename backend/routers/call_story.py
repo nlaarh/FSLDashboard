@@ -33,13 +33,14 @@ log = logging.getLogger('call_story')
 _PULLS = threading.Semaphore(2)
 _WO_LOCKS = defaultdict(threading.Lock)
 _RATE = defaultdict(deque)
+MAP_CLOSED_TTL_S = 7 * 86400
 
 
 def _gate(request: Request):
     import feature_flags
     if not feature_flags.is_on('call_story'):
         raise HTTPException(status_code=404, detail='Not found')
-    require_feature('scheduler.report_card', request)
+    require_feature(('scheduler.report_card', 'scheduler.replay'), request)   # Replay users read the same day and story data
 
 
 def _user(request: Request) -> str:
@@ -143,33 +144,48 @@ def get_story(request: Request, q: str, sa: str | None = None, rules: str | None
 def get_replay_steps(request: Request, q: str):
     """The same story, as animation steps for the Work Order Replay (wo_replay.py). Same gates and Salesforce load."""
     from wo_replay import build_replay
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    from wo_replay_map import locate
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
+    t0 = time.time()
     story = get_story(request, q)
-    return build_replay(story) if isinstance(story, dict) else story
+    if not isinstance(story, dict):
+        return story
+    bundle = cache.get(f"cs_raw:{story['resolution']['wo']['id']}") or _stored(story['resolution']['wo']['id'], cs1())
+    out = build_replay(story, where=locate(bundle) if bundle else None)
+    out['meta'] = {'sf_calls': story['meta'].get('sf_calls'), 'cache': story['meta'].get('cache'), 'ms': int((time.time() - t0) * 1000)}
+    return out
 
 
 @router.get('/api/call-story/replay-map')
 def get_replay_map(request: Request, q: str):
-    """Locations for the replay (wo_replay_map.py), loaded after the animation because the GPS read is slow.
-    Same gates as the story; the story's raw pull is reused from cache, so only the 2 to 3 location reads are new."""
+    """Locations for the replay (wo_replay_map.py), loaded after the animation because the GPS read can be slow.
+    Same gates as the story; the story's raw pull is reused from cache. A day snapshot supplies most GPS tracks, so
+    the usual cost is 0 Salesforce calls. A closed call's map is kept 7 days, in memory and on disk."""
     from wo_replay_map import pull_map
-    require_feature('scheduler.replay', request)         # Replay is for administrators and executives only
+    require_feature('scheduler.replay', request)         # Replay: administrators, executives and ERS managers only
+    t0 = time.time()
     story = get_story(request, q)
     if not isinstance(story, dict):
         return story
     wo_id = story['resolution']['wo']['id']
-    hit = cache.get(f'cs_map:{wo_id}')
+    key = f'cs_map:{wo_id}'
+    hit = cache.get(key) or cache.disk_get(key)          # only closed calls are ever written to disk
     if hit:
         return hit
     bundle = cache.get(f'cs_raw:{wo_id}') or _stored(wo_id, cs1())
     if not bundle:
         raise HTTPException(status_code=409, detail='Load the replay first')
     try:
-        out = pull_map(bundle)
+        out = pull_map(bundle, snapshot_for=store.load_snapshot)
     except (CallCapReached, RuntimeError) as e:
         log.warning('replay map pull failed for %s: %s', q, e)
         raise HTTPException(status_code=503, detail='Salesforce is unavailable or busy; try again shortly')
-    cache.put(f'cs_map:{wo_id}', out, ttl=cs1()['cache_ttl_sec']['closed' if bundle.get('closed') else 'open'])
+    if bundle.get('closed'):
+        cache.put(key, out, ttl=MAP_CLOSED_TTL_S)
+        cache.disk_put(key, out, ttl=MAP_CLOSED_TTL_S)
+    else:
+        cache.put(key, out, ttl=cs1()['cache_ttl_sec']['open'])
+    log.info('replay map %s: sf_calls=%s ms=%d', q, out['sf_calls'], int((time.time() - t0) * 1000))
     return out
 
 

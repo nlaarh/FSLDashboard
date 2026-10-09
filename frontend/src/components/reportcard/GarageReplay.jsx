@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Compass, MessageSquareOff, FolderOpen } from 'lucide-react'
 import CaseTrailPanel from './CaseTrailPanel'
 import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
-import useReplayClock from '../replay/useReplayClock'
+import useReplayEngine, { useEngineState } from '../replay/useReplayEngine'
 import { dayFrame, creationDensity, clockLabel } from '../replay/replayMath'
-import ReplayPlayer from '../replay/ReplayPlayer'
+import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import DayReplayMap from '../replay/DayReplayMap'
 import DriverDayCard from '../replay/DriverDayCard'
 import DayGantt from './DayGantt'
 import ReplayPanel from '../woreplay/ReplayPanel'
+import { shortDriverName } from '../../utils/driverName'
 import { verdictColour } from './reportCardStyles'
 
 /** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock.
@@ -33,11 +34,17 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
   }, [garage, date])
 
   const calls = useMemo(() => data.sas.filter(x => !x.is_drop_off).sort((a, b) => a.created.localeCompare(b.created)), [data])
-  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')])), [data])
+  const names = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, shortDriverName(d.name)])), [data])
+  // The picked call's own map and animation do not depend on the day replay, so it has ONE fixed slot above it, whatever state the
+  // day replay is in: when the day arrives the call keeps playing (it is never unmounted and restarted).
+  const pickedNumber = callStory ? calls.find(x => x.id === selectedSa)?.number : null
+  const panelRef = useRef(null)
+  useEffect(() => { if (pickedNumber) panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [pickedNumber])
   return (
     <div className="flex gap-3 items-start">
       <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-3">
+        {pickedNumber && <div ref={panelRef}><ReplayPanel key={pickedNumber} q={pickedNumber} /></div>}
         {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
         {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
         {state.phase === 'ready' && <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />}
@@ -56,21 +63,23 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
     const c = replay.calls.find(x => x.id === selectedSa)
     return c ? Math.max(win[0], c.created - 60) : win[0]
   }, [replay, selectedSa, win])
-  const clock = useReplayClock(win[0], win[1], { initial: startAt, speed: 5 })
   const [driverId, setDriverId] = useState(null)
   const dayDrivers = useMemo(() => Object.fromEntries(data.drivers.map(d => [d.id, d])), [data])
   const sasById = useMemo(() => Object.fromEntries(data.sas.map(s => [s.id, s])), [data])
   const verdictById = useMemo(() => Object.fromEntries(data.sas.map(s => [s.id, s.verdict?.code])), [data])
-  const frame = useMemo(() => dayFrame(replay, dayDrivers, sasById, clock.t), [replay, dayDrivers, sasById, clock.t])
   const density = useMemo(() => creationDensity(replay.calls, win[0], win[1]), [replay, win])
   const callIds = useMemo(() => Object.fromEntries(replay.calls.map(c => [c.id, c])), [replay])
   const selected = sasById[selectedSa] ? selectedSa : null
-  const panelRef = useRef(null)
-  useEffect(() => { if (selected) panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [selected])
+  // Events Prev / Next jump between: a call coming in, a driver arriving, a call clearing. A quiet stretch is skipped only while no call is open.
+  const events = useMemo(() => [...new Set(replay.calls.flatMap(c => [c.created, c.arrival, c.end]).filter(x => x != null && x >= win[0] && x <= win[1]))].sort((a, b) => a - b), [replay, win])
+  const busy = useMemo(() => t => replay.calls.some(c => t >= c.created && t < c.end), [replay])
+  const engine = useReplayEngine({ start: win[0], end: win[1], events, initial: startAt, speed: 300, busy, keys: !selected })   // the call's own player owns the keys while one is open
+  const { t } = useEngineState(engine, 4)
+  const frame = useMemo(() => dayFrame(replay, dayDrivers, sasById, t), [replay, dayDrivers, sasById, t])
   const driver = driverId ? replay.drivers.find(d => d.id === driverId) : null
   useEffect(() => {
     const c = callIds[selected]
-    if (c) clock.setT(Math.max(win[0], c.created - 60))
+    if (c) engine.seek(Math.max(win[0], c.created - 60))
   }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
   const ORDER = { en_route: 0, on_scene: 1, assigned: 2, idle: 3, off: 4 }
   // only drivers and vehicles that are on the map or working a call right now (not the 20 who are off shift or have no truck out)
@@ -79,30 +88,30 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
 
   return (
     <div className="space-y-3 min-w-0">
-      {selected && callStory && <div ref={panelRef}><ReplayPanel q={sasById[selected].number} /></div>}
-      <ReplayPlayer clock={clock} start={win[0]} end={win[1]} density={density}>
+      <ReplayPlayer engine={engine} start={win[0]} end={win[1]} density={density}>
         <span className="text-[11px] text-slate-400">{frame.open.length} open · {frame.late.length} past promise</span>
       </ReplayPlayer>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 items-start">
         <div className="xl:col-span-2 glass rounded-xl overflow-hidden relative" style={{ height: 460 }}>
           <div className="absolute left-14 top-3 z-[1000] pointer-events-none rounded-xl bg-slate-900/90 text-white px-4 py-2 shadow-lg">
-            <div className="text-2xl font-extrabold tabular-nums leading-none">{clockLabel(clock.t, true)}</div>
+            <div className="text-2xl font-extrabold tabular-nums leading-none">{clockLabel(t, true)}</div>
             <div className="text-[11px] text-slate-300 mt-1">
               {counts.en_route || 0} en route · {counts.on_scene || 0} on scene · {counts.idle || 0} idle · {frame.open.length} calls open{frame.late.length ? ` · ${frame.late.length} past promise` : ''}
             </div>
           </div>
-          <DayReplayMap replay={replay} frame={frame} t={clock.t} verdictById={verdictById} selectedDriver={driverId}
+          <DayReplayMap replay={replay} engine={engine} dayDrivers={dayDrivers} sasById={sasById} verdictById={verdictById} selectedDriver={driverId}
             selectedSa={selected} onSelectDriver={setDriverId} onSelectSa={id => callIds[id] && onSelectSa(id)} />
+          <SkipChip engine={engine} className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[1000]" />
         </div>
         <div className="space-y-2">
           {driver ? (
             <DriverDayCard driver={dayDrivers[driver.id]} replayDriver={driver} frameDriver={frame.drivers.find(d => d.id === driver.id)}
-              sas={data.sas.filter(s => s.final_driver_id === driver.id)} sasById={sasById} t={clock.t} onSeek={clock.setT}
+              sas={data.sas.filter(s => s.final_driver_id === driver.id)} sasById={sasById} t={t} onSeek={engine.seek}
               onSelectSa={onSelectSa} onClose={() => setDriverId(null)} />
           ) : (
             <div className="glass rounded-xl overflow-hidden">
               <div className="px-3 py-2 border-b border-slate-700/60">
-                <div className="text-xs font-semibold text-slate-200">What each driver is doing at {clockLabel(clock.t, true)}</div>
+                <div className="text-xs font-semibold text-slate-200">What each driver is doing at {clockLabel(t, true)}</div>
                 <div className="text-[11px] text-slate-500">Click a driver for their whole day.</div>
               </div>
               <div className="max-h-[390px] overflow-y-auto">
@@ -110,7 +119,7 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
                   <button key={d.id} onClick={() => setDriverId(d.id)} className="w-full text-left px-3 py-1.5 border-b border-slate-800/80 hover:bg-slate-800/60 flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.status.colour }} />
                     <span className="min-w-0">
-                      <span className="block text-xs text-white truncate">{d.id.startsWith('tb:') ? d.name : d.name.replace(/\s+\d{2,3}[A-Z]{0,2}$/, '')}{d.pos && d.mode === 'estimated' ? ' (estimated)' : ''}</span>
+                      <span className="block text-xs text-white truncate">{d.id.startsWith('tb:') ? d.name : shortDriverName(d.name)}{d.pos && d.mode === 'estimated' ? ' (estimated)' : ''}</span>
                       <span className="block text-[11px] text-slate-400 truncate">{d.status.label}{d.status.call ? ` · ${d.status.call.number}` : ''}{d.held.length > 1 ? ` (+${d.held.length - 1} more)` : ''}</span>
                     </span>
                   </button>
@@ -121,8 +130,8 @@ function ReplayBody({ replay, data, selectedSa, onSelectSa, callStory }) {
           )}
         </div>
       </div>
-      <DayGantt data={data} selectedSa={selected} onSelect={onSelectSa} clockMs={clock.t * 1000}
-        onSeek={ms => clock.setT(ms / 1000)} onSelectDriver={setDriverId} selectedDriver={driverId} />
+      <DayGantt data={data} selectedSa={selected} onSelect={onSelectSa} clockMs={t * 1000}
+        onSeek={ms => engine.seek(ms / 1000)} onSelectDriver={setDriverId} selectedDriver={driverId} />
     </div>
   )
 }

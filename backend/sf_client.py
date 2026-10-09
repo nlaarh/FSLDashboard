@@ -8,6 +8,7 @@ Protects the production Salesforce org from being overwhelmed by FSLAPP:
 
 import copy
 import os, threading, time as _time, logging, re, requests
+from urllib.parse import quote
 from collections import deque
 from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
@@ -334,6 +335,38 @@ def sf_composite_batch(batch_requests: list[dict], halt_on_error: bool = False) 
     if not isinstance(result, dict):
         raise RuntimeError(f"SF composite batch returned non-object response: {result}")
     return result
+
+
+COMPOSITE_MAX_QUERIES = 5       # Salesforce allows 5 query subrequests in one /composite request
+_COMPOSITE_REF = re.compile(r'@\{[^}]+\}')
+
+
+def _composite_url(soql: str) -> str:
+    """URL-encode the SOQL but leave any @{ref.records[0].Id} raw: an encoded reference is not substituted and
+    Salesforce answers INVALID_QUERY_FILTER_OPERATOR."""
+    parts = _COMPOSITE_REF.split(soql)
+    refs = _COMPOSITE_REF.findall(soql)
+    out = quote(parts[0], safe='')
+    for ref, part in zip(refs, parts[1:]):
+        out += ref + quote(part, safe='')
+    return f'/services/data/{SF_API_VERSION}/query?q={out}'
+
+
+def sf_composite_query(named: dict[str, str]) -> dict[str, dict]:
+    """Run up to 5 SOQL queries in ONE request (one API call). Later queries may reference earlier ones by key,
+    e.g. @{wo.records[0].Id}. Returns {key: {'status': int, 'body': ...}}; a failed subrequest does not fail the
+    others (allOrNone false), so the caller checks each status."""
+    if not named:
+        return {}
+    if len(named) > COMPOSITE_MAX_QUERIES:
+        raise ValueError(f'A composite request holds at most {COMPOSITE_MAX_QUERIES} queries, got {len(named)}')
+    body = {'allOrNone': False,
+            'compositeRequest': [{'method': 'GET', 'url': _composite_url(soql), 'referenceId': key}
+                                 for key, soql in named.items()]}
+    result = sf_rest_post('/composite', body=body)
+    if not isinstance(result, dict) or 'compositeResponse' not in result:
+        raise RuntimeError(f"SF composite returned an unexpected response: {str(result)[:200]}")
+    return {r['referenceId']: {'status': r['httpStatusCode'], 'body': r['body']} for r in result['compositeResponse']}
 
 
 def sf_query_explain(soql: str) -> dict:

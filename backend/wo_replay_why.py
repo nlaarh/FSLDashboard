@@ -13,7 +13,7 @@ import re
 
 from utils import parse_dt
 
-_SUFFIX = re.compile(r'\s+\d{2,3}[A-Z]{0,2}$')
+_SUFFIX = re.compile(r'\s+\d{2,5}[A-Z]{0,2}$')
 CLOSER_MI = 0.3          # a pick must be this much nearer than the previous one to be called "closer"
 
 

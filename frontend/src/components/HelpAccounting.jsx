@@ -22,7 +22,7 @@ const CAPABILITIES = [
     border: 'border-blue-500/20',
     bg: 'bg-blue-500/5',
     points: [
-      'GPS mileage check — actual miles driven from real GPS data vs what the vendor submitted',
+      'GPS mileage check — actual miles driven from real GPS data vs what the contractor submitted',
       'Automatic toll detection — the route is run through Google Maps and any tolls along the path are identified',
       'Live route map — see exactly where the driver went, start to finish, on a real map so you can verify every mile visually',
     ],

@@ -27,7 +27,7 @@ def client(monkeypatch, tmp_path):
         role = request.headers.get('x-test-role', 'admin')
         allowed = {'scheduler.report_card': {'admin', 'executive'}, 'scheduler.report_card_admin': {'admin'},
                    'scheduler.replay': {'admin', 'executive'}}
-        if role not in allowed.get(feature, set()):
+        if not any(role in allowed.get(f, set()) for f in (feature if isinstance(feature, tuple) else (feature,))):
             raise HTTPException(status_code=403, detail='Access restricted')
 
     monkeypatch.setattr(report_card, 'require_feature', fake_require)

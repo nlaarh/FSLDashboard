@@ -1,4 +1,4 @@
-"""Replay is for administrators and executives only: the permission and the three endpoints that serve it."""
+"""Replay is for administrators, executives and ERS managers only: the permission and the three endpoints that serve it."""
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -9,15 +9,16 @@ from tests.call_story_factories import towbook_cascade_raw
 
 
 def test_who_may_replay():
-    assert {r for r in ('superadmin', 'admin', 'executive', 'ers-director', 'ers-supervisor', 'contractor', 'finance') if can_access(r, 'scheduler.replay')} \
-        == {'superadmin', 'admin', 'executive'}
+    assert {r for r in ('superadmin', 'admin', 'executive', 'ers-manager', 'ers-director', 'ers-supervisor', 'contractor', 'finance') if can_access(r, 'scheduler.replay')} \
+        == {'superadmin', 'admin', 'executive', 'ers-manager'}
     assert 'scheduler.replay' in get_user_features('executive') and 'scheduler.replay' not in get_user_features('ers-director')
     assert can_access('ers-director', 'scheduler.report_card')            # the report card itself is unchanged
     assert 'contractor' not in FEATURE_ROLES['scheduler.report_card'] | FEATURE_ROLES['scheduler.replay']
 
 
 def _feature_aware(feature, request):
-    if not can_access(request.headers.get('x-test-role', 'admin'), feature):
+    role = request.headers.get('x-test-role', 'admin')
+    if not any(can_access(role, f) for f in (feature if isinstance(feature, tuple) else (feature,))):
         raise HTTPException(status_code=403, detail='Access restricted')
 
 
@@ -52,8 +53,8 @@ def test_other_roles_are_refused_on_every_replay_endpoint(app_client, role):
         assert app_client.get(path, headers={'x-test-role': role}).status_code == 403, (role, path)
 
 
-@pytest.mark.parametrize('role', ['admin', 'executive', 'superadmin'])
-def test_admin_executive_and_superadmin_are_let_through(app_client, role):
+@pytest.mark.parametrize('role', ['admin', 'executive', 'superadmin', 'ers-manager'])
+def test_admin_executive_superadmin_and_ers_manager_are_let_through(app_client, role):
     assert app_client.get(REPLAY_PATHS[0], headers={'x-test-role': role}).status_code == 200
     assert app_client.get(REPLAY_PATHS[2], headers={'x-test-role': role}).status_code in (200, 404)       # 404 = day not built, not a refusal
 

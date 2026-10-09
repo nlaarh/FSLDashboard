@@ -66,3 +66,13 @@ def test_no_arrival_is_a_failure_and_an_empty_story_does_not_crash():
     t = takeaways(story(pta={'arrival': None}), GOOD)
     assert any('No driver arrived' in w['text'] for w in t['went_wrong'])
     assert takeaways({}, [])['verdict'] in ('good', 'mixed', 'poor')
+
+
+def test_a_call_with_no_promise_margin_does_not_crash_the_takeaways():
+    # Work order 1084964 (Towbook, no PTA margin): margin_initial_min is present but None, and a "bad" problem is
+    # found, so the verdict comparison ran None < 0 and the whole replay returned HTTP 500.
+    steps = [st('E1', 'Call received', 0), st('E3', 'Assigned to Ann', 10, 'Ann'), st('E5', 'Assigned to Bo', 60, 'Bo'), st('E7', 'Assigned to Cy', 400, 'Cy'),
+             st('E8', 'Released to Cy (Dispatched)', 520)]
+    s = story(pta={'initial_min': None, 'margin_initial_min': None, 'response_min': None, 'arrival': None, 'rebased': None})
+    t = takeaways(s, steps)
+    assert t['went_wrong'] and t['verdict'] == 'mixed'     # unknown margin is not counted as late
