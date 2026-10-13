@@ -33,7 +33,7 @@ export function createStageLayers(map, opts) {
 
   let member = null, waitEl = null, memberEl = null, memberState = '', waitText = ''
   if (loc?.wo) {
-    member = L.marker([loc.wo.lat, loc.wo.lon], { ...own, zIndexOffset: 500, icon: icon(memberHtml({ number: header?.sa, vehicle: header?.vehicle }), 56, 56) }).addTo(root)
+    member = L.marker([loc.wo.lat, loc.wo.lon], { ...own, zIndexOffset: 500, icon: icon(memberHtml({ number: header?.sa, vehicle: header?.vehicle, workType: header?.service }), 56, 56) }).addTo(root)
     memberEl = member.getElement()?.firstElementChild
     waitEl = memberEl?.querySelector('.wait')
   }

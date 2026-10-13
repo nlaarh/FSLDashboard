@@ -107,7 +107,7 @@ export default function GarageLiveMap({ data, focus, canReplay, onReplay, link }
       seenT.add(t.sa_id)
       let it = tNow.get(t.sa_id)
       if (!it) {
-        const mk = L.marker([t.lat, t.lon], { keyboard: false, zIndexOffset: 500, icon: icon(memberHtml({ number: t.number }), 56, 56) }).addTo(s.root)
+        const mk = L.marker([t.lat, t.lon], { keyboard: false, zIndexOffset: 500, icon: icon(memberHtml({ number: t.number, workType: t.work_type }), 56, 56) }).addTo(s.root)
         it = { mk, t, el: mk.getElement()?.firstElementChild, wait: null, key: '' }
         it.wait = it.el?.querySelector('.wait')
         mk.bindTooltip(() => ticketTip(it.t, nowS(), false), TIP).bindPopup(() => ticketTip(it.t, nowS(), latest.current.canReplay), { className: 'cm-tip-wrap', closeButton: false, offset: [0, -20] })

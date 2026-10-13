@@ -5,6 +5,7 @@ import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignL
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
 import { truckKindFor } from './truckKind.js'
 import { waitState, fmtWait, driverPhase, toastFor, towbookTrack, takenHops } from '../woreplay/woReplayModel.js'
+import { workTypeGlyph } from './workTypeGlyph.js'
 
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} is not near ${b}`)
 
@@ -168,4 +169,18 @@ test('takenHops: earlier channel-to-channel hops, once each, never the current s
   assert.deepEqual(takenHops(steps, 0), [])
   assert.deepEqual(takenHops(steps, 3).map(h => h.key), ['src_ivr>sf', 'sf>dispatcher'])   // dispatcher>driver ends on the map, not the bar; the repeat is dropped
   assert.equal(takenHops(steps, 4).at(-1).key, 'sf>fsl')
+})
+
+test('workTypeGlyph matches work types case-insensitively and falls back', () => {
+  assert.equal(workTypeGlyph('TOW PICK-UP').kind, 'Tow')
+  assert.equal(workTypeGlyph('Tow Drop-Off').kind, 'Tow')
+  assert.equal(workTypeGlyph('battery').kind, 'Battery')
+  assert.equal(workTypeGlyph('Tire').kind, 'Tire')
+  assert.equal(workTypeGlyph('LOCKOUT').kind, 'Lockout')
+  assert.equal(workTypeGlyph('Winch Out').kind, 'Winch')
+  assert.equal(workTypeGlyph('Fuel').kind, 'Fuel')
+  assert.equal(workTypeGlyph('Mystery').kind, 'Other')
+  assert.equal(workTypeGlyph('Mystery').label, 'Mystery')
+  assert.equal(workTypeGlyph(''), null)
+  assert.ok(workTypeGlyph('Tire').svg.startsWith('<svg'))
 })
