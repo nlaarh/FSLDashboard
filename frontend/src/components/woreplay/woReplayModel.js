@@ -9,7 +9,7 @@ export const KINDS = {
   sms:    { colour: '#ec4899', dash: null, label: 'Text to member' },
   human:  { colour: '#0891b2', dash: null, label: 'Dispatcher action' },
   driver: { colour: '#059669', dash: null, label: 'Driver action' },
-  mark:   { colour: '#e11d48', dash: null, label: 'Milestone' },
+  mark:   { colour: '#0ea5e9', dash: null, label: 'Milestone' },
 }
 
 /** The command-center bar across the top shows EVERY channel a call can pass through, lit when this call touches it:

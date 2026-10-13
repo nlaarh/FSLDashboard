@@ -7,7 +7,7 @@ const ICON = { src_ivr: Bot, src_drr: MonitorSmartphone, src_mcc: Headset, src_p
 const BRAND = '#818cf8'   // brand-400
 
 /** The actor strip across the top: the live clock, then every channel a call can pass through as a small icon and label.
- *  Lit when this call touched it, underlined in the brand colour while it is the one acting. Past the promise a small red badge shows. */
+ *  Lit when this call touched it, underlined in the brand colour while it is the one acting. Past the promise a small badge shows: green when the driver was already there, red when not. */
 export default function StageHud({ engine, hud, stageW, t0, pastPromise, pulse }) {
   const clockRef = useRef(null)
   useEffect(() => {
@@ -23,7 +23,7 @@ export default function StageHud({ engine, hud, stageW, t0, pastPromise, pulse }
       <div style={{ position: 'absolute', left: 24, top: 15, zIndex: 1060, pointerEvents: 'none', color: '#fff', width: 'max-content', maxWidth: 208 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
           <div ref={clockRef} style={{ fontSize: 20, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: '26px', whiteSpace: 'nowrap', flexShrink: 0 }} />
-          {pastPromise && <span style={{ background: '#dc2626', color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '1px 6px', lineHeight: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}>Promise passed</span>}
+          {pastPromise && <span style={{ background: pastPromise === 'met' ? '#059669' : '#dc2626', color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '1px 6px', lineHeight: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}>{pastPromise === 'met' ? 'Promise met' : 'Promise passed'}</span>}
         </div>
         <div style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Call received {clockLabel(t0)}</div>
       </div>

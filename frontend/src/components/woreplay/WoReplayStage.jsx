@@ -201,7 +201,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const toggleTheme = () => setLight(v => { store('woReplayLight', v ? '0' : '1'); return !v })
   const btn = on => `${big ? 'px-3 py-2.5 text-sm' : 'px-2 py-1.5 text-[11px]'} rounded-lg font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
 
-  const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise
+  const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise && !(wait.onScene != null && wait.onScene <= wait.promise) ? 'missed' : wait.promise != null && tNow >= wait.promise ? 'met' : null
   const posTruck = trucks.find(k => k.est || k.name === act.name), pos = posTruck?.path.at(tNow), estNow = !!posTruck?.est
   const readout = !loc ? (locations === undefined ? 'Loading where the member and trucks were…' : 'Locations are not available for this call.')
     : !act.name && !pos ? (loc.towbook ? 'Towbook garage: Salesforce does not track where its driver is.' : 'No driver assigned at this moment.')

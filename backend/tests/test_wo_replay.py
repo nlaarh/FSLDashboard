@@ -94,6 +94,7 @@ def test_a_text_that_was_not_sent_is_a_flagged_problem_step():
 
 def test_promise_step_flagged_when_driver_was_late():
     p1 = by_id(build_replay(story()))['P1']
+    assert p1['title'] == 'Promise missed \u2014 driver arrived 34 min late' and p1['flag']['level'] == 'bad'
     assert p1['flag']['text'] == 'Arrived 34 min after the promise'  # round(34.5) is 34 (banker's rounding)
 
 
@@ -103,6 +104,7 @@ def _promise(**pta):
 
 def test_promise_step_arrived_in_time():
     p1 = _promise(due_initial='2026-09-28T16:44:11.000Z', arrival='2026-09-28T16:30:00.000Z', met_initial=True, margin_initial_min=14.2)
+    assert p1['title'] == 'Promise met \u2014 driver arrived in time'
     assert p1['detail'] == 'Driver arrived in time' and p1['flag'] is None
 
 
@@ -115,7 +117,7 @@ def test_promise_step_no_arrival_and_promise_passed_is_a_missed_promise():
 def test_promise_step_no_arrival_and_promise_still_ahead_gives_no_verdict():
     due = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
     p1 = _promise(due_initial=due, arrival=None, met_initial=None, margin_initial_min=None)
-    assert p1['detail'] == 'Not reached yet' and p1['flag'] is None and 'missed' not in p1['title']
+    assert p1['title'] == 'Promise due' and p1['detail'] == 'Not reached yet' and p1['flag'] is None
 
 
 def test_hidden_noise_events_are_not_drawn_and_problems_link_only_to_real_steps():
