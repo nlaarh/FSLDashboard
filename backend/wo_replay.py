@@ -182,7 +182,7 @@ def promise_step(story: dict):
                      detail='Driver had not arrived yet' if late else 'Driver arrived in time',
                      flag={'text': f'Arrived {abs(round(p["margin_initial_min"]))} min after the promise', 'level': 'bad'} if late and p.get('margin_initial_min') is not None else None)
     if due > datetime.now(timezone.utc):   # no arrival yet and the promise is still ahead: nothing to judge
-        return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise time reached', detail='Not reached yet')
+        return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise due', detail='Not reached yet')
     return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise missed \u2014 no driver had arrived',
                  detail='No driver had arrived', flag={'text': 'No arrival by the promise time', 'level': 'bad'})
 
