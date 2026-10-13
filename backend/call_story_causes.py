@@ -20,6 +20,10 @@ HEADLINE_BY_CODE = {'BOUNCED': 'C11', 'INBOUND_CASCADE': 'C12', 'STACKED': 'C13'
                     'LATE_DESPITE_CAPACITY': 'C13', 'LATE_EXECUTION': 'C13', 'CAPACITY_SHORT': 'C13'}
 
 
+def _met(ok):
+    return 'not graded (no arrival)' if ok is None else 'met' if ok else 'missed'
+
+
 def _at_least(seg, level):
     return SEVERITY_ORDER.index(seg['severity']) >= SEVERITY_ORDER.index(level)
 
@@ -232,8 +236,8 @@ def bullets(causes: list) -> list:
             'C14': lambda: f"The drive took {e['minutes']} min.",
             'C15': lambda: f"On scene for {e['minutes']} min.",
             'C16': lambda: f"PTA re-based from {e['initial_min']:g} to {e['final_min']:g} min by {e['by']}: "
-                           f"{'met' if e['met_initial'] else 'missed'} against the original promise, "
-                           f"{'met' if e['met_final'] else 'missed'} against the new one.",
+                           f"{_met(e['met_initial'])} against the original promise, "
+                           f"{_met(e['met_final'])} against the new one.",
             'C17': lambda: e['text'],
             'C18': lambda: f"Canceled while the call had no owner ({e['where']})"
                            + (f": {e['cancel_reason']}" if e['cancel_reason'] else '') + '.',

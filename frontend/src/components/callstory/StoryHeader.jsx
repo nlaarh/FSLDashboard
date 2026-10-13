@@ -15,7 +15,7 @@ function PtaBadge({ pta }) {
       {pta.rebased && (
         <span className="text-xs px-2 py-0.5 rounded border bg-amber-500/10 text-amber-300 border-amber-500/30"
           title={`Changed ${fmtTime(pta.rebased.ts)} by ${pta.rebased.actor}`}>
-          PTA re-based to {pta.final_min} min ({pta.met_final ? 'met' : 'missed'} against it)
+          PTA re-based to {pta.final_min} min {pta.met_final != null && `(${pta.met_final ? 'met' : 'missed'} against it)`}
         </span>
       )}
       <span className="text-xs text-slate-400">
