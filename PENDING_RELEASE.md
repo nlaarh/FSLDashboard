@@ -13,6 +13,6 @@ Branch: `fix/replay-fixes` (based on main `b79a10d`).
 | 3 | Replay opens at 10x instead of 60x. Speed buttons 1x / 10x / 60x / 300x unchanged. | e81e275 | Browser QA run 3: PASS. |
 | 4 | Replay message lines are back: each message draws a line from the channel to the driver or member; earlier ones stay faded. | 687deb2 | Browser QA run 3: PASS (videos in SFReplica/qa/screens_run3). |
 | 5 | Customer bubbles show the call type (tow, battery, tire, lockout, winch, fuel) in Garage Live, Replay and the Watchlist. | e9bb851 | Browser QA run 3: PASS. |
-| 6 | Promise verdict shown in words: "Promise met", "Promise missed — N min late", "Promise missed — no driver had arrived", "Promise due". On-time is no longer red; header chip turns green "Promise met" when the driver arrived in time. | 69f6e91, 83f9a3f | Browser QA run 4: wording, colours and green chip PASS; corner toast triangle fixed in 83f9a3f (47 frontend tests pass), browser recheck pending. |
+| 6 | Promise verdict shown in words: "Promise met", "Promise missed — N min late", "Promise missed — no driver had arrived", "Promise due". On-time is no longer red; header chip turns green "Promise met" when the driver arrived in time. | 69f6e91, 83f9a3f | Browser QA run 4: wording, colours and green chip PASS; corner toast fixed in 83f9a3f; browser QA run 5: PASS. |
 
 Tracked elsewhere (not app code): service resource blanked by a Salesforce background job (WO 05209814) — needs the Salesforce admin.
