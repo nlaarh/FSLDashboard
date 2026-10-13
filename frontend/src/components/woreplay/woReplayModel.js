@@ -30,6 +30,18 @@ export const NODE_INFO = {
 export const DRAWER_W = 320
 export const isSlot = id => NODE_ORDER.includes(id)
 /** x of a channel's sphere for a stage of width w (the clock sits on the left). */
+/** The hops between two channel spheres that steps 0..i-1 already made, once each: [{ key, kind, from, to }]. They stay drawn, faded. */
+export function takenHops(steps, i) {
+  const seen = new Set(), out = []
+  for (const sp of steps.slice(0, Math.max(0, i))) {
+    const seq = [sp.from, sp.via, sp.to].filter(Boolean)
+    for (let k = 1; k < seq.length; k++) {
+      const key = `${seq[k - 1]}>${seq[k]}`
+      if (isSlot(seq[k - 1]) && isSlot(seq[k]) && seq[k - 1] !== seq[k] && !seen.has(key)) { seen.add(key); out.push({ key, kind: KINDS[sp.kind] || KINDS.system, from: seq[k - 1], to: seq[k] }) }
+    }
+  }
+  return out
+}
 export const slotX = (id, w, left = 232) => left + ((w - 16 - left) * (NODE_ORDER.indexOf(id) + 0.5)) / NODE_ORDER.length
 
 /** Step times as epoch seconds, in step order (the steps arrive sorted). */

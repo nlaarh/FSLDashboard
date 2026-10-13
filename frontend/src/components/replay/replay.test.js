@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes, DEFAULT_SPEED, SPEEDS, flowSeconds } from './engineMath.js'
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
 import { truckKindFor } from './truckKind.js'
-import { waitState, fmtWait, driverPhase, toastFor, towbookTrack } from '../woreplay/woReplayModel.js'
+import { waitState, fmtWait, driverPhase, toastFor, towbookTrack, takenHops } from '../woreplay/woReplayModel.js'
 
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} is not near ${b}`)
 
@@ -161,4 +161,11 @@ test('the default speed is a real speed button, and a step line stays visible at
   assert.ok(SPEEDS.includes(DEFAULT_SPEED))
   assert.ok(flowSeconds(DEFAULT_SPEED) >= 1.5)
   assert.ok(flowSeconds(1) <= 2 && flowSeconds(300) >= 0.8)
+})
+
+test('takenHops: earlier channel-to-channel hops, once each, never the current step', () => {
+  const steps = [{ from: 'src_ivr', to: 'sf', kind: 'system' }, { from: 'sf', via: 'dispatcher', to: 'driver', kind: 'human' }, { from: 'src_ivr', to: 'sf', kind: 'system' }, { from: 'sf', to: 'fsl', kind: 'system' }]
+  assert.deepEqual(takenHops(steps, 0), [])
+  assert.deepEqual(takenHops(steps, 3).map(h => h.key), ['src_ivr>sf', 'sf>dispatcher'])   // dispatcher>driver ends on the map, not the bar; the repeat is dropped
+  assert.equal(takenHops(steps, 4).at(-1).key, 'sf>fsl')
 })

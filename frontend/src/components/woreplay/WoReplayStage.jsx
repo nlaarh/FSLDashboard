@@ -10,14 +10,14 @@ import { indexAt, DEFAULT_SPEED, flowSeconds } from '../replay/engineMath'
 import { shortDriverName } from '../../utils/driverName'
 import { truckKindFor, markColour } from '../replay/gameIcons'
 import { createStageLayers, PEER_WINDOW_S } from './stageLayers'
-import { FlowPulse, pulsePath, pickDock } from './flowPulse'
+import { FlowPulse, pulsePath, pickDock, arcPts } from './flowPulse'
 import DriverQueue from './DriverQueue'
 import { queueFromLoad, queueFromPeer } from './peerNotes'
 import StageHud from './StageHud'
 import FlowDrawer from './FlowDrawer'
 import EventToasts, { KIND_ICON } from './EventToasts'
 import { StepCard, StepCaption } from './StepCard'
-import { KINDS, HUD, isSlot, slotX, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
+import { KINDS, HUD, isSlot, slotX, takenHops, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
 
 const MARK_ICON = { call: PhoneCall, call_other: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
 const PAD = { tl: L.point(110, 118), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
@@ -151,11 +151,11 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     const pt = id => (isSlot(id) ? { x: slotX(id, size.w), y: HUD.y }
       : id === 'member' ? (loc?.wo ? toPx(loc.wo) : null) : id === 'garage' ? (loc?.garage ? toPx(loc.garage) : null)
       : id === 'driver' ? (tp ? toPx(tp) : loc?.garage ? toPx(loc.garage) : null) : null)
-    const path = pulsePath(s, pt), kind = KINDS[s.kind] || KINDS.system
+    const build = () => pulsePath(s, pt), path = build(), kind = KINDS[s.kind] || KINDS.system
     const cardW = s.why || s.explain ? 310 : 270, cardH = Math.min(420, 150 + (s.why ? 120 : 0) + (s.explain ? 190 : 0))
     const dock = pickDock(size.w, size.h, cardW, cardH, [pt('member'), pt('garage'), pt('driver'), path?.[path.length - 1]].filter(Boolean), dockId.current)
     dockId.current = dock.id
-    setFx({ key: idx, path, colour: kind.colour, dash: kind.dash, dock, cardW })
+    setFx({ key: idx, path, build, dur: flowSeconds(engine.ref.current.speed), colour: kind.colour, dock, cardW })
     if (!loc?.wo || modeRef.current === 'free') return
     const pts = [[loc.wo.lat, loc.wo.lon]]
     for (const k of modeRef.current === 'all' ? trucks : trk ? [trk] : []) { const q = k.path.at(t); if (q) pts.push([q.lat, q.lon]) }
@@ -169,6 +169,11 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
       map.flyTo(map.unproject(map.project(b.getCenter(), z).subtract(off), z), z, { duration: 0.9 })
     }
   }, [idx, map]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const taken = useMemo(() => {   // the hops earlier steps made along the bar stay drawn, faded, so the route so far is always visible
+    const at = id => ({ x: slotX(id, size.w), y: HUD.y })
+    return idx < 0 ? [] : takenHops(steps, idx).map(h => ({ key: h.key, kind: h.kind, pts: arcPts(at(h.from), at(h.to)) }))
+  }, [steps, idx, size.w])
 
   const heldBy = useRef(false)
   const stepTo = k => { const n = Math.min(steps.length - 1, Math.max(0, k)); engine.seek(times[n] + 0.01) }
@@ -210,7 +215,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
       <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={big ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 230px), 820px)' }}>
         <div className="relative flex-1 min-w-0" style={{ background: '#0b1220' }}>
           <div ref={ref} style={{ position: 'absolute', inset: 0 }} />
-          <FlowPulse fx={fx} />
+          <FlowPulse fx={fx && { ...fx, taken }} map={map} />
           {!big && <ExpandButton expand={expand} className="absolute right-3 top-[74px] z-[1060]" />}
           <StageHud engine={engine} hud={hud} stageW={size.w} t0={t0} pastPromise={pastPromise} pulse={idx} />
           <div style={{ position: 'absolute', left: 64, top: HUD.h + 22, zIndex: 1060, display: 'flex', gap: 8 }}>
