@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, AlertTriangle, ExternalLink, Lightbulb, RotateCcw, 
 import useReplayEngine, { useEngineState } from '../replay/useReplayEngine'
 import ReplayPlayer from '../replay/ReplayPlayer'
 import { onSceneTs } from '../woreplay/woReplayModel'
+import { DEFAULT_SPEED } from '../replay/engineMath'
 import ReplayPanel from '../woreplay/ReplayPanel'
 import GarageLiveMap from '../garagelive/GarageLiveMap'
 import { DRIVER_STATUS } from '../garagelive/garageLiveModel'
@@ -47,7 +48,7 @@ export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Wa
   const start = Math.min(created, events[0]?.t ?? created)
   const end = Math.max(nowS, start + 60)
   const times = useMemo(() => events.map(e => e.t), [events])
-  const engine = useReplayEngine({ start, end, events: times, initial: end, speed: 60 })
+  const engine = useReplayEngine({ start, end, events: times, initial: end, speed: DEFAULT_SPEED })
   const { t } = useEngineState(engine, 2)
   const wasLive = useRef(true)
   const prevEnd = useRef(end)

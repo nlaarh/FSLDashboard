@@ -1,7 +1,7 @@
 // Pure-maths tests for the replay engine, the road path and the work order model. Run: cd frontend && npm test (node's built-in runner).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes } from './engineMath.js'
+import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes, DEFAULT_SPEED, SPEEDS, flowSeconds } from './engineMath.js'
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
 import { truckKindFor } from './truckKind.js'
 import { waitState, fmtWait, driverPhase, toastFor, towbookTrack } from '../woreplay/woReplayModel.js'
@@ -154,4 +154,11 @@ test('scrubber marks that overlap go on higher lanes; far-apart marks stay on th
   assert.deepEqual(assignLanes([500, 100, 101], 0, 1000, 1000), [0, 0, 1])          // input order is kept
   assert.deepEqual(assignLanes([100, 101, 125], 0, 1000, 1000), [0, 1, 0])          // the third clears the first, so it drops back
   assert.deepEqual(assignLanes([], 0, 1000, 1000), [])
+})
+
+test('the default speed is a real speed button, and a step line stays visible at it', () => {
+  assert.equal(DEFAULT_SPEED, 10)
+  assert.ok(SPEEDS.includes(DEFAULT_SPEED))
+  assert.ok(flowSeconds(DEFAULT_SPEED) >= 1.5)
+  assert.ok(flowSeconds(1) <= 2 && flowSeconds(300) >= 0.8)
 })

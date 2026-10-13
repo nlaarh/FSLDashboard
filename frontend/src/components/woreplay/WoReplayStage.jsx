@@ -6,7 +6,7 @@ import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion }
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import { ExpandButton } from '../replay/ExpandControls'
 import { buildPath } from '../replay/roadPath'
-import { indexAt } from '../replay/engineMath'
+import { indexAt, DEFAULT_SPEED, flowSeconds } from '../replay/engineMath'
 import { shortDriverName } from '../../utils/driverName'
 import { truckKindFor, markColour } from '../replay/gameIcons'
 import { createStageLayers, PEER_WINDOW_S } from './stageLayers'
@@ -67,7 +67,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const eventTimes = useMemo(() => [...times, ...marks.map(m => m.ts)].sort((a, b) => a - b), [times, marks])
   const [hold, setHold] = useState(false)
   const stops = useMemo(() => (hold ? steps.map((s, k) => (s.flag ? times[k] : null)).filter(x => x != null) : []), [hold, steps, times])
-  const engine = useReplayEngine({ start: t0 - 60, end, events: eventTimes, initial: t0 - 60, speed: 60, busy, stops })
+  const engine = useReplayEngine({ start: t0 - 60, end, events: eventTimes, initial: t0 - 60, speed: DEFAULT_SPEED, busy, stops })
   const { t: tNow } = useEngineState(engine, 4)
   const idx = useEngineIndex(engine, times)
   const hud = useMemo(() => hudState(steps, idx, idx >= 0), [steps, idx])

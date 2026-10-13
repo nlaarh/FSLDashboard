@@ -2,6 +2,11 @@
 
 /** Replay speeds: real seconds that pass per wall second. */
 export const SPEEDS = [1, 10, 60, 300]
+/** The speed a replay opens at: slow enough to follow what each message does. */
+export const DEFAULT_SPEED = 10
+
+/** Wall seconds a step's message line takes to draw: a calm ~2 s up to 10x, shorter (never under 0.8 s) when running faster. */
+export const flowSeconds = speed => Math.max(0.8, Math.min(2, 18 / Math.max(1, speed)))
 /** When the next event is further away than this and nothing is moving, the quiet stretch is skipped faster. */
 export const QUIET_GAP_S = 600
 export const QUIET_BOOST = 5
