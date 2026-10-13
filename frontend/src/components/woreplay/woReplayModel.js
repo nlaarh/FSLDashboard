@@ -91,7 +91,8 @@ export function toastFor(steps, i) {
     text = `${who || 'Driver'} on scene: ${Math.round((at - Date.parse(steps[0].ts) / 1000) / 60)} min after the call${late}`
   } else if (/accepted/i.test(s.title) && who) text = `${who} accepted`
   else if (s.actor && !s.title.includes(s.actor)) text = `${s.title} (${s.actor})`
-  return { text, level: s.flag?.level || (s.kind === 'mark' ? 'warn' : 'info'), kind: s.kind, clock: s.clock }
+  const goodMark = /^Promise (met|due)\b/.test(s.title)   // a kept or upcoming promise is not a warning
+  return { text, level: s.flag?.level || (s.kind === 'mark' && !goodMark ? 'warn' : 'info'), kind: s.kind, clock: s.clock }
 }
 
 /** At step i: which channels the call has touched so far, which are active now, and what to print under each. */

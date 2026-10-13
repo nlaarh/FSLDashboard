@@ -184,3 +184,11 @@ test('workTypeGlyph matches work types case-insensitively and falls back', () =>
   assert.equal(workTypeGlyph(''), null)
   assert.ok(workTypeGlyph('Tire').svg.startsWith('<svg'))
 })
+
+test('promise toast: a kept or upcoming promise is not a warning, a missed one is', () => {
+  const at = (title, flag) => [{ ts: '2026-10-13T19:00:00Z', kind: 'mark', title, flag }]
+  assert.equal(toastFor(at('Promise met — driver arrived in time'), 0).level, 'info')
+  assert.equal(toastFor(at('Promise due'), 0).level, 'info')
+  assert.equal(toastFor(at('Promise missed — no driver had arrived', { level: 'bad' }), 0).level, 'bad')
+  assert.equal(toastFor(at('Promise changed: 60 to 90 min'), 0).level, 'warn')
+})
