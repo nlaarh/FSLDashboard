@@ -10,8 +10,8 @@ Evaluates active SAs against 7 categories:
 7. Potential Duplicate — same member with 2+ active SAs at similar location
 8. No Service Appointments on Work Order — WO is 'Submitted' but has no SA
    (WO-level: see find_no_sa_wos / build_no_sa_wo_alerts)
-9. No Service Resource — Scheduled Start was cleared (SAHistory) and is still blank
-10. Service Territory Needs Action — territory blank or starts with a letter (should start with a number)
+9. No Service Resource — Scheduled Start was cleared (SAHistory) and is still blank; not when Towbook accepted it
+10. Service Territory Needs Action — territory blank or starts with a letter (should start with a number), SA > 2 min old
 """
 
 import logging
@@ -55,6 +55,11 @@ _NO_SA_GRACE_SEC = 120
 
 SCHED_CLEARED_FLAG = 'No Service Resource'
 TERRITORY_FLAG = 'Service Territory Needs Action'
+
+# Owner rules (2026-10-13): the territory flag waits until the appointment is 2 minutes old (it is routed in that time);
+# "No Service Resource" skips a call Towbook accepted — the 'Integrations Towbook' account set Status to Accepted.
+_TERRITORY_GRACE_SEC = 120
+_TOWBOOK_USER = 'Integrations Towbook'
 
 # Sort order shared by build_operational_alerts and the WO-level flag.
 _FLAG_PRIORITY = {
@@ -126,6 +131,23 @@ def _territory_needs_action(sa: dict, wo_territory: str | None) -> bool:
     if wo_territory is not None:
         names.append(wo_territory)
     return any(not (n or '').strip() or (n or '').strip()[0].isalpha() for n in names)
+
+
+def _older_than(sa: dict, now_utc: datetime, secs: int) -> bool:
+    created = _parse_dt(sa.get('CreatedDate'))
+    if not created:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (now_utc - created).total_seconds() > secs
+
+
+def _towbook_accepted(sa: dict, hist_list: list) -> bool:
+    """Status is Accepted and the latest change to Accepted was made by the Towbook integration."""
+    if sa.get('Status') != 'Accepted':
+        return False
+    acc = [h for h in hist_list if h.get('Field') == 'Status' and h.get('NewValue') == 'Accepted']
+    return bool(acc) and (acc[-1].get('CreatedBy') or {}).get('Name') == _TOWBOOK_USER
 
 
 def _time_in_status_from_hist(hist_list: list, current_status: str, now_utc: datetime) -> int | None:
@@ -208,11 +230,13 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
             flags_hit.append('Call Not Assigned - Received')
 
         # ── Flag: No Service Resource (Scheduled Start cleared and still blank; age check done with the history read) ──
-        if not is_drop_off and sa_id in sched_cleared and not sa.get('SchedStartTime'):
+        if (not is_drop_off and sa_id in sched_cleared and not sa.get('SchedStartTime')
+                and not _towbook_accepted(sa, hist_by_sa.get(sa_id, []))):
             flags_hit.append(SCHED_CLEARED_FLAG)
 
-        # ── Flag: Service Territory Needs Action ──
-        if not is_drop_off and _territory_needs_action(sa, wo_territory_by_woli.get(sa.get('ParentRecordId'))):
+        # ── Flag: Service Territory Needs Action (only once the appointment is over 2 minutes old) ──
+        if (not is_drop_off and _older_than(sa, now_utc, _TERRITORY_GRACE_SEC)
+                and _territory_needs_action(sa, wo_territory_by_woli.get(sa.get('ParentRecordId')))):
             flags_hit.append(TERRITORY_FLAG)
 
         # ── Flag 5: Call Not Closed ──
