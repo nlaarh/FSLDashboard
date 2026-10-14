@@ -3,7 +3,7 @@
 Same gate as the Watchlist (any signed-in user) except contractors, who must never see other drivers. Member TEXT CONTENT only for roles with
 `scheduler.replay`; everyone else gets counts. Driver and garage phones are visible to all Watchlist users.
 Cost of an open: the call story (1 composite, shared with Replay through the same cache), the member's calls/texts (2 composites, same cache
-as Replay's extras), and ONE composite of 5 SELECTs (watchlist_call_map.pull). The whole answer is cached 60 s per call, one rebuild at a time.
+as Replay's extras), and ONE composite of 5 SELECTs (watchlist_call_map.pull). The whole answer is cached 50 s per call (one rebuild at a time), so the 60 s screen refresh always gets new positions.
 """
 
 import logging
@@ -29,7 +29,7 @@ from wo_replay_map import _towbook
 
 router = APIRouter()
 log = logging.getLogger('watchlist.callmap')
-TTL_S = 60
+TTL_S = 50          # under the screen's 60 s refresh, so every refresh gets a fresh driver position (60 s made every other one a repeat)
 _ID = re.compile(r'^08p[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$')
 
 

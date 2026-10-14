@@ -23,6 +23,7 @@ export function createStageLayers(map, opts) {
   const line = (o, cls) => L.polyline([], { interactive: false, lineCap: 'round', lineJoin: 'round', className: cls, ...o }).addTo(root)
   const glow = line({ weight: 11, opacity: 0.16, color: '#38bdf8' })
   const route = line({ weight: 4, opacity: 0.95, color: '#38bdf8', dashArray: '10 16' }, 'rp-march')
+  const link = line({ weight: 4, opacity: 0.9, color: '#ec4899', dashArray: '8 9' })   // driver to member: who is coming for whom
   const trail = [0.9, 0.5, 0.22].map(o => line({ weight: 5, opacity: o, color: '#38bdf8' }))
 
   let garagePt = null   // the garage tag's spot in layer pixels, so a truck's name never lands on top of it
@@ -32,7 +33,7 @@ export function createStageLayers(map, opts) {
 
   let member = null, waitEl = null, memberEl = null, memberState = '', waitText = ''
   if (loc?.wo) {
-    member = L.marker([loc.wo.lat, loc.wo.lon], { ...own, zIndexOffset: 500, icon: icon(memberHtml({ number: header?.sa, vehicle: header?.vehicle }), 56, 56) }).addTo(root)
+    member = L.marker([loc.wo.lat, loc.wo.lon], { ...own, zIndexOffset: 500, icon: icon(memberHtml({ number: header?.sa, vehicle: header?.vehicle, workType: header?.service }), 56, 56) }).addTo(root)
     memberEl = member.getElement()?.firstElementChild
     waitEl = memberEl?.querySelector('.wait')
   }
@@ -114,10 +115,11 @@ export function createStageLayers(map, opts) {
         const ahead = actingItem.tr.path.ahead(t, 1500)
         if (loc?.wo && ahead.length && act.phase !== 'on_scene') ahead.push([loc.wo.lat, loc.wo.lon])
         glow.setLatLngs(ahead); route.setLatLngs(ahead)
+        link.setLatLngs(loc?.wo && act.phase !== 'done' ? [[actingPos.lat, actingPos.lon], [loc.wo.lat, loc.wo.lon]] : [])
         const p = actingItem.tr.path
         trail[0].setLatLngs(p.behind(t, 150)); trail[1].setLatLngs(p.behind(t - 150, 300)); trail[2].setLatLngs(p.behind(t - 450, 750))
         if (colour !== routeKey) { routeKey = colour; [glow, route, ...trail].forEach(l => l.setStyle({ color: colour })) }
-      } else { glow.setLatLngs([]); route.setLatLngs([]); trail.forEach(l => l.setLatLngs([])) }
+      } else { glow.setLatLngs([]); route.setLatLngs([]); link.setLatLngs([]); trail.forEach(l => l.setLatLngs([])) }
     }
 
     if (memberEl) {

@@ -18,8 +18,9 @@ const MSG = {
   503: 'Salesforce is busy. Try again in a moment.',
 }
 
-/** Fetches one call's replay and plays it. Shared by the Work Order tab and the Garage tab. */
-export default function ReplayPanel({ q }) {
+/** Fetches one call's replay and plays it. Shared by the Work Order tab, the Garage tab and the Watchlist call map (q = an SA id or number;
+ *  startAt = epoch s to open the replay at, instead of at the first step). */
+export default function ReplayPanel({ q, startAt = null }) {
   const [state, setState] = useState({ phase: 'idle' })
   const expand = useExpand()
   const [jump, setJump] = useState(null)             // asks the stage to show a step: { id, n }
@@ -63,7 +64,7 @@ export default function ReplayPanel({ q }) {
       <ExpandBar expand={expand} title={`Work order replay · ${q}`} className="lg:col-span-2" />
       <div className={expand.expanded ? 'min-h-0 min-w-0 h-[85vh] lg:h-auto' : 'min-w-0'}><Suspense fallback={<div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}>
         <WoReplayStage key={header.sa} steps={steps} header={header} locations={locations} jump={jump}
-          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} peers={moments} peerFocus={peerFocus} driverLoad={load} expand={expand} />
+          marks={extras ? marks : undefined} onMark={m => { setStageMark(m.id); setOpenMark(m.id) }} driverJobs={extras ? driverJobs : undefined} extrasLoading={extras === undefined} drawerTop={card} peers={moments} peerFocus={peerFocus} driverLoad={load} expand={expand} startAt={startAt} />
       </Suspense></div>
       <div className={expand.expanded ? 'min-h-0 lg:overflow-y-auto' : ''}><ReplayTabs q={q} takeaways={takeaways} decision={decision} peers={peers} extras={extras} marks={marks} openMark={openMark} onOpenMark={setOpenMark} onShow={seek} /></div>
     </div>

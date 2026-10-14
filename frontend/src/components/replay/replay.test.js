@@ -1,10 +1,11 @@
 // Pure-maths tests for the replay engine, the road path and the work order model. Run: cd frontend && npm test (node's built-in runner).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes } from './engineMath.js'
+import { indexAt, nextEvent, prevEvent, advance, effectiveRate, fmtSkip, assignLanes, DEFAULT_SPEED, SPEEDS, flowSeconds } from './engineMath.js'
 import { buildPath, buildLeg, mergeRuns } from './roadPath.js'
 import { truckKindFor } from './truckKind.js'
-import { waitState, fmtWait, driverPhase, toastFor, towbookTrack } from '../woreplay/woReplayModel.js'
+import { waitState, fmtWait, driverPhase, toastFor, towbookTrack, takenHops } from '../woreplay/woReplayModel.js'
+import { workTypeGlyph } from './workTypeGlyph.js'
 
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} is not near ${b}`)
 
@@ -154,4 +155,40 @@ test('scrubber marks that overlap go on higher lanes; far-apart marks stay on th
   assert.deepEqual(assignLanes([500, 100, 101], 0, 1000, 1000), [0, 0, 1])          // input order is kept
   assert.deepEqual(assignLanes([100, 101, 125], 0, 1000, 1000), [0, 1, 0])          // the third clears the first, so it drops back
   assert.deepEqual(assignLanes([], 0, 1000, 1000), [])
+})
+
+test('the default speed is a real speed button, and a step line stays visible at it', () => {
+  assert.equal(DEFAULT_SPEED, 10)
+  assert.ok(SPEEDS.includes(DEFAULT_SPEED))
+  assert.ok(flowSeconds(DEFAULT_SPEED) >= 1.5)
+  assert.ok(flowSeconds(1) <= 2 && flowSeconds(300) >= 0.8)
+})
+
+test('takenHops: earlier channel-to-channel hops, once each, never the current step', () => {
+  const steps = [{ from: 'src_ivr', to: 'sf', kind: 'system' }, { from: 'sf', via: 'dispatcher', to: 'driver', kind: 'human' }, { from: 'src_ivr', to: 'sf', kind: 'system' }, { from: 'sf', to: 'fsl', kind: 'system' }]
+  assert.deepEqual(takenHops(steps, 0), [])
+  assert.deepEqual(takenHops(steps, 3).map(h => h.key), ['src_ivr>sf', 'sf>dispatcher'])   // dispatcher>driver ends on the map, not the bar; the repeat is dropped
+  assert.equal(takenHops(steps, 4).at(-1).key, 'sf>fsl')
+})
+
+test('workTypeGlyph matches work types case-insensitively and falls back', () => {
+  assert.equal(workTypeGlyph('TOW PICK-UP').kind, 'Tow')
+  assert.equal(workTypeGlyph('Tow Drop-Off').kind, 'Tow')
+  assert.equal(workTypeGlyph('battery').kind, 'Battery')
+  assert.equal(workTypeGlyph('Tire').kind, 'Tire')
+  assert.equal(workTypeGlyph('LOCKOUT').kind, 'Lockout')
+  assert.equal(workTypeGlyph('Winch Out').kind, 'Winch')
+  assert.equal(workTypeGlyph('Fuel').kind, 'Fuel')
+  assert.equal(workTypeGlyph('Mystery').kind, 'Other')
+  assert.equal(workTypeGlyph('Mystery').label, 'Mystery')
+  assert.equal(workTypeGlyph(''), null)
+  assert.ok(workTypeGlyph('Tire').svg.startsWith('<svg'))
+})
+
+test('promise toast: a kept or upcoming promise is not a warning, a missed one is', () => {
+  const at = (title, flag) => [{ ts: '2026-10-13T19:00:00Z', kind: 'mark', title, flag }]
+  assert.equal(toastFor(at('Promise met — driver arrived in time'), 0).level, 'info')
+  assert.equal(toastFor(at('Promise due'), 0).level, 'info')
+  assert.equal(toastFor(at('Promise missed — no driver had arrived', { level: 'bad' }), 0).level, 'bad')
+  assert.equal(toastFor(at('Promise changed: 60 to 90 min'), 0).level, 'warn')
 })

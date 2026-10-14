@@ -192,8 +192,10 @@ def get_replay_map(request: Request, q: str):
 @router.get('/api/call-story/peers')
 def get_replay_peers(request: Request, q: str):
     """The other qualified, on-shift drivers of the garage when the call was given to the driver (wo_replay_peers.py).
-    Read from the day snapshot only: 0 Salesforce calls. Same gates as the map; loaded after the animation."""
-    from wo_replay_peers import pull_peers
+    Read from the day snapshot, or for a call still open from the live call map plus our own GPS record: 0 Salesforce calls.
+    Same gates as the map; loaded after the animation."""
+    from wo_replay_map import _member_sa
+    from wo_replay_peers import open_peers, pull_peers
     require_feature('scheduler.replay', request)
     story = get_story(request, q)
     if not isinstance(story, dict):
@@ -207,7 +209,10 @@ def get_replay_peers(request: Request, q: str):
     if not bundle:
         raise HTTPException(status_code=409, detail='Load the replay first')
     out = pull_peers(bundle, store.load_snapshot)
-    cache.put(key, out, ttl=MAP_CLOSED_TTL_S if bundle.get('closed') and out['available'] else 600)
+    if not out['available'] and not bundle.get('closed') and out.get('channel') != 'towbook':     # an open call has no built day: use the live call map's roster
+        sa = _member_sa(bundle['sas'])
+        out = open_peers(bundle, sa and cache.get_stale(f"call_map:{sa['Id']}")) or out
+    cache.put(key, out, ttl=MAP_CLOSED_TTL_S if bundle.get('closed') and out['available'] else 60 if not bundle.get('closed') else 600)
     return out
 
 

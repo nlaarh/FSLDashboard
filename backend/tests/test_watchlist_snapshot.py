@@ -297,6 +297,22 @@ def test_no_service_resource_flag_follows_cleared_set_and_current_value():
     assert flags == {'08pS1': 'No Service Resource'}        # 2 never had a value, 3 has one again, 4 is a drop-off
 
 
+def status_hist(new, who, minutes_ago):
+    return {'Field': 'Status', 'OldValue': 'Dispatched', 'NewValue': new, 'CreatedDate': iso(minutes_ago),
+            'CreatedBy': {'Name': who, 'Profile': {'Name': 'x'}}}
+
+
+def test_no_service_resource_skips_a_call_towbook_accepted():
+    rows = [row(1, sched=None, status='Accepted', hist=[status_hist('Accepted', 'Integrations Towbook', 5)]),   # Towbook: skip
+            row(2, sched=None, status='Accepted', hist=[status_hist('Accepted', 'Jon Wagner', 5)]),             # a person: flag
+            row(3, sched=None, status='Dispatched', hist=[status_hist('Accepted', 'Integrations Towbook', 9),
+                                                         status_hist('Dispatched', 'Jon Wagner', 5)]),         # no longer Accepted: flag
+            row(4, sched=None, status='Accepted', hist=[status_hist('Accepted', 'Integrations Towbook', 9),
+                                                       status_hist('Accepted', 'Jon Wagner', 5)])]             # last accepted by a person: flag
+    flags = flags_of(snapshot(rows, sched_cleared={'08pS1', '08pS2', '08pS3', '08pS4'}))
+    assert flags == {'08pS2': 'No Service Resource', '08pS3': 'No Service Resource', '08pS4': 'No Service Resource'}
+
+
 def test_no_service_resource_outranks_call_not_closed_and_sorts_after_received():
     rows = [row(1, sched=None, status='Received', cat='None'), row(2, sched=None)]
     out = wl.assemble(snapshot(rows, sched_cleared={'08pS2'}, kmi_map={}), None)['operational_alerts']
@@ -310,6 +326,11 @@ def test_territory_flag_on_the_appointment_territory(name, flagged):
     r = row(1, terr_name=name)
     r['ServiceTerritory'] = {'Name': name} if name is not None else None
     assert (flags_of(snapshot([r])).get('08pS1') == 'Service Territory Needs Action') is flagged
+
+
+def test_territory_flag_waits_until_the_appointment_is_two_minutes_old():
+    rows = [row(1, terr_name='WM016', created=1), row(2, terr_name='WM016', created=2), row(3, terr_name='WM016', created=3)]
+    assert flags_of(snapshot(rows)) == {'08pS3': 'Service Territory Needs Action'}   # 1 and 2 min old: still being routed
 
 
 def test_territory_flag_looks_at_the_work_order_territory_and_skips_drop_offs_and_closed():

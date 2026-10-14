@@ -1,6 +1,8 @@
 """wo_replay.py: call story -> animation steps. Synthetic story, no Salesforce."""
 
-from wo_replay import build_replay
+from datetime import datetime, timedelta, timezone
+
+from wo_replay import build_replay, promise_step
 
 
 def ev(i, ts, kind, cls, actor, **kw):
@@ -13,7 +15,7 @@ def story(**over):
         'resolution': {'wo': {'number': '0001'}, 'legs': [{'number': 'SA-1', 'selected': True}]},
         'header': {'work_type': 'Tow', 'source': 'IVR', 'final_garage': '076DO - Test Garage',
                    'channel_path': [{'garage': '076DO - Test Garage'}]},
-        'pta': {'initial_min': 60, 'due_initial': '2026-09-28T16:44:11.000Z', 'met_initial': False, 'margin_initial_min': -34.5},
+        'pta': {'initial_min': 60, 'due_initial': '2026-09-28T16:44:11.000Z', 'arrival': '2026-09-28T17:18:41.000Z', 'met_initial': False, 'margin_initial_min': -34.5, 'response_min': 95.0},
         'events': [
             ev(1, '2026-09-28T15:44:12.000Z', 'E01_sa_created', 'INTEGRATION', 'Replicant Integration User'),
             ev(2, '2026-09-28T15:44:23.000Z', 'E04_assigned', 'FSL_AUTO_SCHEDULE', 'Mulesoft Integration', driver='Ann Lee 100'),
@@ -92,7 +94,30 @@ def test_a_text_that_was_not_sent_is_a_flagged_problem_step():
 
 def test_promise_step_flagged_when_driver_was_late():
     p1 = by_id(build_replay(story()))['P1']
+    assert p1['title'] == 'Promise missed \u2014 driver arrived 34 min late' and p1['flag']['level'] == 'bad'
     assert p1['flag']['text'] == 'Arrived 34 min after the promise'  # round(34.5) is 34 (banker's rounding)
+
+
+def _promise(**pta):
+    return promise_step({'pta': {'initial_min': 60, **pta}})
+
+
+def test_promise_step_arrived_in_time():
+    p1 = _promise(due_initial='2026-09-28T16:44:11.000Z', arrival='2026-09-28T16:30:00.000Z', met_initial=True, margin_initial_min=14.2)
+    assert p1['title'] == 'Promise met \u2014 driver arrived in time'
+    assert p1['detail'] == 'Driver arrived in time' and p1['flag'] is None
+
+
+def test_promise_step_no_arrival_and_promise_passed_is_a_missed_promise():
+    p1 = _promise(due_initial='2026-10-01T20:49:00.000Z', arrival=None, met_initial=None, margin_initial_min=None)
+    assert p1['title'] == 'Promise missed \u2014 no driver had arrived'
+    assert p1['flag'] == {'text': 'No arrival by the promise time', 'level': 'bad'}
+
+
+def test_promise_step_no_arrival_and_promise_still_ahead_gives_no_verdict():
+    due = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    p1 = _promise(due_initial=due, arrival=None, met_initial=None, margin_initial_min=None)
+    assert p1['title'] == 'Promise due' and p1['detail'] == 'Not reached yet' and p1['flag'] is None
 
 
 def test_hidden_noise_events_are_not_drawn_and_problems_link_only_to_real_steps():

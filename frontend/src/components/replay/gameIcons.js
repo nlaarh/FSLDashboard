@@ -5,8 +5,9 @@
  */
 import { esc } from './useLeafletMap'
 import { truckKindFor } from './truckKind.js'
+import { workTypeGlyph } from './workTypeGlyph.js'
 
-export { truckKindFor }
+export { truckKindFor, workTypeGlyph }
 
 export const STATUS = {
   en_route: { label: 'En route', colour: '#38bdf8' },
@@ -41,9 +42,10 @@ export function garageHtml(name) {
 /** The member: a car in a ring that pulses, plus the call number, the waiting timer and the car when known. */
 const CAR_SVG = (w, h) => `<svg viewBox="0 0 40 24" width="${w}" height="${h}"><path d="M3 17l2-6q1-2 4-2.5L14 4.5q1-1.5 3-1.5h8q2 0 3 1.5l5 4.5q3 .5 4 2.5l1 5.5v1.5q0 1-1 1H4q-1 0-1-1z" fill="#f8fafc"/><path d="M15 5.5h10l4 4H11z" fill="#0f172a" opacity=".55"/><circle cx="11" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/><circle cx="29" cy="19" r="3.4" fill="#0f172a" stroke="#f8fafc" stroke-width="1.6"/></svg>`
 
-export function memberHtml({ number, vehicle }) {
-  return `<div class="rp-member ok"><div class="rp-mring"></div><div class="rp-mring r2"></div>
-    <div class="rp-mdisc">${CAR_SVG(30, 18)}</div>
+export function memberHtml({ number, vehicle, workType }) {
+  const g = workTypeGlyph(workType)
+  return `<div class="rp-member ok"${g ? ` title="${esc(g.label)}"` : ''}><div class="rp-mring"></div><div class="rp-mring r2"></div>
+    <div class="rp-mdisc">${g ? g.svg : CAR_SVG(30, 18)}</div>
     <div class="rp-mtag"><b>${esc(number || 'Member')}</b><span class="wait">0:00</span>${vehicle ? `<i>${esc(vehicle)}</i>` : ''}</div></div>`
 }
 

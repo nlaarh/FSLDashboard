@@ -15,7 +15,7 @@ Member location is rounded to 4 decimals (about 11 m). Never returns a phone num
 
 import re
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import gps_store
 from feature_flags import is_on
@@ -86,9 +86,10 @@ def _paired_ids(raw: dict) -> dict:
     return out
 
 
-def _windows(raw: dict, names: list, sa: dict | None) -> dict:
+def _windows(raw: dict, names: list, sa: dict | None, now: datetime | None = None) -> dict:
     """{driver name: (start, end)}: from 30 min before their first assignment to their last un-assignment, or to the
-    member leg's On Location (else the last history row), plus 5 min. A driver known only from AssignedResource gets the whole call."""
+    member leg's On Location (else the last history row), plus 5 min. A driver known only from AssignedResource gets the whole call.
+    On a call still open, the driver who still holds it is followed up to now (the history stops at the last status change)."""
     hist = raw.get('history') or []
     times = [parse_dt(h['CreatedDate']) for h in hist] or ([parse_dt(sa['CreatedDate'])] if sa else [])
     on_loc = next((parse_dt(h['CreatedDate']) for h in hist if h.get('Field') == 'Status' and h.get('ServiceAppointmentId') == (sa or {}).get('Id')
@@ -102,9 +103,20 @@ def _windows(raw: dict, names: list, sa: dict | None) -> dict:
         if not given:
             out[n] = (min(times) - before, max(times) + after)
             continue
-        end = max(taken) if taken and max(taken) > max(given) else max(max(given), on_loc or max(times))
+        if taken and max(taken) > max(given):
+            end = max(taken)
+        else:
+            end = max(max(given), on_loc or max(times))
+            if raw.get('closed') is False:
+                end = max(end, now or datetime.now(timezone.utc))
         out[n] = (min(given) - before, end + after)
     return out
+
+
+def _hold_last(track: list, end_ts: int) -> list:
+    """A call still open: with no newer ping the driver is parked where the last one put it, so the truck stays on the map (greyed, by
+    its age) up to `end_ts` instead of vanishing after its last ping."""
+    return track + [[end_ts, track[-1][1], track[-1][2]]] if track and end_ts > track[-1][0] else track
 
 
 def _snapshot_tracks(raw: dict, sa: dict | None, who: dict, wins: dict, snapshot_for) -> dict:
@@ -187,6 +199,8 @@ def pull_map(raw: dict, puller: Puller | None = None, snapshot_for=None) -> dict
     drivers = []
     for name in who:
         track = tracks.get(name) or []
+        if raw.get('closed') is False:
+            track = _hold_last(track, int(min(wins[name][1].timestamp(), time.time())))
         drivers.append({'name': _short(name), 'track': track, 'pings': pings.get(name, len(track)),
                         'source': 'snapshot' if name not in todo else ('store' if who[name] in stored else 'salesforce')})
         if not track:

@@ -6,18 +6,18 @@ import useReplayEngine, { useEngineIndex, useEngineState, prefersReducedMotion }
 import ReplayPlayer, { SkipChip } from '../replay/ReplayPlayer'
 import { ExpandButton } from '../replay/ExpandControls'
 import { buildPath } from '../replay/roadPath'
-import { indexAt } from '../replay/engineMath'
+import { indexAt, DEFAULT_SPEED, flowSeconds } from '../replay/engineMath'
 import { shortDriverName } from '../../utils/driverName'
 import { truckKindFor, markColour } from '../replay/gameIcons'
-import { createStageLayers } from './stageLayers'
-import { FlowPulse, pulsePath, pickDock } from './flowPulse'
+import { createStageLayers, PEER_WINDOW_S } from './stageLayers'
+import { FlowPulse, pulsePath, pickDock, arcPts } from './flowPulse'
 import DriverQueue from './DriverQueue'
 import { queueFromLoad, queueFromPeer } from './peerNotes'
 import StageHud from './StageHud'
 import FlowDrawer from './FlowDrawer'
 import EventToasts, { KIND_ICON } from './EventToasts'
 import { StepCard, StepCaption } from './StepCard'
-import { KINDS, HUD, isSlot, slotX, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
+import { KINDS, HUD, isSlot, slotX, takenHops, stepTimes, hudState, driverPhase, onSceneTs, promiseTs, miles, towbookTrack } from './woReplayModel'
 
 const MARK_ICON = { call: PhoneCall, call_other: PhoneCall, callback: PhoneIncoming, text_out: MessageSquareText, text_in: MessageCircleReply }
 const PAD = { tl: L.point(110, 118), br: L.point(110, 112) }   // the visible map sits between the command bar and the caption
@@ -32,9 +32,10 @@ const store = (k, v) => { try { if (v === undefined) return localStorage.getItem
  * trucks fade in when the GPS arrives (locations: undefined = still loading, null = unavailable), contact marks when B's extras arrive.
  * peers (peerNotes.peerMoments) are the other qualified drivers at the moment the call was given / accepted; peerFocus is the name to highlight.
  * expand (useExpand) makes the stage fill the window next to the details; the map and slider then take all the room it is given.
- * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node).
+ * Optional props: marks [{ id, ts, type, title }], onMark(mark), driverJobs [{ id, lat, lon, ahead }], extrasLoading, drawerTop (node),
+ * startAt (epoch s: open there instead of at the first step, then play: the Watchlist call map's "replay from this moment").
  */
-export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null, expand }) {
+export default function WoReplayStage({ steps, header, locations, jump, marks: rawMarks, onMark, driverJobs, extrasLoading, drawerTop, peers = NO_PEERS, peerFocus = null, driverLoad = null, expand, startAt = null }) {
   const where = header?.where
   const loc = useMemo(() => locations || (where ? { wo: where.member, garage: where.garage, drivers: [], notes: [] } : null), [locations, where])
   const times = useMemo(() => stepTimes(steps), [steps])
@@ -60,12 +61,13 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     return out
   }, [loc, steps, header])
 
-  const end = Math.max(times[times.length - 1] ?? t0, t0) + 180
+  const trackEnd = useMemo(() => Math.max(0, ...trucks.map(k => k.path.verts.at(-1)?.[0] ?? 0)), [trucks])   // a call still open: the GPS runs past its last step
+  const end = Math.max(Math.max(times[times.length - 1] ?? t0, t0) + 180, trackEnd)
   const busy = useMemo(() => t => trucks.some(k => { const p = k.path.at(t); return p && p.heading != null && !p.stale }), [trucks])
   const eventTimes = useMemo(() => [...times, ...marks.map(m => m.ts)].sort((a, b) => a - b), [times, marks])
   const [hold, setHold] = useState(false)
   const stops = useMemo(() => (hold ? steps.map((s, k) => (s.flag ? times[k] : null)).filter(x => x != null) : []), [hold, steps, times])
-  const engine = useReplayEngine({ start: t0 - 60, end, events: eventTimes, initial: t0 - 60, speed: 60, busy, stops })
+  const engine = useReplayEngine({ start: t0 - 60, end, events: eventTimes, initial: t0 - 60, speed: DEFAULT_SPEED, busy, stops })
   const { t: tNow } = useEngineState(engine, 4)
   const idx = useEngineIndex(engine, times)
   const hud = useMemo(() => hudState(steps, idx, idx >= 0), [steps, idx])
@@ -149,14 +151,15 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     const pt = id => (isSlot(id) ? { x: slotX(id, size.w), y: HUD.y }
       : id === 'member' ? (loc?.wo ? toPx(loc.wo) : null) : id === 'garage' ? (loc?.garage ? toPx(loc.garage) : null)
       : id === 'driver' ? (tp ? toPx(tp) : loc?.garage ? toPx(loc.garage) : null) : null)
-    const path = pulsePath(s, pt), kind = KINDS[s.kind] || KINDS.system
+    const build = () => pulsePath(s, pt), path = build(), kind = KINDS[s.kind] || KINDS.system
     const cardW = s.why || s.explain ? 310 : 270, cardH = Math.min(420, 150 + (s.why ? 120 : 0) + (s.explain ? 190 : 0))
     const dock = pickDock(size.w, size.h, cardW, cardH, [pt('member'), pt('garage'), pt('driver'), path?.[path.length - 1]].filter(Boolean), dockId.current)
     dockId.current = dock.id
-    setFx({ key: idx, path, colour: kind.colour, dash: kind.dash, dock, cardW })
+    setFx({ key: idx, path, build, dur: flowSeconds(engine.ref.current.speed), colour: kind.colour, dock, cardW })
     if (!loc?.wo || modeRef.current === 'free') return
     const pts = [[loc.wo.lat, loc.wo.lon]]
     for (const k of modeRef.current === 'all' ? trucks : trk ? [trk] : []) { const q = k.path.at(t); if (q) pts.push([q.lat, q.lon]) }
+    if (modeRef.current === 'all') for (const m of peers) if (t >= m.at && t < m.at + PEER_WINDOW_S) m.drivers.forEach(p => pts.push([p.lat, p.lon]))   // "Show all" includes the other qualified drivers on the map now
     if (loc.garage && (pts.length === 1 || modeRef.current === 'all' || pts.some(q => miles({ lat: q[0], lon: q[1] }, loc.garage) < 4)) && miles(loc.garage, loc.wo) < 60) pts.push([loc.garage.lat, loc.garage.lon])
     const b = L.latLngBounds(pts), tight = pts.length < 2 || b.getNorthEast().distanceTo(b.getSouthWest()) < 40
     const z = tight ? 16 : Math.min(map.getBoundsZoom(b, false, PAD.tl.add(PAD.br)), 17)
@@ -166,6 +169,11 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
       map.flyTo(map.unproject(map.project(b.getCenter(), z).subtract(off), z), z, { duration: 0.9 })
     }
   }, [idx, map]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const taken = useMemo(() => {   // the hops earlier steps made along the bar stay drawn, faded, so the route so far is always visible
+    const at = id => ({ x: slotX(id, size.w), y: HUD.y })
+    return idx < 0 ? [] : takenHops(steps, idx).map(h => ({ key: h.key, kind: h.kind, pts: arcPts(at(h.from), at(h.to)) }))
+  }, [steps, idx, size.w])
 
   const heldBy = useRef(false)
   const stepTo = k => { const n = Math.min(steps.length - 1, Math.max(0, k)); engine.seek(times[n] + 0.01) }
@@ -177,6 +185,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
     if (p && map && loc?.wo) { setMode('free'); map.fitBounds(L.latLngBounds([[loc.wo.lat, loc.wo.lon], [p.lat, p.lon]]), { paddingTopLeft: PAD.tl, paddingBottomRight: PAD.br, maxZoom: 15 }) }
   }, [jump?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {   // it starts by itself as soon as the story is in: nobody should have to find Play
+    if (startAt != null) engine.seek(startAt)
     if (prefersReducedMotion()) return undefined
     const start = engine.ref.current.t
     const h = setTimeout(() => { if (engine.ref.current.t === start) engine.play() }, 400)   // not if the user already moved the playhead
@@ -192,7 +201,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
   const toggleTheme = () => setLight(v => { store('woReplayLight', v ? '0' : '1'); return !v })
   const btn = on => `${big ? 'px-3 py-2.5 text-sm' : 'px-2 py-1.5 text-[11px]'} rounded-lg font-medium flex items-center gap-1 ${on ? 'bg-brand-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`
 
-  const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise
+  const act = actor(tNow), pastPromise = wait.promise != null && tNow >= wait.promise && !(wait.onScene != null && wait.onScene <= wait.promise) ? 'missed' : wait.promise != null && tNow >= wait.promise ? 'met' : null
   const posTruck = trucks.find(k => k.est || k.name === act.name), pos = posTruck?.path.at(tNow), estNow = !!posTruck?.est
   const readout = !loc ? (locations === undefined ? 'Loading where the member and trucks were…' : 'Locations are not available for this call.')
     : !act.name && !pos ? (loc.towbook ? 'Towbook garage: Salesforce does not track where its driver is.' : 'No driver assigned at this moment.')
@@ -206,7 +215,7 @@ export default function WoReplayStage({ steps, header, locations, jump, marks: r
       <div className="flex rounded-2xl overflow-hidden border border-slate-700/60" style={big ? { flex: 1, minHeight: 0 } : { height: 'clamp(540px, calc(100vh - 230px), 820px)' }}>
         <div className="relative flex-1 min-w-0" style={{ background: '#0b1220' }}>
           <div ref={ref} style={{ position: 'absolute', inset: 0 }} />
-          <FlowPulse fx={fx} />
+          <FlowPulse fx={fx && { ...fx, taken }} map={map} />
           {!big && <ExpandButton expand={expand} className="absolute right-3 top-[74px] z-[1060]" />}
           <StageHud engine={engine} hud={hud} stageW={size.w} t0={t0} pastPromise={pastPromise} pulse={idx} />
           <div style={{ position: 'absolute', left: 64, top: HUD.h + 22, zIndex: 1060, display: 'flex', gap: 8 }}>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { SPEEDS, advance, indexAt, nextEvent, prevEvent } from './engineMath'
+import { SPEEDS, DEFAULT_SPEED, advance, indexAt, nextEvent, prevEvent } from './engineMath'
 
 export { SPEEDS }
 
@@ -56,7 +56,7 @@ function createEngine(cfg, initial, speed) {
  *   events  sorted epoch seconds that Prev / Next jump between; busy(t) is true while something is moving (no quiet skipping then);
  *   stops   sorted times where playing pauses by itself ("Pause at problems"); keys = Space, arrows, 1-4 (default on).
  */
-export default function useReplayEngine({ start, end, events = [], initial, speed = 60, busy, stops = [], keys = true }) {
+export default function useReplayEngine({ start, end, events = [], initial, speed = DEFAULT_SPEED, busy, stops = [], keys = true }) {
   const cfg = useRef({ start, end, events, busy, stops })
   cfg.current = { start, end, events, busy, stops }
   const engine = useMemo(() => createEngine(cfg, Math.min(end, Math.max(start, initial ?? start)), speed), []) // eslint-disable-line react-hooks/exhaustive-deps

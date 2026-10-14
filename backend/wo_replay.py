@@ -9,9 +9,10 @@ Never carries phone numbers or street addresses (the story already withholds the
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from utils import parse_dt
 from wo_explain import explain
 from wo_replay_why import attach_why
 from wo_takeaways import takeaways
@@ -174,10 +175,17 @@ def promise_step(story: dict):
     p = story.get('pta') or {}
     if not p.get('due_initial'):
         return None
-    late = p.get('met_initial') is False
-    return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise time reached',
-                 detail='Driver had not arrived yet' if late else 'Driver arrived in time',
-                 flag={'text': f'Arrived {abs(round(p["margin_initial_min"]))} min after the promise', 'level': 'bad'} if late and p.get('margin_initial_min') is not None else None)
+    arrival, due = parse_dt(p.get('arrival')), parse_dt(p['due_initial'])
+    if arrival:
+        if arrival <= due:
+            return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise met \u2014 driver arrived in time', detail='Driver arrived in time')
+        mins = round((arrival - due).total_seconds() / 60)
+        return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', f'Promise missed \u2014 driver arrived {mins} min late',
+                     detail='Driver had not arrived yet', flag={'text': f'Arrived {mins} min after the promise', 'level': 'bad'})
+    if due > datetime.now(timezone.utc):   # no arrival yet and the promise is still ahead: nothing to judge
+        return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise due', detail='Not reached yet')
+    return _step('P1', p['due_initial'], 'mark', 'sf', 'sf', 'Promise missed \u2014 no driver had arrived',
+                 detail='No driver had arrived', flag={'text': 'No arrival by the promise time', 'level': 'bad'})
 
 
 def sms_steps(story: dict) -> list:
@@ -254,7 +262,7 @@ def attach_explain(steps: list, story: dict):
             st['explain'] = explain('TEXT_FAILED', reasons=[(st['detail'], 'skipped')])
         elif t.startswith('A text that should have gone out'):
             st['explain'] = explain('TEXT_STILL_WORKING')
-        elif st.get('flag') and (t.startswith('Promise time reached') or t.startswith('Call in jeopardy')):
+        elif st.get('flag') and (t.startswith('Promise missed') or t.startswith('Call in jeopardy')):
             st['explain'] = explain('LATE')
     if len(pre) >= 3:
         pre[2]['explain'] = pre[2].get('explain') or explain('CHURN')
