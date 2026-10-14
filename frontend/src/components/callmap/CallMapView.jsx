@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, Loader2, AlertTriangle, ExternalLink, Lightbulb, RotateCcw, Radio } from 'lucide-react'
+import { ArrowLeft, Loader2, AlertTriangle, ExternalLink, Lightbulb, RotateCcw, Radio, Maximize2, Minimize2 } from 'lucide-react'
 import useReplayEngine, { useEngineState } from '../replay/useReplayEngine'
 import ReplayPlayer from '../replay/ReplayPlayer'
 import { onSceneTs } from '../woreplay/woReplayModel'
@@ -30,10 +30,13 @@ export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Wa
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [replay, setReplay] = useState(null)               // null = the live view; { at } = the Replay, opened at that epoch second (null = at its first step)
   const backRef = useRef(null)
+  const [mapFull, setMapFull] = useState(false)          // the live map alone fills the screen
+  const fullRef = useRef(false)
+  fullRef.current = mapFull
 
-  useEffect(() => {                                    // Esc closes; the page behind does not scroll; focus returns to the map button
+  useEffect(() => {                                    // Esc leaves the full-screen map first, then closes; the page behind does not scroll; focus returns to the map button
     const prevFocus = document.activeElement
-    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); if (fullRef.current) setMapFull(false); else onClose() } }
     const overflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     window.addEventListener('keydown', onKey)
@@ -66,6 +69,7 @@ export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Wa
   const live = !replay
   const board = useMemo(() => (data ? asGarageLive(data) : null), [data])
   useEffect(() => { if (canReplay && !wasLive.current && !replay) { engine.pause(); setReplay({ at: t }) } }, [canReplay, t, replay, engine])   // dragging the slider back opens the Replay there
+  useEffect(() => { if (replay) setMapFull(false) }, [replay])   // the Replay has its own Expand
   const replayFromStart = () => { engine.pause(); setReplay({ at: null }) }
   const goLive = () => { engine.pause(); engine.seek(end); setReplay(null) }
 
@@ -99,7 +103,7 @@ export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Wa
         <>
           <QuickInfo data={data} pin={pin} nowS={nowS} />
           <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 p-4">
-            <div className="relative flex-1 min-h-[300px] rounded-xl overflow-hidden border border-slate-700/70">
+            <div className={mapFull ? 'fixed inset-0 z-[1300] bg-slate-950' : 'relative flex-1 min-h-[300px] rounded-xl overflow-hidden border border-slate-700/70'}>
               <GarageLiveMap data={board} canReplay={false} link={data.driver ? { driverId: data.driver.id, saId: sa.id } : null} />
               <div className="absolute top-3 left-14 right-3 z-[1000] flex flex-wrap items-start gap-2 pointer-events-none">
                 {data.suggestion && (
@@ -117,6 +121,10 @@ export default function CallMapView({ alert, flagClass, onClose, backLabel = 'Wa
                   {Object.values(DRIVER_STATUS).map(x => <span key={x.label} className="flex items-center gap-1"><i className="w-2 h-2 rounded-full" style={{ background: x.colour }} />{x.short}</span>)}</div>}
                 {data.notes.map(n => <div key={n} className="rp-glass rounded-lg px-3 py-1.5 text-xs text-slate-300">{n}</div>)}
               </div>
+              <button type="button" onClick={() => setMapFull(f => !f)} title={mapFull ? 'Exit full screen (Esc)' : 'Full screen map'} aria-label={mapFull ? 'Exit full screen' : 'Full screen map'}
+                className="absolute bottom-3 right-3 z-[1000] rp-glass rounded-xl px-3 py-2 text-sm font-semibold text-white hover:brightness-125 flex items-center gap-1.5 min-h-[40px]">
+                {mapFull ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}{mapFull ? 'Exit full screen' : 'Full screen'}
+              </button>
             </div>
             <aside className="lg:w-[390px] shrink-0 min-h-0 flex flex-col rounded-xl border border-slate-700/70 bg-slate-900/50">
               <h2 className="px-3 py-2 text-sm font-semibold text-white border-b border-slate-800">What happened on this call</h2>
