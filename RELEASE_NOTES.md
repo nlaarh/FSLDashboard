@@ -17,6 +17,26 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.17 — 2026-10-13
+
+| | |
+|---|---|
+| Tag | `release/v1.17` |
+| Commit | `35e9f5f` (merge of PR #28, branch `fix/replay-fixes`) |
+| Bundle | `index-B57Oe0bH.js` |
+| Deploy | GitHub Actions run `38494495732`, 2026-10-13 ~9:15 PM ET, success (owner's explicit "deploy"). 783 backend tests passed (5 need live Salesforce login, unrelated), 47 front-end tests passed, build OK. Production smoke: login, Watchlist, call map, Replay of WO 05210512 all 200. |
+| Roll back to | `release/v1.16` = `a6c4cdb` (bundle `index-BUUUNFDP.js`) |
+
+**What changed**
+- Replay no longer says "Driver arrived in time" when no driver arrived (WO 05210512). It now says the promise was met, missed (with minutes late, or no driver arrived) or is still due. Same fix in Call Story.
+- One map: the Watchlist replay uses the same map as the Replay tab.
+- Replay opens at 10x instead of 60x, and the message lines from channel to driver or member are back.
+- Customer bubbles show the call type (tow, battery, tire, lockout, winch, fuel).
+- Watchlist flags: "Service Territory Needs Action" waits until the call is 2 minutes old; "No Service Resource" is not raised when the call is Accepted and Integrations Towbook accepted it.
+- Watchlist live call map: a Full screen button, and the driver moves every minute instead of every 2 minutes (server copy kept 50 s instead of 60 s: +1 Salesforce request per minute per call someone has open; owner approved).
+
+**Files:** `backend/wo_replay.py`, `backend/call_story_causes.py`, `backend/routers/watchlist_alerts.py`, `backend/routers/watchlist_call_map.py`, `frontend/src/components/woreplay/*`, `frontend/src/components/replay/*`, `frontend/src/components/callmap/*`, `frontend/src/components/garagelive/GarageLiveMap.jsx`, `frontend/src/components/callstory/StoryHeader.jsx`.
+
 ## v1.16 — 2026-10-09
 
 | | |
