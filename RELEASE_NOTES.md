@@ -17,6 +17,22 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.18 — 2026-10-21
+
+| | |
+|---|---|
+| Tag | `release/v1.18` |
+| Commit | `8296fd1` (merge of PR #29, branch `feature/cancellations-tab`) |
+| Bundle | `index-DARIBpj3.js` |
+| Deploy | GitHub Actions run `39542775006`, 2026-10-21 ~12:20 AM ET, success (owner's explicit "deploy it"). Build OK; 7 new/related backend tests passed. Not yet checked against live Salesforce data in a browser (no working test login at release time). |
+| Roll back to | `release/v1.17` = `35e9f5f` (bundle `index-B57Oe0bH.js`) |
+
+**What changed**
+- New **Cancellations** tab next to SA Watchlist (`?tab=cancellations`): today's cancelled ERS calls (Eastern day), small summary chips, sortable and filterable columns (call, cancelled time, type, cancelled by, garage, reason, waited, PTA, work type), SA report link, Replay link for calls cancelled after the truck was en route (not Towbook), 60 s refresh with a countdown. Cancel time and cancelled-by come from the shared status history. Salesforce cost: 2 small shared reads per 30 s, whoever is watching.
+- Satisfaction Scores timeout ("timeout of 60000ms exceeded" on September): last month's saved copy is shown at once and refreshed in the background; the 3 AM job also prepares last month.
+
+**Files:** `backend/routers/cancellations.py`, `backend/tests/test_cancellations.py`, `backend/main.py`, `backend/routers/dispatch_satisfaction.py`, `backend/refresher.py`, `frontend/src/components/Cancellations.jsx`, `frontend/src/pages/CommandCenter.jsx`, `frontend/src/api.js`.
+
 ## v1.17 — 2026-10-13
 
 | | |
