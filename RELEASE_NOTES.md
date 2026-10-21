@@ -17,6 +17,23 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.19 — 2026-10-21
+
+| | |
+|---|---|
+| Tag | `release/v1.19` |
+| Commit | `5497b9a` (merge of PR #30, branch `feature/cancellations-tab`) |
+| Bundle | `index-xDRBeie4.js` |
+| Deploy | GitHub Actions run `39544185752`, 2026-10-21 ~1 AM ET, success (owner: test first, then deploy). Tested before shipping: real browser against real Salesforce (read-only, production database blocked by a guard) for Oct 20: 169 cancels, 15 after en route, 158 with a driver, sort, filters, paging, date picker, Replay links, no console errors; 790 backend tests passed. Not yet checked with a real login on production. |
+| Roll back to | `release/v1.18` = `8296fd1` (bundle `index-DARIBpj3.js`) |
+
+**What changed (Cancellations tab, follow-up to v1.18)**
+- Date picker: any day up to 31 days back, default today; a past day does not auto-refresh and its Salesforce reads are shared for 10 min.
+- New Driver column (name + phone; Towbook drivers show a name only, Salesforce has no phone for them) and the garage phone under the garage. Cancelling clears the assigned driver, so the driver is read from the call's history.
+- SA filter works with or without the "SA-" prefix; dropdown lists readable on the dark screen; duplicate type buttons removed; headings "SA" and "Cancelled at".
+
+**Files:** `backend/routers/cancellations.py`, `backend/tests/test_cancellations.py`, `frontend/src/components/Cancellations.jsx`, `frontend/src/pages/CommandCenter.jsx`, `frontend/src/api.js`.
+
 ## v1.18 — 2026-10-21
 
 | | |
