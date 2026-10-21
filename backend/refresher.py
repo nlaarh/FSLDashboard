@@ -243,13 +243,15 @@ def _run_nightly_jobs():
 
     try:
         from routers.dispatch_satisfaction import _generate_satisfaction_overview
-        month = f'{now_et.year}-{now_et.month:02d}'
-        key = f'satisfaction_overview_{month}'
-        result = _generate_satisfaction_overview(month)
-        if result:
-            cache.put(key, result, ttl=43200)  # 12h
-            cache.disk_put(key, result, 43200)
-            log.info(f'Nightly satisfaction generated: {month}')
+        prev = (now_et.replace(day=1) - timedelta(days=1))
+        # Current month, then last month (surveys still arrive for it, and it is the tab people open next)
+        for month, ttl in ((f'{now_et.year}-{now_et.month:02d}', 43200), (f'{prev.year}-{prev.month:02d}', 31536000)):
+            key = f'satisfaction_overview_{month}'
+            result = _generate_satisfaction_overview(month)
+            if result:
+                cache.put(key, result, ttl=ttl)
+                cache.disk_put(key, result, ttl)
+                log.info(f'Nightly satisfaction generated: {month}')
     except Exception as e:
         log.error(f'Nightly satisfaction failed: {e}')
 

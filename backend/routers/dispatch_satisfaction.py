@@ -62,12 +62,52 @@ def api_satisfaction_overview(month: str = Query(..., description="YYYY-MM forma
             }
         return _generate_satisfaction_overview(month)
 
-    # Recent months: auto-regenerate if data >26h old (nightly job missed)
+    # Recent months: if a saved copy exists but is >26h old, show it now and refresh in the
+    # background — regenerating inline takes longer than the browser's 60 s timeout.
+    if is_recent:
+        saved = cache.get(cache_key) or cache.disk_get(cache_key, 365 * 86400)
+        if saved is not None:
+            meta = cache.disk_get_meta(cache_key) or {}
+            try:
+                from datetime import datetime as _dt
+                age_h = (_dt.now() - _dt.strptime(meta.get('created_at', ''), '%Y-%m-%d %H:%M:%S')).total_seconds() / 3600
+            except Exception:
+                age_h = 999
+            if age_h > 26:
+                api_satisfaction_refresh_bg(month, keep_cache=True)
+            return saved
+
     # Old months: never expire, serve from cache forever
     return cache.cached_query_persistent(
         cache_key, _generate,
         max_stale_hours=26 if is_recent else 0,
     )
+
+
+def api_satisfaction_refresh_bg(month: str, keep_cache: bool = False):
+    """Regenerate a month's overview in a background thread; the saved copy stays until the new one is ready."""
+    import threading, logging
+    from datetime import date as _date
+    _log = logging.getLogger('satisfaction')
+    cache_key = f'satisfaction_overview_{month}'
+    gen_lock = f'gen_sat_overview_{month}'
+    if not cache.fs_lock_acquire(gen_lock, max_age=1800):
+        return
+    today = _date.today()
+    is_current = (int(month[:4]) == today.year and int(month[5:7]) == today.month)
+    ttl = 43200 if is_current else 31536000
+
+    def _bg():
+        try:
+            result = _generate_satisfaction_overview(month)
+            cache.put(cache_key, result, ttl)
+            cache.disk_put(cache_key, result, ttl)
+            _log.info(f"Satisfaction background refresh complete for {month}")
+        except Exception as e:
+            _log.warning(f"Satisfaction background refresh failed for {month}: {e}")
+        finally:
+            cache.fs_lock_release(gen_lock)
+    threading.Thread(target=_bg, daemon=True).start()
 
 
 @router.get("/api/insights/satisfaction/refresh")
