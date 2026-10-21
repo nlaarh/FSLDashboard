@@ -17,6 +17,22 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.20 — 2026-10-21
+
+| | |
+|---|---|
+| Tag | `release/v1.20` |
+| Commit | `de98725` (merge of PR #31, branch `feature/cancellations-in-watchlist`) |
+| Bundle | `index-5dI9ux7v.js` |
+| Deploy | GitHub Actions run `39544908587`, 2026-10-21, success (owner's explicit "deploy"). Tested before shipping: real browser, Watchlist screen with its own data stubbed and Cancellations from the real endpoint (read-only Salesforce, production database blocked): sub-tab order, click, date picker, direct link, switching away clears it, no console errors; 47 front-end tests passed. Not browser-tested: the full Command Center page and the old-link redirect. |
+| Roll back to | `release/v1.19` = `5497b9a` (bundle `index-xDRBeie4.js`) |
+
+**What changed**
+- Cancellations is now a sub-tab inside SA Watchlist, right after Operational Watchlist (Operational Watchlist, Cancellations, Manually Dispatched SAs, ERS Live Board). The separate top-level tab is gone.
+- Its address is `?wtab=cancellations`; the old `?tab=cancellations` link redirects to it.
+
+**Files:** `frontend/src/components/SAWatchlist.jsx`, `frontend/src/pages/CommandCenter.jsx`.
+
 ## v1.19 — 2026-10-21
 
 | | |
