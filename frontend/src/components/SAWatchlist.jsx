@@ -1,24 +1,27 @@
 /**
  * SAWatchlist.jsx
  *
- * SA Watchlist — 2 sub-tabs:
+ * SA Watchlist — sub-tabs (Operational Watchlist, Cancellations, Manual Dispatch SAs, ERS Live Board):
  * 1. Operational Watchlist — flag-based alerts (PTA at risk, not assigned, not closed, priority late)
+ * 1b. Cancellations — today's cancelled calls, any day picker (its own address: ?wtab=cancellations)
  * 2. Manual Dispatch SAs — progress-tracker rows (reassigned, rejected, thrashed)
  * Auto-refreshes every 30 seconds.
  */
 
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
   Search, Clock, Lock, AlertTriangle, HelpCircle,
   Loader2, User, Radio, CheckCircle2, X, ExternalLink, PlayCircle, Mail, Navigation,
-  ChevronUp, ChevronDown, Clipboard, Check,
+  ChevronUp, ChevronDown, Clipboard, Check, Ban,
 } from 'lucide-react'
 import { SAWithTimeline, fmtDuration } from './LiveDispatchUtils'
 import CheckpointTracker from './CheckpointTracker'
 import DriverMapPopup from './DriverMapPopup'
 import DispatchAssistPanel from './DispatchAssistPanel'
 import LiveDispatchBoard from './LiveDispatchBoard'
+import Cancellations from './Cancellations'
 import { fetchWatchlist } from '../api'
 import { pollWhileVisible } from '../utils/pollWhileVisible'
 
@@ -469,7 +472,18 @@ export default function SAWatchlist({ contractorMode = false }) {
   const [nowMs, setNowMs] = useState(() => Date.now())   // ticks every second so 'updated Ns ago' stays true
   const [mapDriver, setMapDriver] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [activeTab, setActiveTab] = useState('alerts')
+  const [params, setParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState(() => params.get('wtab') === 'cancellations' ? 'cancellations' : 'alerts')
+  // The Cancellations sub-tab lives in the URL (?wtab=cancellations) so it can be shared and reloaded; its own filters go with it.
+  const pickTab = t => {
+    setActiveTab(t)
+    setParams(p => {
+      const n = new URLSearchParams(p)
+      for (const k of [...n.keys()]) if (['wtab', 'ctype', 'cdate', 'csort', 'cdir', 'cpage'].includes(k) || k.startsWith('cf_')) n.delete(k)
+      if (t === 'cancellations') n.set('wtab', 'cancellations')
+      return n
+    }, { replace: true })
+  }
   const updatedMs = data?.last_updated ? Date.parse(data.last_updated) : NaN
   const updatedAgo = Number.isNaN(updatedMs) ? null : Math.max(0, Math.round((nowMs - updatedMs) / 1000))
   const searchRef = useRef(null)
@@ -550,7 +564,7 @@ export default function SAWatchlist({ contractorMode = false }) {
       {/* ── Sub-tab bar ──────────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center gap-1 px-6 pt-3 pb-0">
         {/* Operational Watchlist tab */}
-        <button onClick={() => setActiveTab('alerts')}
+        <button onClick={() => pickTab('alerts')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'alerts' ? TAB_STYLES.alerts.active : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <AlertTriangle className="w-3.5 h-3.5" />
@@ -563,8 +577,16 @@ export default function SAWatchlist({ contractorMode = false }) {
           )}
         </button>
 
+        {/* Cancellations tab */}
+        <button onClick={() => pickTab('cancellations')}
+          className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
+            activeTab === 'cancellations' ? 'border-rose-500 text-rose-300 bg-rose-600/10' : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
+          <Ban className="w-3.5 h-3.5" />
+          Cancellations
+        </button>
+
         {/* Manual Dispatch SAs tab */}
-        <button onClick={() => setActiveTab('manual')}
+        <button onClick={() => pickTab('manual')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'manual' ? TAB_STYLES.manual.active : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Lock className="w-3.5 h-3.5" />
@@ -578,7 +600,7 @@ export default function SAWatchlist({ contractorMode = false }) {
         </button>
 
         {/* ERS Live Board tab */}
-        <button onClick={() => setActiveTab('live')}
+        <button onClick={() => pickTab('live')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'live' ? 'border-emerald-500 text-emerald-300 bg-emerald-600/10' : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Radio className="w-3.5 h-3.5" />
@@ -759,6 +781,12 @@ export default function SAWatchlist({ contractorMode = false }) {
       {/* ══════════════════════════════════════════════════════════════ */}
       {/* TAB 3: ERS Live Board                                         */}
       {/* ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'cancellations' && (
+        <div className="flex-1 overflow-hidden">
+          <Cancellations />
+        </div>
+      )}
+
       {activeTab === 'live' && (
         <div className="flex-1 overflow-hidden">
           <LiveDispatchBoard />
