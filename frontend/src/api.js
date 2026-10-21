@@ -219,6 +219,7 @@ export const refreshAccountingWOAs = () =>
 // Live Dispatch Board + SA Watchlist
 export const fetchLiveDispatch = () => api.get('/live-dispatch').then(r => r.data)
 export const fetchWatchlist = () => api.get('/watchlist').then(r => r.data)
+export const fetchCancellationsToday = () => api.get('/cancellations/today').then(r => r.data)
 export const fetchWatchlistManual = () => api.get('/watchlist/manual').then(r => r.data)
 export const fetchDispatchAssist = (saId, hints = {}) => {
   const params = new URLSearchParams({ sa_id: saId })
