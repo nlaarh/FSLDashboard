@@ -62,7 +62,7 @@ export default function CommandCenter() {
     const on = params.get('tab') === 'garage-live' || params.get('tab') === 'cancellations'
     if (viewMode === 'garage-live') setParams(garageTabUrl, { replace: true })
     else if (viewMode === 'cancellations') setParams(p => { const n = new URLSearchParams(p); n.set('tab', 'cancellations'); n.delete('garage'); return n }, { replace: true })
-    else if (on) setParams(p => { const n = new URLSearchParams(p); ['tab', 'garage', 'ctype', 'cgarage', 'cpage'].forEach(k => n.delete(k)); return n }, { replace: true })
+    else if (on) setParams(p => { const n = new URLSearchParams(p); ['tab', 'garage', 'ctype', 'cdate', 'csort', 'cdir', 'cpage'].forEach(k => n.delete(k)); return n }, { replace: true })
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
