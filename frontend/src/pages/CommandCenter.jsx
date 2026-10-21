@@ -11,12 +11,11 @@ import {
   ChevronRight, Search, MapPin, Clock, FileText,
   ChevronDown, ChevronUp, Crosshair, X, Truck, Layers,
   Zap, Shield, Navigation, Users, TrendingUp, AlertCircle, ArrowRight,
-  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity, Eye, Star, MessageSquare, ArrowLeft, Binoculars, Ban
+  Maximize2, Minimize2, GripVertical, BarChart3, XCircle, ThumbsDown, Activity, Eye, Star, MessageSquare, ArrowLeft, Binoculars
 } from 'lucide-react'
 import { StatChip, Div, LegendDot, LegendSmall, fmtPhone, fmtWait } from '../components/CommandCenterUtils'
 import DispatchInsightsFullView, { SuggestionCard } from '../components/DispatchInsights'
 import SAWatchlist from '../components/SAWatchlist'
-import Cancellations from '../components/Cancellations'
 import { readLast } from '../components/garagelive/garageLiveModel'
 import useCommandCenterData from '../hooks/useCommandCenterData'
 import {
@@ -50,7 +49,11 @@ export default function CommandCenter() {
   const [params, setParams] = useSearchParams()
   const garageTabUrl = p => { const n = new URLSearchParams(p); n.set('tab', 'garage-live'); const last = readLast(); if (!n.get('garage') && last) n.set('garage', last); return n }
   useEffect(() => {
-    if (params.get('tab') === 'cancellations') { setViewMode('cancellations'); return }     // its own address: ?tab=cancellations
+    if (params.get('tab') === 'cancellations') {                    // the old address: Cancellations is now a Watchlist sub-tab
+      setViewMode('watchlist')
+      setParams(p => { const n = new URLSearchParams(p); n.delete('tab'); n.set('wtab', 'cancellations'); return n }, { replace: true })
+      return
+    }
     if (params.get('tab') !== 'garage-live') return
     setViewMode('garage-live')
     if (!params.get('garage') && readLast()) setParams(garageTabUrl, { replace: true })
@@ -59,10 +62,14 @@ export default function CommandCenter() {
   useEffect(() => {
     if (shownTab.current === viewMode) return                       // only a real tab change touches the URL (the first pass still shows the default tab)
     shownTab.current = viewMode
-    const on = params.get('tab') === 'garage-live' || params.get('tab') === 'cancellations'
+    const on = params.get('tab') === 'garage-live'
     if (viewMode === 'garage-live') setParams(garageTabUrl, { replace: true })
-    else if (viewMode === 'cancellations') setParams(p => { const n = new URLSearchParams(p); n.set('tab', 'cancellations'); n.delete('garage'); return n }, { replace: true })
-    else if (on) setParams(p => { const n = new URLSearchParams(p); ['tab', 'garage', 'ctype', 'cdate', 'csort', 'cdir', 'cpage'].forEach(k => n.delete(k)); return n }, { replace: true })
+    else if (on) setParams(p => { const n = new URLSearchParams(p); n.delete('tab'); n.delete('garage'); return n }, { replace: true })
+    else if (viewMode !== 'watchlist' && params.get('wtab')) setParams(p => {          // leaving the Watchlist: its sub-tab and the Cancellations filters go too
+      const n = new URLSearchParams(p)
+      for (const k of [...n.keys()]) if (['wtab', 'ctype', 'cdate', 'csort', 'cdir', 'cpage'].includes(k) || k.startsWith('cf_')) n.delete(k)
+      return n
+    }, { replace: true })
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -85,13 +92,6 @@ export default function CommandCenter() {
               ? 'border-amber-500 text-amber-300 bg-amber-600/10'
               : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Star className="w-4 h-4" /> SA Watchlist
-        </button>
-        <button onClick={() => setViewMode('cancellations')}
-          className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
-            viewMode === 'cancellations'
-              ? 'border-rose-500 text-rose-300 bg-rose-600/10'
-              : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
-          <Ban className="w-4 h-4" /> Cancellations
         </button>
         <button onClick={() => setViewMode('map')}
           className={clsx('flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide transition-all border-b-2',
@@ -140,13 +140,6 @@ export default function CommandCenter() {
           <React.Suspense fallback={<div className="w-full h-full flex items-center justify-center bg-slate-950"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>}>
             <GarageLive />
           </React.Suspense>
-        </div>
-      )}
-
-      {/* ── CANCELLATIONS ── */}
-      {viewMode === 'cancellations' && (
-        <div className="flex-1 overflow-hidden">
-          <Cancellations />
         </div>
       )}
 
