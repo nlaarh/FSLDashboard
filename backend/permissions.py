@@ -3,7 +3,7 @@ Future: move FEATURE_ROLES to DB so admin can assign dynamically.
 """
 
 FEATURE_ROLES = {
-    "garage.revenue_performance": {"superadmin", "admin", "executive", "ers-director", "contractor"},
+    "garage.revenue_performance": {"superadmin", "admin", "executive", "ers-director", "ers-manager", "contractor"},
     "reporting.user_adoption":    {"superadmin", "admin", "executive"},
     "admin.panel":                {"superadmin", "admin"},
     "admin.impersonate":          {"superadmin"},
@@ -13,6 +13,10 @@ FEATURE_ROLES = {
     # Replay (garage and work order): administrators, executives and ERS managers; not ers-director. Superadmin sits above admin.
     "scheduler.replay":            {"superadmin", "admin", "executive", "ers-manager"},
 }
+
+
+# The only account allowed to log in as another user.
+IMPERSONATOR_USERNAME = "nlaaroubi@nyaaa.com"
 
 
 def get_user_features(role: str) -> list[str]:

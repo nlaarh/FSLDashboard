@@ -48,6 +48,7 @@ const Phone = ({ n }) => n ? <a href={`tel:${n}`} className="block text-[11px] t
 // One entry per column: how to read its value, how to compare it, and what kind of filter it gets.
 const COLS = [
   { k: 'number', h: 'SA', val: i => i.number, filter: 'text' },
+  { k: 'wo', h: 'Work order', val: i => i.work_order || '', filter: 'text' },
   { k: 'cancelled', h: 'Cancelled at', val: i => i.cancelled_et || '', num: false },
   { k: 'type', h: 'Type', val: i => i.type, filter: 'select' },
   { k: 'by', h: 'Cancelled by', val: i => i.cancelled_by || '', filter: 'select' },
@@ -172,6 +173,7 @@ export default function Cancellations() {
             {rows.map(i => (
               <tr key={i.id} className="hover:bg-slate-800/40">
                 <td className="px-3 py-2 font-semibold text-indigo-300"><SALink number={i.number} /></td>
+                <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{i.work_order || '--'}</td>
                 <td className="px-3 py-2 text-slate-200 whitespace-nowrap">{etTime(i.cancelled_et)}</td>
                 <td className="px-3 py-2"><span className={clsx('px-2 py-0.5 rounded border text-[10px] font-semibold', BADGE[TYPE_OF[i.type]])}>{i.type}</span></td>
                 <td className="px-3 py-2 text-slate-300" title={i.cancelled_by_profile || ''}>{i.cancelled_by || '--'}</td>
@@ -188,7 +190,7 @@ export default function Cancellations() {
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">{items.length === 0 ? `No cancellations ${isToday ? 'yet today' : 'on this day'}.` : 'No cancellations match.'}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={12} className="px-3 py-10 text-center text-slate-500">{items.length === 0 ? `No cancellations ${isToday ? 'yet today' : 'on this day'}.` : 'No cancellations match.'}</td></tr>}
           </tbody>
         </table>
       </div>
