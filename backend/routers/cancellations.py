@@ -81,7 +81,8 @@ def _build(day: _date) -> dict:
     # which were really cancelled that day.
     rows = sf_query_all_shared(f"""
         SELECT Id, AppointmentNumber, CreatedDate, Status, ERS_Cancellation_Reason__c, ERS_PTA__c,
-               ERS_Dispatch_Method__c, WorkType.Name, ServiceTerritory.Name, AAA_ERS_Account_Facility__r.Phone
+               ERS_Dispatch_Method__c, WorkType.Name, ServiceTerritory.Name, AAA_ERS_Account_Facility__r.Phone,
+               TYPEOF ParentRecord WHEN WorkOrderLineItem THEN WorkOrderId, WorkOrder.WorkOrderNumber END
         FROM ServiceAppointment
         WHERE LastModifiedDate >= {_iso(start)} AND CreatedDate >= {_iso(start - timedelta(days=3))} AND CreatedDate < {_iso(end)}
           AND Status IN ({status_list})
@@ -137,6 +138,7 @@ def _build(day: _date) -> dict:
         items.append({
             'id': r['Id'],
             'number': r.get('AppointmentNumber'),
+            'work_order': ((r.get('ParentRecord') or {}).get('WorkOrder') or {}).get('WorkOrderNumber'),
             'garage': (r.get('ServiceTerritory') or {}).get('Name'),
             'status': r['Status'],
             'type': _TYPE[r['Status']],

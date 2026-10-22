@@ -228,7 +228,8 @@ def admin_impersonate(request: Request, username: str, response: Response):
         raise HTTPException(status_code=401, detail="Not authenticated")
     caller = payload.split(":")[0]
     caller_user = users.get_user(caller)
-    if not caller_user or caller_user.get("role") != "superadmin":
+    from permissions import IMPERSONATOR_USERNAME
+    if not caller_user or caller_user.get("role") != "superadmin" or caller.lower() != IMPERSONATOR_USERNAME:
         raise HTTPException(status_code=403, detail="Only superadmin can impersonate users")
     target = users.get_user(username)
     if not target or not target.get("active"):
