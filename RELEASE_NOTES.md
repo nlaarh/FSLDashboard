@@ -17,6 +17,25 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.21 — 2026-10-21
+
+| | |
+|---|---|
+| Tag | `release/v1.21` |
+| Commit | `35fd446` (merge of PR #32, branch `feature/ers-manager-revenue-wo-column`) |
+| Bundle | `index-CAFaa1Bz.js` |
+| Deploy | GitHub Actions run `39711777411`, 2026-10-21, success (owner's explicit "deploy"; Tamy passed QA). Verified live: health ok, live page serves the new bundle, `/api/cancellations` on production returns a work order on all 204 items. |
+| Roll back to | `release/v1.20` = `de98725` (bundle `index-5dI9ux7v.js`) |
+
+**What changed**
+- ERS managers can now see the garage revenue and performance view.
+- Only the owner's account can log in as another user. Other admins no longer can.
+- The Cancellations table has a new Work order column, searchable like the SA column.
+
+**Files:** `backend/permissions.py`, `backend/routers/admin.py`, `backend/routers/cancellations.py`, `frontend/src/components/Cancellations.jsx`, `backend/tests/test_garage_revenue_and_impersonate_permission.py`
+
+---
+
 ## v1.20 — 2026-10-21
 
 | | |
