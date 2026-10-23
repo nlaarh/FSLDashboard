@@ -17,6 +17,23 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.22 — 2026-10-23
+
+| | |
+|---|---|
+| Tag | `release/v1.22` |
+| Commit | `543137e` (merge of PR #33, branch `security/hardening`) |
+| Bundle | `index-CAFaa1Bz.js` (unchanged — back-end and pipeline changes only) |
+| Deploy | GitHub Actions runs `40036561985` and `40036795601`, 2026-10-23, success (owner asked to fix all security findings). First deploys through GitHub OIDC; the second ran after password publishing was turned off. Tested on the standby site first. |
+| Roll back to | `release/v1.21` = `35fd446` |
+
+**What changed (security)**
+- API docs (`/docs`, `/redoc`, `/openapi.json`) are off on Azure; still on for local development.
+- Login cookie carries the Secure flag over HTTPS; added HSTS, nosniff and Referrer-Policy headers.
+- Deploys now sign in with GitHub OIDC (identity `id-fslapp-github-deploy`, Website Contributor on `fslapp-nyaaa` only, main branch only). The shared Kudu password is gone and password publishing is OFF on the live site.
+- Not a code change, same day: the live and standby sites are HTTPS-only; 15 secrets moved from app settings into Key Vault `kv-fslapp-nyaaa`; the database firewall no longer allows 0.0.0.0–255.255.255.255.
+- Roles matrix is NOT in this release.
+
 ## v1.21 — 2026-10-21
 
 | | |
