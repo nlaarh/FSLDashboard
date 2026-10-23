@@ -9,6 +9,10 @@ env:
   AZURE_WEBAPP_NAME: fslapp-nyaaa
   NODE_VERSION: '20'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -55,67 +59,24 @@ jobs:
         echo "Files included:"
         unzip -l ../deploy.zip | grep "\.py$" | awk '{print $4}'
 
-    - name: Deploy to Azure via Kudu ZIP Deploy
-      env:
-        DEPLOY_USER: ${{ secrets.AZURE_DEPLOY_USER }}
-        DEPLOY_PASS: ${{ secrets.AZURE_DEPLOY_PASS }}
+    - name: Sign in to Azure (OIDC, no stored password)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy ZIP to Azure (Oryx builds on the server)
       run: |
-        echo "Deploying to ${{ env.AZURE_WEBAPP_NAME }}..."
-        echo "machine ${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net" > /tmp/.netrc
-        echo "login ${DEPLOY_USER}" >> /tmp/.netrc
-        echo "password ${DEPLOY_PASS}" >> /tmp/.netrc
-        chmod 600 /tmp/.netrc
+        az webapp deploy \
+          --resource-group rg-nlaaroubi-sbx-eus2-001 \
+          --name "${{ env.AZURE_WEBAPP_NAME }}" \
+          --src-path deploy.zip --type zip --timeout 900000
 
-        RESPONSE=$(curl -s -D /tmp/deploy_headers.txt -w "\n%{http_code}" \
-          -X POST \
-          "https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy?isAsync=true" \
-          --netrc-file /tmp/.netrc \
-          --data-binary @deploy.zip \
-          -H "Content-Type: application/octet-stream" \
-          --max-time 300)
-
-        # /tmp/.netrc is kept for the next step (it polls the deployment) and removed there.
-
-        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-        BODY=$(echo "$RESPONSE" | sed '$d')
-
-        echo "HTTP Status: $HTTP_CODE"
-        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-          echo "Deployment accepted! Oryx will build on server."
-        else
-          echo "Deployment failed!"
-          echo "$BODY"
-          exit 1
-        fi
-
-    - name: Wait for Azure build (poll) and verify
+    - name: Verify the app is healthy
       run: |
-        # Poll Kudu's deployment status instead of a fixed sleep: finish the moment Azure does,
-        # fail loudly if the build fails or never completes.
-        SITE="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
-        LOC=$(grep -i '^location:' /tmp/deploy_headers.txt | tr -d '\r' | awk '{print $2}')
-        if [ -z "$LOC" ]; then
-          LOC="https://${{ env.AZURE_WEBAPP_NAME }}.scm.azurewebsites.net/api/deployments/latest"
-          echo "No Location header; polling $LOC"
-        fi
-        START=$(date +%s)
-        # Kudu status: 0 pending, 1 building, 2 deploying, 3 failed, 4 success
-        while true; do
-          ELAPSED=$(( $(date +%s) - START ))
-          BODY=$(curl -s --max-time 20 --netrc-file /tmp/.netrc "$LOC" || true)
-          STATUS=$(echo "$BODY" | jq -r '.status // empty' 2>/dev/null || true)
-          echo "[${ELAPSED}s] Azure deployment status: ${STATUS:-unknown}"
-          if [ "$STATUS" = "4" ]; then break; fi
-          if [ "$STATUS" = "3" ]; then
-            echo "Azure build FAILED:"; echo "$BODY" | jq -r '.status_text // .' ; rm -f /tmp/.netrc; exit 1
-          fi
-          if [ "$ELAPSED" -ge 600 ]; then
-            echo "Timed out after 10 minutes waiting for Azure"; rm -f /tmp/.netrc; exit 1
-          fi
-          sleep 10
-        done
-        rm -f /tmp/.netrc
         # The app restarts after the build: wait for a healthy answer (up to 3 minutes)
+        SITE="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
         for i in $(seq 1 18); do
           CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$SITE/api/health" || true)
           echo "Health check $i: HTTP $CODE"
