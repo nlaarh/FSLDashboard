@@ -28,7 +28,14 @@ from repositories import settings, activity
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="FSL App", version="1.2.1")
+# API docs list every endpoint; keep them off on Azure (WEBSITE_SITE_NAME is set only there).
+_ON_AZURE = bool(os.environ.get("WEBSITE_SITE_NAME"))
+app = FastAPI(
+    title="FSL App", version="1.2.1",
+    docs_url=None if _ON_AZURE else "/docs",
+    redoc_url=None if _ON_AZURE else "/redoc",
+    openapi_url=None if _ON_AZURE else "/openapi.json",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,6 +76,9 @@ _FRAME_ANCESTORS = ("frame-ancestors 'self' https://*.force.com https://*.salesf
 async def frame_ancestors_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("Content-Security-Policy", _FRAME_ANCESTORS)
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return response
 
 

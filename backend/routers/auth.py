@@ -126,7 +126,8 @@ def admin_login(request: Request, creds: dict, response: Response):
         dept = user.get("department", "")
         token = users.create_session(user["username"], user["role"], user["name"], dept)
         payload = f"{user['username']}:{user['role']}:{token}"
-        response.set_cookie("fslapp_auth", _sign_cookie(payload), httponly=True, samesite="lax", max_age=86400)
+        secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+        response.set_cookie("fslapp_auth", _sign_cookie(payload), httponly=True, secure=secure, samesite="lax", max_age=86400)
         return {"ok": True, "user": user["username"], "name": user["name"], "role": user["role"], "department": dept}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
