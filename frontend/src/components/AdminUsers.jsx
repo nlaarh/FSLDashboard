@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Users, UserPlus, Edit3, Trash, Radio, CheckCircle2, Copy, RefreshCw, RotateCcw, EyeOff, LogIn, ChevronUp, ChevronDown, ChevronsUpDown, ShieldCheck, X, Send } from 'lucide-react'
-import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminRestoreUser, adminListSessions, adminImpersonate } from '../api'
+import { adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser, adminRestoreUser, adminListSessions, adminImpersonate, saveAccessUsers } from '../api'
 import { clsx } from 'clsx'
 import AdminUserEditor from './AdminUserEditor'
 import { DEPT_STYLE, ROLE_STYLE } from '../constants/users'
 import { EMPTY_USER_FORM, FORM_PASSWORD_COPY_KEY, generatePassword, passwordIssues } from '../utils/passwords'
 
-export default function AdminUsers({ pin }) {
+export default function AdminUsers({ pin, canEditAccess = false }) {
   const [userList, setUserList] = useState([])
   const [sessions, setSessions] = useState([])
   const [showUserForm, setShowUserForm] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
+  const [rolesEdit, setRolesEdit] = useState(null)   // {original, extra} extra roles of the person being edited
   const [userForm, setUserForm] = useState(EMPTY_USER_FORM)
   const [userError, setUserError] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
@@ -88,6 +89,7 @@ export default function AdminUsers({ pin }) {
 
   const openEditUser = (u) => {
     setEditingUser(u.username)
+    setRolesEdit(null)
     setUserForm({ username: u.username, password: '', passwordConfirm: '', name: u.name, role: u.role, email: u.email || '', phone: u.phone || '', department: u.department || '', garages: u.garages || [] })
     setShowPassword(false)
     setPasswordChangeOpen(false)
@@ -148,6 +150,12 @@ export default function AdminUsers({ pin }) {
         const data = { name: userForm.name, role: userForm.role, email: userForm.email, phone: userForm.phone, department: userForm.department, garages: userForm.garages || [] }
         if (changingPassword) data.password = userForm.password
         const result = await adminUpdateUser(pin, editingUser, data)
+        if (canEditAccess && rolesEdit) {
+          const extra = rolesEdit.extra.filter(r => r !== userForm.role)
+          if (extra.length !== rolesEdit.original.length || extra.some(r => !rolesEdit.original.includes(r))) {
+            await saveAccessUsers([{ username: editingUser, primary: userForm.role, extra }])
+          }
+        }
         if (changingPassword) {
           setSaveMessage(`Password changed for ${editingUser}. Copy it before closing.`)
           setShowPassword(true)
@@ -509,6 +517,9 @@ export default function AdminUsers({ pin }) {
             emailBody={emailBody}
             onClose={closeUserForm}
             onSave={saveUser}
+            canEditAccess={canEditAccess}
+            rolesEdit={rolesEdit}
+            setRolesEdit={setRolesEdit}
           />
         )}
       </div>

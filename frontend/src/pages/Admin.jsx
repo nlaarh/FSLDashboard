@@ -303,7 +303,7 @@ export default function Admin({ userFeatures = null }) {
         {/* Users & Sessions */}
         {activeSection === 'users' && (
           <div className="space-y-6">
-            <AdminUsers pin={pin} />
+            <AdminUsers pin={pin} canEditAccess={canEditAccess} />
             <AdminActivityLog pin={pin} defaultCollapsed={true} />
           </div>
         )}
