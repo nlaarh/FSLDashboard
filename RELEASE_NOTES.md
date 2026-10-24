@@ -17,6 +17,20 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.24 — 2026-10-24
+
+| | |
+|---|---|
+| Tag | `release/v1.24` |
+| Commit | `63ec8a4` (merge of PR #35, branch `feature/user-roles-in-editor`) |
+| Bundle | `index-DyWgZeNN.js` |
+| Deploy | GitHub Actions run `40053978164`, 2026-10-24, success (owner: "ship it"). Front end only. Checked in a local in-memory demo first. |
+| Roll back to | `release/v1.23` = `73b5206` |
+
+**What changed**
+- Edit user window (superadmin only): new Roles section with one-click chips to add or remove a person's extra roles, saved with Save changes. Restricted roles (contractor, ers-supervisor, ers-member-relations) stay blocked.
+- Where the rest of the access screens are: Admin (needs the admin PIN) > Access tab, with two grids (what each role can do; who has which roles), each with Save and Cancel.
+
 ## v1.23 — 2026-10-24
 
 | | |
