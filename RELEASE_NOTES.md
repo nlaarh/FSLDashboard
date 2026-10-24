@@ -17,6 +17,21 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.23 — 2026-10-24
+
+| | |
+|---|---|
+| Tag | `release/v1.23` |
+| Commit | `73b5206` (merge of PR #34, branch `release/roles-matrix`) |
+| Bundle | `index-CO3wqGoT.js` |
+| Deploy | GitHub Actions run `40046190889`, 2026-10-24, success (owner: move the roles matrix and make sure nobody loses access). Tested on the standby site first. |
+| Roll back to | `release/v1.22` = `9a15e34` |
+
+**What changed**
+- Roles matrix: new Admin > Access screen (feature x role matrix, extra roles per user). Pages and tabs are shown from the matrix; code defaults reproduce the old access exactly, and fall back to defaults if the access tables are unreadable.
+- Verified before and after on production: all 57 real users, 1,140 checks against the old rules, 0 differences; the live server answered for every user and nothing was lost. The two access tables already existed in the live database (seeded 2026-10-21).
+- Same day, not code: the live database and storage are now private-network only (public access off); SalesPulse and the nightly backup job were moved onto the private network.
+
 ## v1.22 — 2026-10-23
 
 | | |
