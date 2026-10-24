@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import cache
 import db_adapter
+from permissions import can_access
 import users
 from sf_client import sf_query_all
 from utils import parse_dt as _parse_dt
@@ -28,8 +29,6 @@ log = logging.getLogger('dispatch_score')
 _COMPUTING_KEY = "dispatch_score_computing"
 _PARTIAL_KEY   = "dispatch_score_partial"
 _compute_lock  = threading.Lock()
-
-_DISPATCH_SCORE_ROLES = {"superadmin", "admin", "executive"}
 
 # Call type complexity weights — heavier calls should not inflate UTC rates unfairly
 _COMPLEXITY = {
@@ -57,8 +56,8 @@ def _require_dispatch_score_role(request: Request) -> str:
     parts = payload.split(":")
     username = parts[0] if parts else ""
     cookie_role = parts[1] if len(parts) > 1 else ""
-    role = (users.get_user(username) or {}).get("role") or cookie_role
-    if role not in _DISPATCH_SCORE_ROLES:
+    roles = (users.get_user(username) or {}).get("roles") or [cookie_role]
+    if not can_access(roles, "reporting.dispatch_scorecard"):
         raise HTTPException(status_code=403, detail="Dispatch scorecard restricted to managers")
     return username
 

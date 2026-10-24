@@ -8,7 +8,7 @@ import logging
 import os, hashlib, hmac, secrets, time, threading
 from fastapi import APIRouter, HTTPException, Request, Response
 import users
-from permissions import get_user_features
+from permissions import can_access, get_user_features
 
 # Page routes are registered on this router via auth_pages.router; main.py must
 # include both routers.  We do NOT re-export the page router here to avoid
@@ -69,26 +69,31 @@ def _get_role(username: str) -> str:
     return (u or {}).get('role', '') or ''
 
 
+def _get_roles(username: str) -> list[str]:
+    """Return the user's effective roles (primary first), [] if not found."""
+    return list((users.get_user(username) or {}).get('roles') or [])
+
+
 # Paths that ers-supervisor role is blocked from
 _SUPERVISOR_BLOCKED = ('/api/accounting/', '/api/admin/')
-
-# Roles allowed to access the full admin panel
-_ADMIN_ROLES = ('superadmin', 'admin')
-
-# Roles allowed read/write access to reference data only (no PIN required)
-_REFERENCE_ROLES = ('executive', 'ers-director')
-
 
 def _supervisor_blocked(path: str) -> bool:
     return any(path.startswith(p) for p in _SUPERVISOR_BLOCKED)
 
 
-def _admin_allowed(role: str) -> bool:
-    return role in _ADMIN_ROLES
+def _admin_allowed(roles) -> bool:
+    """Full admin panel. `roles` is one role name or a collection of them."""
+    return can_access(roles, 'admin.panel')
 
 
-def _reference_allowed(role: str, path: str) -> bool:
-    return role in _REFERENCE_ROLES and path.startswith('/api/admin/reference/')
+def _reference_allowed(roles, path: str) -> bool:
+    """Reference data only (no PIN for roles without the admin panel)."""
+    return can_access(roles, 'admin.reference_data') and path.startswith('/api/admin/reference/')
+
+
+def _accounting_blocked(roles, path: str) -> bool:
+    """Staff roles without the Accounting page cannot call its data either (the contractor portal has its own paths)."""
+    return path.startswith('/api/accounting/') and 'contractor' not in roles and not can_access(roles, 'page.accounting')
 
 
 def _sign_cookie(payload: str) -> str:
@@ -165,13 +170,16 @@ def auth_me(request: Request):
         territories = users.get_user_territories(username)
         # Resolve territory IDs to names — only for contractor users (names stored in DB, no SF call needed)
         garage_names = users.get_user_garages(username) if role == "contractor" else []
+        # Session role first (as before), then the extra roles from the database.
+        roles = [role] + [r for r in (user_record or {}).get("roles", []) if r != role]
         return {
             "user": username, "name": name, "role": role,
             "email": email, "department": department,
             "territories": territories,
             "garage_names": garage_names,
             "method": "admin",
-            "features": get_user_features(role),
+            "roles": roles,
+            "features": get_user_features(roles),
         }
     if _DEV_AUTO_LOGIN:
         return {"user": "dev", "name": "Developer", "role": "admin", "email": "",

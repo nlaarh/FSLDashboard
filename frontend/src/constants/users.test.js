@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ROLES, roleOptions } from './users.js'
 
-const adminPy = readFileSync(new URL('../../../backend/routers/admin.py', import.meta.url), 'utf8')
-const serverRoles = adminPy.match(/valid_roles = \(([^)]*)\)/)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1))
+const permissionsPy = readFileSync(new URL('../../../backend/permissions.py', import.meta.url), 'utf8')
+const serverRoles = permissionsPy.match(/^ROLES = \(([^)]*)\)/m)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1))
 
 test('every role offered is one the server accepts', () => {
   for (const r of ROLES) assert.ok(serverRoles.includes(r), r)

@@ -4,6 +4,7 @@ import { PlayCircle, LayoutDashboard, Radio, ListOrdered, CloudSun, Clock, Arrow
 import FloatingChat from './FloatingChat'
 import { fetchFeatures, searchQuery } from '../api'
 import { SAReportContext } from '../contexts/SAReportContext'
+import { can } from '../utils/access'
 
 /* ── FleetPulse Logo (AI Brain + Fleet Routes) ────────────────────────── */
 function Logo({ className = '' }) {
@@ -208,7 +209,7 @@ export default function Layout() {
   const [department, setDepartment] = useState('')
   const [role, setRole] = useState('')
   const [name, setName] = useState('')
-  const [userFeatures, setUserFeatures] = useState([])
+  const [userFeatures, setUserFeatures] = useState(null)
   const [impersonating, setImpersonating] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('impersonating') || 'null') } catch { return null }
   })
@@ -225,7 +226,7 @@ export default function Layout() {
       setDepartment(d.department || '')
       setRole(d.role || '')
       setName(d.name || '')
-      setUserFeatures(d.features || [])
+      setUserFeatures(d.features || null)
     }).catch(() => {})
     const handler = (e) => {
       if (e.detail) setFeatures(e.detail)
@@ -235,9 +236,8 @@ export default function Layout() {
     return () => window.removeEventListener('featuresChanged', handler)
   }, [])
 
-  // finance = accounting only; supervisor = no accounting/admin; everyone else = everything
+  // finance department = accounting only; every other page is shown when the user's roles allow it (Access matrix)
   const isFinance = department === 'finance'
-  const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
 
   const handleLogout = async () => {
     try {
@@ -280,10 +280,12 @@ export default function Layout() {
       {/* Top nav */}
       <nav className="sticky top-0 z-50 glass border-b border-slate-700/50">
         <div className="max-w-[1600px] mx-auto px-6 h-14 flex items-center gap-6">
+          {can(userFeatures, 'page.command_center') && (
           <Link to="/" className="flex items-center gap-2 text-white font-semibold text-lg">
             <Logo className="w-7 h-7" />
             <span>Fleet<span className="text-brand-400">Pulse</span></span>
           </Link>
+          )}
           <div className="flex items-center gap-1 ml-6">
             {!isFinance && (<>
             <Link to="/"
@@ -292,25 +294,31 @@ export default function Layout() {
               }`}>
               <Radio className="w-4 h-4 inline mr-1.5 -mt-0.5" />Command Center
             </Link>
+            {can(userFeatures, 'page.garages') && (
             <Link to="/garages"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/garages' || pathname.startsWith('/garage/') ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}>
               <LayoutDashboard className="w-4 h-4 inline mr-1.5 -mt-0.5" />Garages
             </Link>
+            )}
+            {can(userFeatures, 'page.queue') && (
             <Link to="/queue"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/queue' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}>
               <ListOrdered className="w-4 h-4 inline mr-1.5 -mt-0.5" />Queue
             </Link>
+            )}
+            {can(userFeatures, 'page.forecast') && (
             <Link to="/forecast"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/forecast' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}>
               <CloudSun className="w-4 h-4 inline mr-1.5 -mt-0.5" />Forecast
             </Link>
-            {features.pta_advisor !== false && (
+            )}
+            {features.pta_advisor !== false && can(userFeatures, 'page.pta') && (
               <Link to="/pta"
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   pathname === '/pta' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -318,7 +326,7 @@ export default function Layout() {
                 <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />PTA Advisor
               </Link>
             )}
-            {features.onroute !== false && (
+            {features.onroute !== false && can(userFeatures, 'page.route_tracker') && (
               <Link to="/onroute"
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   pathname === '/onroute' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -326,7 +334,7 @@ export default function Layout() {
                 <Truck className="w-4 h-4 inline mr-1.5 -mt-0.5" />Route Tracker
               </Link>
             )}
-            {features.matrix !== false && (
+            {features.matrix !== false && can(userFeatures, 'page.insights') && (
               <Link to="/matrix"
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   pathname === '/matrix' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -335,7 +343,7 @@ export default function Layout() {
               </Link>
             )}
             </>)}
-            {features.accounting !== false && !isSupervisor && (
+            {features.accounting !== false && can(userFeatures, 'page.accounting') && (
             <Link to="/accounting"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/accounting' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -343,7 +351,7 @@ export default function Layout() {
               <DollarSign className="w-4 h-4 inline mr-1.5 -mt-0.5" />Accounting
             </Link>
             )}
-            {!isFinance && (
+            {!isFinance && can(userFeatures, 'page.reporting') && (
             <Link to="/reporting"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/reporting' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -351,7 +359,7 @@ export default function Layout() {
               <FileText className="w-4 h-4 inline mr-1.5 -mt-0.5" />Reporting
             </Link>
             )}
-            {features.scheduler_report_card === true && userFeatures.includes('scheduler.replay') && (
+            {features.scheduler_report_card === true && can(userFeatures, 'scheduler.replay') && userFeatures !== null && (
             <Link to="/replay"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 pathname === '/replay' ? 'bg-brand-600/20 text-brand-300' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -361,21 +369,25 @@ export default function Layout() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-1">
-            <SASearch callStory={features.call_story === true && userFeatures.includes('scheduler.report_card')} />
+            <SASearch callStory={features.call_story === true && can(userFeatures, 'scheduler.report_card') && userFeatures !== null} />
             <div className="w-px h-5 bg-slate-700/50 mx-1" />
+            {can(userFeatures, 'page.issues') && (
             <Link to="/issues" title="Report / Track Bugs"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/issues' ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'
               }`}>
               <Bug className="w-4 h-4" />
             </Link>
+            )}
+            {can(userFeatures, 'page.help') && (
             <Link to="/help" title="Help Center"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/help' ? 'text-brand-400' : 'text-slate-500 hover:text-slate-300'
               }`}>
               <HelpCircle className="w-4 h-4" />
             </Link>
-            {!isFinance && (role === 'superadmin' || role === 'admin' || role === 'executive' || role === 'ers-director') && (
+            )}
+            {!isFinance && userFeatures !== null && (can(userFeatures, 'admin.panel') || can(userFeatures, 'admin.reference_data')) && (
             <Link to="/admin" title="Settings"
               className={`p-1.5 rounded-lg transition-all ${
                 pathname === '/admin' ? 'text-brand-400' : 'text-slate-500 hover:text-slate-300'

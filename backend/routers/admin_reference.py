@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 import openpyxl
 import db_adapter
+from permissions import can_access
 from routers.accounting_calc import invalidate_hdv_cache as _invalidate_hdv_cache, invalidate_fuel_cache as _invalidate_fuel_cache
 
 log = logging.getLogger("admin_reference")
@@ -14,7 +15,6 @@ router = APIRouter()
 _ADMIN_PIN = os.getenv("ADMIN_PIN")
 _HDV_TABLE_KEY = 'heavy_duty_vehicles'
 _FUEL_TABLE_KEY = 'fuel_reimbursement'
-_REFERENCE_ROLES = {'executive', 'ers-director'}
 
 
 def _maybe_invalidate_caches(table_key: str) -> None:
@@ -33,8 +33,8 @@ def _access_check(request: Request, pin: str = "") -> None:
     payload = _verify_cookie(cookie) if cookie else None
     if payload:
         username = payload.split(":")[0]
-        role = (_users.get_user(username) or {}).get("role", "")
-        if role in _REFERENCE_ROLES:
+        roles = (_users.get_user(username) or {}).get("roles", [])
+        if can_access(roles, "admin.reference_data") and not can_access(roles, "admin.panel"):  # admins still need the PIN
             return
     if not _ADMIN_PIN:
         raise HTTPException(status_code=503, detail="ADMIN_PIN not configured")

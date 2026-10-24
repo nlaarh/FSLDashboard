@@ -41,8 +41,7 @@ def _require_contractor_facilities(request: Request) -> list[str]:
     user = _users.get_user(username) if username else None
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    role = user.get("role", "")
-    if role not in ("superadmin", "admin", "contractor"):
+    if not {"superadmin", "admin", "contractor"} & set(user.get("roles", [])):
         raise HTTPException(status_code=403, detail="Contractor access only")
     garages = _users.get_user_garages(username) if username else []
     if not garages:

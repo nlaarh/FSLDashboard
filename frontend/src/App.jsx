@@ -31,6 +31,8 @@ import ContractorDispatch from './pages/contractor/ContractorDispatch'
 import ContractorMap from './pages/contractor/ContractorMap'
 import SAWatchlist from './components/SAWatchlist'
 import { isEmbedded } from './utils/embed'
+import { homePath } from './utils/access'
+import Gate from './components/Gate'
 
 /*
  * AuthApp — renders the full app when authenticated.
@@ -40,6 +42,7 @@ import { isEmbedded } from './utils/embed'
 function AuthApp() {
   const [department, setDepartment] = useState(null)
   const [role, setRole] = useState(null)
+  const [features, setFeatures] = useState(null)
   const [authed, setAuthed] = useState(null) // null=loading | true=ok | false=401
 
   useEffect(() => {
@@ -52,6 +55,7 @@ function AuthApp() {
         if (!d) return
         setDepartment(d.department || '')
         setRole(d.role || '')
+        setFeatures(d.features || null)
         setAuthed(true)
       })
       .catch(() => setAuthed(false))
@@ -68,6 +72,8 @@ function AuthApp() {
   const isFinance = department === 'finance'
   const isSupervisor = role === 'ers-supervisor' || role === 'ers-member-relations'
   const isContractor = role === 'contractor'
+  // A staff page: finance-department users go to Accounting; everyone else needs the page's feature.
+  const page = (key, el) => isFinance ? <Navigate to="/accounting" replace /> : <Gate feature={key} features={features}>{el}</Gate>
 
   // Inside Salesforce: the watchlist alone, no FleetPulse nav
   if (embedded && !isContractor) {
@@ -102,32 +108,28 @@ function AuthApp() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={isFinance ? <Navigate to="/accounting" replace /> : <CommandCenter />} />
-        <Route path="/garages" element={isFinance ? <Navigate to="/accounting" replace /> : <Dashboard />} />
-        <Route path="/garage/:id" element={isFinance ? <Navigate to="/accounting" replace /> : <GarageDetail />} />
-        <Route path="/queue" element={isFinance ? <Navigate to="/accounting" replace /> : <QueueBoard />} />
-        <Route path="/pta" element={isFinance ? <Navigate to="/accounting" replace /> : <PtaAdvisor />} />
-        <Route path="/forecast" element={isFinance ? <Navigate to="/accounting" replace /> : <Forecast />} />
-        <Route path="/onroute" element={isFinance ? <Navigate to="/accounting" replace /> : <OnRoute />} />
-        <Route path="/matrix" element={isFinance ? <Navigate to="/accounting" replace /> : <MatrixAdvisor />} />
-        <Route path="/accounting" element={(isFinance || isSupervisor) ? (isSupervisor ? <Navigate to="/" replace /> : <Accounting />) : <Accounting />} />
+        <Route path="/" element={page('page.command_center', <CommandCenter />)} />
+        <Route path="/garages" element={page('page.garages', <Dashboard />)} />
+        <Route path="/garage/:id" element={page('page.garages', <GarageDetail />)} />
+        <Route path="/queue" element={page('page.queue', <QueueBoard />)} />
+        <Route path="/pta" element={page('page.pta', <PtaAdvisor />)} />
+        <Route path="/forecast" element={page('page.forecast', <Forecast />)} />
+        <Route path="/onroute" element={page('page.route_tracker', <OnRoute />)} />
+        <Route path="/matrix" element={page('page.insights', <MatrixAdvisor />)} />
+        <Route path="/accounting" element={<Gate feature="page.accounting" features={features}><Accounting /></Gate>} />
         <Route path="/accounting/woa/:woaId" element={<AccountingWoaDetail />} />
         <Route path="/data" element={<Navigate to="/help" replace />} />
-        <Route path="/issues" element={isFinance ? <Navigate to="/accounting" replace /> : <Issues />} />
-        <Route path="/help" element={isFinance ? <Navigate to="/accounting" replace /> : <Help />} />
-        <Route path="/admin" element={
-          (role === 'superadmin' || role === 'admin' || role === 'executive' || role === 'ers-director')
-            ? <Admin role={role} />
-            : <Navigate to="/" replace />
-        } />
+        <Route path="/issues" element={page('page.issues', <Issues />)} />
+        <Route path="/help" element={page('page.help', <Help />)} />
+        <Route path="/admin" element={<Gate feature={['admin.panel', 'admin.reference_data']} features={features}><Admin userFeatures={features} /></Gate>} />
         <Route path="/optimizer" element={<Navigate to="/" replace />} />
-        <Route path="/reporting" element={isFinance ? <Navigate to="/accounting" replace /> : <Reporting />} />
+        <Route path="/reporting" element={page('page.reporting', <Reporting />)} />
         {/* Gated server-side: scheduler_report_card flag + scheduler.report_card permission */}
         <Route path="/report-card" element={isFinance ? <Navigate to="/accounting" replace /> : <SchedulerReportCard />} />
         <Route path="/replay" element={isFinance ? <Navigate to="/accounting" replace /> : <SchedulerReportCard view="replay" />} />
         <Route path="/call-story" element={isFinance ? <Navigate to="/accounting" replace /> : <CallStory />} />
-        <Route path="/sa-watchlist" element={isFinance ? <Navigate to="/accounting" replace /> : <div className="-mx-6 -mt-6 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}><SAWatchlist /></div>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/sa-watchlist" element={page('page.sa_watchlist', <div className="-mx-6 -mt-6 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}><SAWatchlist /></div>)} />
+        <Route path="*" element={<Navigate to={homePath(features) || '/'} replace />} />
       </Route>
     </Routes>
   )

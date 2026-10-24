@@ -237,3 +237,27 @@ def reset_client(monkeypatch, sqlite_db):
     app = FastAPI()
     app.include_router(pr.router)
     return TestClient(app), sqlite_db
+
+
+@pytest.fixture
+def access_db(sqlite_db, monkeypatch):
+    """sqlite_db plus the access matrix tables and activity_log, with a guard that no real Postgres can be reached."""
+    import os
+    import access_store
+    import users
+    from repositories.access import DDL
+
+    monkeypatch.setenv("DB_PRIMARY", "sqlite")
+    assert isinstance(sys.modules["pg_pool"], MagicMock), "pg_pool must be a mock, never the real Postgres pool"
+    assert not [k for k, v in os.environ.items() if str(v).startswith(("postgres://", "postgresql://"))], \
+        "a Postgres URL is set in the environment; refusing to run access tests"
+    for ddl in DDL:
+        sqlite_db.execute(ddl)
+    sqlite_db.execute('CREATE TABLE activity_log (id INTEGER PRIMARY KEY, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, "user" TEXT, '
+                      "action TEXT, endpoint TEXT, method TEXT, status_code INT, duration_ms REAL, ip TEXT, user_agent TEXT, detail TEXT)")
+    sqlite_db.commit()
+    monkeypatch.setattr(users, "_trigger_backup", lambda: None)
+    monkeypatch.setattr(users, "_user_cache", {})
+    access_store.invalidate()
+    yield sqlite_db
+    access_store.invalidate()

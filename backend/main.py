@@ -19,7 +19,7 @@ from compression import SelectiveGZipMiddleware, ImmutableStaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 # Auth helpers needed by middleware
-from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _finance_ok, _supervisor_blocked, _admin_allowed, _reference_allowed
+from routers.auth import _verify_cookie, _PUBLIC_PATHS, _get_department, _get_role, _get_roles, _finance_ok, _supervisor_blocked, _admin_allowed, _reference_allowed, _accounting_blocked
 import cache
 import refresher
 import sf_client
@@ -114,7 +114,10 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "Access restricted"})
         if role == 'contractor' and path.startswith('/api/admin/'):
             return JSONResponse(status_code=403, content={"detail": "Access restricted"})
-        if path.startswith('/api/admin/') and not _admin_allowed(role) and not _reference_allowed(role, path):
+        roles = _get_roles(username)
+        if _accounting_blocked(roles, path):
+            return JSONResponse(status_code=403, content={"detail": "Access restricted"})
+        if path.startswith('/api/admin/') and not _admin_allowed(roles) and not _reference_allowed(roles, path):
             return JSONResponse(status_code=403, content={"detail": "Admin access restricted"})
         return await call_next(request)
     # Local dev: no auth needed
@@ -187,7 +190,7 @@ async def activity_log_middleware(request: Request, call_next):
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (
-    auth, auth_pages, admin, garages, garages_performance, garages_revenue, command_center, ops,
+    auth, auth_pages, admin, admin_access, garages, garages_performance, garages_revenue, command_center, ops,
     map as map_router,
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
@@ -204,6 +207,7 @@ from routers import (
 app.include_router(auth.router)
 app.include_router(auth_pages.router)
 app.include_router(admin.router)
+app.include_router(admin_access.router)
 app.include_router(garages.router)
 app.include_router(command_center.router)
 app.include_router(ops.router)

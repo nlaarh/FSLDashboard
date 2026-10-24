@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
 import { RefreshCw } from 'lucide-react'
+import { useFeatures, can } from '../utils/access'
 import { fetchPerformance, fetchScorecard, fetchScore, fetchDecomposition } from '../api'
 import GaragePerformance from './GaragePerformance'
 import GarageOperations from './GarageOperations'
@@ -74,19 +75,16 @@ export default function GarageDashboard({ garageId, garageName }) {
   const [opsRefreshKey,  setOpsRefreshKey]  = useState(0)
   const [revRefreshKey,  setRevRefreshKey]  = useState(0)
   const [refreshing, setRefreshing]         = useState(false)
-  const [features, setFeatures]             = useState(null)
+  const features = useFeatures()
 
+  const canSeeRevPerf = can(features, 'garage.revenue_performance')
+  const canSeeOps = can(features, 'garage.tab_operations')
+
+  // Switch to a sub-tab the user may see if their role does not allow the current one
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.ok ? r.json() : {}).then(d => setFeatures(d.features || []))
-  }, [])
-
-  const canSeeRevPerf = features === null || features.includes('garage.revenue_performance')
-
-  // Auto-switch to Operations if role doesn't allow Performance/Revenue tabs
-  useEffect(() => {
-    if (features !== null && !canSeeRevPerf && (activeTab === 'performance' || activeTab === 'revenue')) {
-      setActiveTab('operations')
-    }
+    if (features === null) return
+    const ok = { performance: canSeeRevPerf, revenue: canSeeRevPerf, operations: canSeeOps }
+    if (!ok[activeTab]) setActiveTab(canSeeRevPerf ? 'performance' : 'operations')
   }, [features])
 
   const handleRefresh = () => {
@@ -151,7 +149,7 @@ export default function GarageDashboard({ garageId, garageName }) {
       {/* TAB BAR + DATE PILLS + CUSTOM RANGE */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
-          {[...(canSeeRevPerf ? [['performance', 'Performance']] : []), ['operations', 'Operations'], ...(canSeeRevPerf ? [['revenue', 'Revenue']] : [])].map(([key, label]) => (
+          {[...(canSeeRevPerf ? [['performance', 'Performance']] : []), ...(canSeeOps ? [['operations', 'Operations']] : []), ...(canSeeRevPerf ? [['revenue', 'Revenue']] : [])].map(([key, label]) => (
             <button key={key}
               onClick={() => setActiveTab(key)}
               className={clsx('px-4 py-1.5 rounded-md text-xs font-semibold transition',
