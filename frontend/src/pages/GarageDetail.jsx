@@ -5,13 +5,14 @@ import ScheduleGrid from '../components/ScheduleGrid'
 import MapView from '../components/MapView'
 import GarageDashboard from '../components/GarageDashboard'
 import GarageSatisfactionTab from '../components/GarageSatisfactionTab'
+import { useFeatures, can } from '../utils/access'
 import { ArrowLeft, Calendar, BarChart3, Map, Star, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const TABS = [
-  { key: 'schedule',     label: 'Schedule',          icon: Calendar },
-  { key: 'dashboard',    label: 'Dashboard',         icon: BarChart3 },
-  { key: 'dispatch',     label: 'Dispatch Map',      icon: Map },
-  { key: 'satisfaction', label: 'Satisfaction Score', icon: Star },
+  { key: 'schedule',     label: 'Schedule',          icon: Calendar, feature: 'garage.tab_schedule' },
+  { key: 'dashboard',    label: 'Dashboard',         icon: BarChart3, feature: 'garage.tab_dashboard' },
+  { key: 'dispatch',     label: 'Dispatch Map',      icon: Map, feature: 'garage.tab_dispatch_map' },
+  { key: 'satisfaction', label: 'Satisfaction Score', icon: Star, feature: 'garage.tab_satisfaction' },
 ]
 
 import { getWeek as getWeekDates, todayEastern } from '../utils/dateHelpers'
@@ -23,7 +24,10 @@ export default function GarageDetail() {
   const rawTab = searchParams.get('tab')
   const mappedTab = rawTab === 'scorecard' || rawTab === 'performance' ? 'dashboard' : rawTab
   const initialTab = TABS.find(t => t.key === mappedTab)?.key ?? 'schedule'
-  const [tab, setTab] = useState(initialTab)
+  const [pickedTab, setTab] = useState(initialTab)
+  const features = useFeatures()
+  const tabs = TABS.filter(t => can(features, t.feature))
+  const tab = tabs.some(t => t.key === pickedTab) ? pickedTab : tabs[0]?.key   // a tab the user may not see falls back to their first one
   const [schedule, setSchedule] = useState(null)
   const [simulation, setSimulation] = useState(null)
   const [loading, setLoading] = useState({})
@@ -83,7 +87,7 @@ export default function GarageDetail() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-slate-900 rounded-xl mb-6 w-fit">
-        {TABS.map(t => (
+        {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}

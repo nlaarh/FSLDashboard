@@ -13,6 +13,7 @@ export default function AccountingToolbar({
   searchDebounce,
   loading,
   activeTab,
+  tabs,
   products,
   onStatusFilterChange,
   onProductChange,
@@ -73,7 +74,7 @@ export default function AccountingToolbar({
       </div>
 
       <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60 -mx-0">
-        {[{ id: 'woa', label: 'WO Adjustments' }, { id: 'analytics', label: 'Analytics' }, { id: 'help', label: 'Help & Guide' }].map(t => (
+        {tabs.map(t => (
           <button key={t.id} onClick={() => onTabChange(t.id)}
             className={clsx('px-4 py-2 text-xs font-medium border-b-2 transition-colors -mb-px',
               activeTab === t.id

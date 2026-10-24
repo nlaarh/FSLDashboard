@@ -8,6 +8,7 @@ import {
 import { fetchWOAdjustments, fetchWOAAudit, refreshAccountingWOAs } from '../api'
 import AccountingAnalytics from '../components/AccountingAnalytics'
 import AccountingToolbar from '../components/AccountingToolbar'
+import { useFeatures, can } from '../utils/access'
 import HelpAccounting from '../components/HelpAccounting'
 import { productCode, formatQty } from '../utils/formatting'
 
@@ -136,6 +137,12 @@ function _loadFilters() {
   try { return JSON.parse(sessionStorage.getItem(_SS_KEY) || 'null') || {} } catch { return {} }
 }
 
+const ACCOUNTING_TABS = [
+  { id: 'woa', label: 'WO Adjustments', feature: 'accounting.tab_wo_adjustments' },
+  { id: 'analytics', label: 'Analytics', feature: 'accounting.tab_analytics' },
+  { id: 'help', label: 'Help & Guide', feature: 'accounting.tab_help' },
+]
+
 export default function Accounting() {
   const navigate = useNavigate()
   const [items, setItems] = useState([])
@@ -154,7 +161,10 @@ export default function Accounting() {
   const [endDate, setEndDate] = useState(_f.endDate || '')
   const [sort, setSort] = useState(_f.sort || { col: 'created_date', dir: 'desc' })
   const [page, setPage] = useState(_f.page || 0)
-  const [activeTab, setActiveTab] = useState(_f.activeTab || 'woa')
+  const [pickedTab, setActiveTab] = useState(_f.activeTab || 'woa')
+  const features = useFeatures()
+  const tabs = ACCOUNTING_TABS.filter(t => can(features, t.feature))
+  const activeTab = tabs.some(t => t.id === pickedTab) ? pickedTab : tabs[0]?.id   // a tab the user may not see falls back to their first one
   const [auditOverrides, setAuditOverrides] = useState({})
   const _prefetchTimer = useRef(null)
   const _prefetching = useRef(new Set())
@@ -271,6 +281,7 @@ export default function Accounting() {
         searchDebounce={searchDebounce}
         loading={loading}
         activeTab={activeTab}
+        tabs={tabs}
         products={PRODUCTS}
         onStatusFilterChange={(value) => { setStatusFilter(value); setPage(0) }}
         onProductChange={(value) => { setProduct(value); setPage(0) }}

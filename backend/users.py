@@ -7,7 +7,9 @@ No SQLite fallback. Sessions tracked in-memory (cleared on restart).
 import hashlib, os, secrets, time, threading
 
 import bcrypt
+import access_store
 import user_backup
+from permissions import EXCLUSIVE_ROLES
 from repositories import users as _user_repo
 from repositories import user_sessions as _session_repo
 
@@ -161,11 +163,29 @@ def get_user(username: str) -> dict | None:
     if cached is not None:
         return cached
     data = _user_repo.get_user(username)
-    if data and data.get("role") == "contractor":
+    if data:
         data = dict(data)
-        data["territories"] = [g["id"] for g in _user_repo.get_user_garages(username)]
+        data["roles"] = effective_roles(data.get("role"), username)
+        if data.get("role") == "contractor":
+            data["territories"] = [g["id"] for g in _user_repo.get_user_garages(username)]
     _cache_put(username, data)
     return data
+
+
+def effective_roles(primary: str | None, username: str) -> list[str]:
+    """Primary role first, then extra roles (none for an exclusive primary role). Never raises."""
+    roles = [primary] if primary else []
+    if primary not in EXCLUSIVE_ROLES:
+        roles += sorted(access_store.extra_roles(username) - set(roles))
+    return roles
+
+
+def invalidate_user_roles(username: str, primary_changed: bool = False) -> None:
+    """Call after changing a user's roles so the next request sees them."""
+    _cache_invalidate(username)
+    access_store.invalidate()
+    if primary_changed:
+        _trigger_backup()
 
 
 def get_user_with_hash(username: str) -> dict | None:

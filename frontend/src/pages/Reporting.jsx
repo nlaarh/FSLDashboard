@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { FileText, Download, ChevronUp, ChevronDown, Loader2, BarChart3, Search, CheckSquare, Square } from 'lucide-react'
 import MiniDatePicker from '../components/MiniDatePicker'
+import { useFeatures, can } from '../utils/access'
 import { fetchGarages, fetchReportSummary, exportReportSummary } from '../api'
 import { getMonth } from '../utils/dateHelpers'
 import UserAdoptionReport from '../components/UserAdoptionReport'
@@ -86,18 +87,14 @@ function Check({ checked, onChange, label }) {
 }
 
 export default function Reporting() {
-  const [role, setRole] = useState('')
-  const [activeTab, setActiveTab] = useState('garage')
+  const features = useFeatures()
+  const [pickedTab, setActiveTab] = useState('garage')
 
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setRole(d?.role || ''))
-      .catch(() => {})
-  }, [])
-
-  const canViewAdoption = ['superadmin', 'admin', 'executive'].includes(role)
-  const canViewDispatchScore = ['superadmin', 'admin', 'executive'].includes(role)
+  const canViewGarage = can(features, 'reporting.tab_garage_performance')
+  const canViewAdoption = features?.includes('reporting.user_adoption') ?? false
+  const canViewDispatchScore = features?.includes('reporting.dispatch_scorecard') ?? false
+  const allowedTabs = [canViewGarage && 'garage', canViewAdoption && 'adoption', canViewDispatchScore && 'dispatch'].filter(Boolean)
+  const activeTab = allowedTabs.includes(pickedTab) || features === null ? pickedTab : allowedTabs[0]   // a tab the user may not see falls back to their first one
 
   // ── Date range ─────────────────────────────────────────────────────────────
   const thisMonth = getMonth(0)
@@ -208,7 +205,7 @@ export default function Reporting() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 border-b border-slate-800">
-        <button
+        {canViewGarage && <button
           onClick={() => setActiveTab('garage')}
           className={`px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
             activeTab === 'garage'
@@ -216,7 +213,7 @@ export default function Reporting() {
               : 'border-transparent text-slate-500 hover:text-slate-300'
           }`}>
           Garage Performance
-        </button>
+        </button>}
         {canViewAdoption && (
           <button
             onClick={() => setActiveTab('adoption')}

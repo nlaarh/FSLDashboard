@@ -1,5 +1,5 @@
 // Roles offered when adding or editing a user. The server also still accepts the legacy roles
-// manager, officer, supervisor and viewer (backend/routers/admin.py valid_roles); nobody uses them, so they are not offered.
+// manager, officer, supervisor and viewer (backend/permissions.py ROLES); nobody uses them, so they are not offered.
 export const ROLES = ['superadmin', 'admin', 'executive', 'ers-director', 'ers-manager', 'ers-supervisor', 'ers-member-relations', 'ers',
   'finance', 'contractor']
 

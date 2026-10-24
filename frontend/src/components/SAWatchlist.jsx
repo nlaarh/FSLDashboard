@@ -24,6 +24,7 @@ import LiveDispatchBoard from './LiveDispatchBoard'
 import Cancellations from './Cancellations'
 import { fetchWatchlist } from '../api'
 import { pollWhileVisible } from '../utils/pollWhileVisible'
+import { useFeatures, can } from '../utils/access'
 
 const CallMapView = lazy(() => import('./callmap/CallMapView'))   // the full-window call map loads only when opened
 
@@ -473,7 +474,10 @@ export default function SAWatchlist({ contractorMode = false }) {
   const [mapDriver, setMapDriver] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [params, setParams] = useSearchParams()
-  const [activeTab, setActiveTab] = useState(() => params.get('wtab') === 'cancellations' ? 'cancellations' : 'alerts')
+  const [pickedTab, setActiveTab] = useState(() => params.get('wtab') === 'cancellations' ? 'cancellations' : 'alerts')
+  const features = useFeatures()
+  const showTab = key => can(features, `watchlist.tab_${key}`)
+  const activeTab = showTab(pickedTab) ? pickedTab : ['alerts', 'cancellations', 'manual', 'live'].find(showTab)   // a tab the user may not see falls back to their first one
   // The Cancellations sub-tab lives in the URL (?wtab=cancellations) so it can be shared and reloaded; its own filters go with it.
   const pickTab = t => {
     setActiveTab(t)
@@ -564,7 +568,7 @@ export default function SAWatchlist({ contractorMode = false }) {
       {/* ── Sub-tab bar ──────────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center gap-1 px-6 pt-3 pb-0">
         {/* Operational Watchlist tab */}
-        <button onClick={() => pickTab('alerts')}
+        {showTab('alerts') && <button onClick={() => pickTab('alerts')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'alerts' ? TAB_STYLES.alerts.active : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <AlertTriangle className="w-3.5 h-3.5" />
@@ -575,18 +579,18 @@ export default function SAWatchlist({ contractorMode = false }) {
               {operationalAlerts.length}
             </span>
           )}
-        </button>
+        </button>}
 
         {/* Cancellations tab */}
-        <button onClick={() => pickTab('cancellations')}
+        {showTab('cancellations') && <button onClick={() => pickTab('cancellations')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'cancellations' ? 'border-rose-500 text-rose-300 bg-rose-600/10' : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Ban className="w-3.5 h-3.5" />
           Cancellations
-        </button>
+        </button>}
 
         {/* Manual Dispatch SAs tab */}
-        <button onClick={() => pickTab('manual')}
+        {showTab('manual') && <button onClick={() => pickTab('manual')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'manual' ? TAB_STYLES.manual.active : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Lock className="w-3.5 h-3.5" />
@@ -597,15 +601,15 @@ export default function SAWatchlist({ contractorMode = false }) {
               {totalCount}
             </span>
           )}
-        </button>
+        </button>}
 
         {/* ERS Live Board tab */}
-        <button onClick={() => pickTab('live')}
+        {showTab('live') && <button onClick={() => pickTab('live')}
           className={clsx('flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all border-b-2 rounded-t-md',
             activeTab === 'live' ? 'border-emerald-500 text-emerald-300 bg-emerald-600/10' : 'border-transparent text-slate-500 hover:text-white hover:bg-slate-800/40')}>
           <Radio className="w-3.5 h-3.5" />
           ERS Live Board
-        </button>
+        </button>}
 
         {/* Live indicator */}
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">

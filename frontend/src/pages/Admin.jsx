@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Database, Trash2, RefreshCw, Loader2, CheckCircle2, Clock, Server, Map, ToggleRight, Save, Users, BrainCircuit, Table2 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Shield, Database, Trash2, RefreshCw, Loader2, CheckCircle2, Clock, Server, Map, ToggleRight, Save, Users, BrainCircuit, Table2, KeyRound } from 'lucide-react'
 import { adminVerify, adminStatus, adminFlush, adminFlushLive, adminFlushHistorical, adminFlushStatic, adminUpdateSettings, fetchFeatures } from '../api'
 import { MAP_STYLES, getMapStyle, setMapStyle as saveMapStyle } from '../mapStyles'
 import AdminAI from '../components/AdminAI'
@@ -8,14 +9,17 @@ import AdminActivityLog from '../components/AdminActivityLog'
 import AdminOptimizerSync from '../components/AdminOptimizerSync'
 import AdminReferenceData from '../components/AdminReferenceData'
 import AdminSystemHealth from '../components/AdminSystemHealth'
+import AdminAccess from '../components/AdminAccess'
+import { confirmLeave } from '../utils/unsavedGuard'
 
 // NOTE: AdminAccountingRates and bonus tiers section REMOVED — handled by AdminReferenceData
 
 const SESSION_KEY = 'admin_pin'
-const _REFERENCE_ONLY_ROLES = new Set(['executive', 'ers-director'])
 
-export default function Admin({ role = '' }) {
-  const isReferenceOnly = _REFERENCE_ONLY_ROLES.has(role)
+export default function Admin({ userFeatures = null }) {
+  // Without the admin panel (executive, ers-director) the page is the Reference Data table alone, no PIN.
+  const isReferenceOnly = userFeatures !== null && !userFeatures.includes('admin.panel')
+  const canEditAccess = userFeatures !== null && userFeatures.includes('access.edit')
   const [pin, setPin] = useState(() => isReferenceOnly ? '' : (sessionStorage.getItem(SESSION_KEY) || ''))
   const [authed, setAuthed] = useState(isReferenceOnly)
   const [authError, setAuthError] = useState('')
@@ -23,7 +27,9 @@ export default function Admin({ role = '' }) {
   const [loading, setLoading] = useState(false)
   const [flushing, setFlushing] = useState(null)
   const [lastAction, setLastAction] = useState(null)
-  const [activeSection, setActiveSection] = useState('status')
+  const [params, setParams] = useSearchParams()
+  const activeSection = params.get('tab') || 'status'   // ?tab=access etc.
+  const setActiveSection = key => setParams({ tab: key }, { replace: true })
   const [mapStyle, setMapStyleState] = useState(getMapStyle)
 
   // Feature flags
@@ -149,6 +155,7 @@ export default function Admin({ role = '' }) {
     ]},
     { group: 'PEOPLE', items: [
       { key: 'users',    label: 'Users & Sessions', icon: Users },
+      ...(canEditAccess ? [{ key: 'access', label: 'Access', icon: KeyRound }] : []),
     ]},
     { group: 'CONFIGURATION', items: [
       { key: 'settings', label: 'App Settings',     icon: ToggleRight },
@@ -178,7 +185,7 @@ export default function Admin({ role = '' }) {
                   const Icon = item.icon
                   const active = activeSection === item.key
                   return (
-                    <button key={item.key} onClick={() => setActiveSection(item.key)}
+                    <button key={item.key} onClick={() => confirmLeave() && setActiveSection(item.key)}
                       className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all text-left ${
                         active
                           ? 'bg-brand-600/20 text-brand-300'
@@ -426,6 +433,7 @@ export default function Admin({ role = '' }) {
           </div>
         )}
 
+        {activeSection === 'access' && canEditAccess && <AdminAccess />}
         {activeSection === 'ai' && <AdminAI pin={pin} />}
         {activeSection === 'reference' && <AdminReferenceData pin={pin} />}
         {activeSection === 'optimizer' && <AdminOptimizerSync />}

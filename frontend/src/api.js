@@ -347,3 +347,9 @@ export const exportReportSummary = (garageIds, startDate, endDate) => {
   a.click()
   a.remove()
 }
+
+// Access matrix (superadmin only)
+export const fetchAccessMatrix = () => api.get('/admin/access/matrix').then(r => r.data)
+export const saveAccessFeatures = changes => api.put('/admin/access/features', { changes }).then(r => r.data)
+export const fetchAccessUsers = params => api.get('/admin/access/users', { params }).then(r => r.data)
+export const saveAccessUsers = changes => api.put('/admin/access/users', { changes }).then(r => r.data)
