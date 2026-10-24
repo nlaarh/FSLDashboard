@@ -4,6 +4,7 @@ import { clsx } from 'clsx'
 import { DEPTS, roleOptions } from '../constants/users'
 import { FORM_PASSWORD_COPY_KEY, passwordChecks, passwordIssues } from '../utils/passwords'
 import AdminGaragePicker from './AdminGaragePicker'
+import AdminUserRoles from './AdminUserRoles'
 
 export default function AdminUserEditor({
   pin,
@@ -25,6 +26,9 @@ export default function AdminUserEditor({
   emailBody,
   onClose,
   onSave,
+  canEditAccess,
+  rolesEdit,
+  setRolesEdit,
 }) {
   const [emailCopied, setEmailCopied] = useState(false)
   const passwordSectionOpen = !editingUser || passwordChangeOpen
@@ -115,6 +119,13 @@ export default function AdminUserEditor({
               />
             </Field>
           </div>
+
+          {/* Extra roles: superadmin only, existing people only */}
+          {editingUser && canEditAccess && (
+            <div className="mt-4">
+              <AdminUserRoles username={editingUser} primary={userForm.role} state={rolesEdit} setState={setRolesEdit} />
+            </div>
+          )}
 
           {/* Garage picker — contractor role only */}
           {userForm.role === 'contractor' && (
