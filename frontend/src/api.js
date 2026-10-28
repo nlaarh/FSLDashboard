@@ -139,6 +139,8 @@ export const adminVerify = (pin) => api.post('/admin/verify', null, pinHeader(pi
 export const adminStatus = (pin) => api.get('/admin/status', pinHeader(pin)).then(r => r.data)
 export const adminSystemHealth = (pin) => api.get('/admin/system/health', pinHeader(pin)).then(r => r.data)
 export const adminSystemHealthPing = (pin, serviceKey) => api.post(`/admin/system/health/ping/${serviceKey}`, null, pinHeader(pin)).then(r => r.data)
+export const adminSystemKeys = (pin) => api.get('/admin/system/keys', pinHeader(pin)).then(r => r.data)
+export const adminSystemKeysCheck = (pin) => api.post('/admin/system/keys/check', null, pinHeader(pin)).then(r => r.data)
 export const adminSystemHealthBackup = (pin) => api.post('/admin/system/health/backup', null, pinHeader(pin)).then(r => r.data)
 export const adminFlush = (pin, prefix = '') => api.post(`/admin/flush?prefix=${prefix}`, null, pinHeader(pin)).then(r => r.data)
 export const adminFlushLive = (pin) => api.post('/admin/flush/live', null, pinHeader(pin)).then(r => r.data)

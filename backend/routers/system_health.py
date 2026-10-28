@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import cache
 import db_adapter
+import key_health
 from routers.admin import _check_pin, _start_time
 from salesforce_queries.registry import list_named_queries
 from sf_client import get_recent_slow_queries as sf_recent_slow_queries, get_stats as sf_stats
@@ -78,7 +79,29 @@ SERVICE_LINKS = {
     "agentmail":     "https://agentmail.to/",
     "cache":         "",
     "duckdb":        "",
+    "key_vault":     key_health.VAULT_SECRETS_URL,
 }
+
+# Every address an admin may need, shown on the Keys tab.
+ADDRESSES = [
+    ("FleetPulse live site", SERVICE_LINKS["app"]),
+    ("FleetPulse test site", SERVICE_LINKS["app_dr"]),
+    ("Key Vault — all keys (edit here)", key_health.VAULT_SECRETS_URL),
+    ("Live site in Azure (restart after a key change)", key_health.RESTART_URL),
+    ("Test site in Azure", f"{_AZ_SITES}/fslapp-nyaaa-dr/overview"),
+    ("Live database", SERVICE_LINKS["postgres"]),
+    ("Test database", SERVICE_LINKS["dr_postgres"]),
+    ("SalesPulse live site", SERVICE_LINKS["salespulse"]),
+    ("SalesPulse test site", SERVICE_LINKS["salespulse_dr"]),
+    ("Salesforce", SERVICE_LINKS["salesforce"]),
+    ("Microsoft sign-in app (Entra ID)", "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"),
+    ("Code (GitHub)", SERVICE_LINKS["github"]),
+    ("Deploys (GitHub Actions)", f"{SERVICE_LINKS['github']}/actions"),
+    ("Google Maps keys", "https://console.cloud.google.com/google/maps-apis/credentials"),
+    ("OpenAI keys", "https://platform.openai.com/api-keys"),
+    ("Anthropic keys", "https://console.anthropic.com/settings/keys"),
+    ("AgentMail", SERVICE_LINKS["agentmail"]),
+]
 
 
 def _env_file_paths() -> list[Path]:
@@ -403,7 +426,7 @@ def _backup_recovery_report() -> dict:
 
 
 def _build_services() -> dict[str, dict]:
-    return {
+    services = {
         "app": _app_service(),
         "app_dr": _app_dr_service(),
         "salespulse": _salespulse_service(),
@@ -420,6 +443,11 @@ def _build_services() -> dict[str, dict]:
         "github": _configured_service("github", "GitHub"),
         "agentmail": _configured_service("agentmail", "AgentMail"),
     }
+    # A broken key turns its node red on the diagram.
+    for node, message in key_health.broken_nodes().items():
+        if node in services:
+            services[node] = {**services[node], "status": "unhealthy", "summary": message, "key_broken": True}
+    return services
 
 
 @router.get("/api/admin/system/health")
@@ -439,6 +467,31 @@ def system_health(request: Request):
         "backup_recovery": _backup_recovery_report(),
         "environment": _env_report(),
     }
+
+
+def _keys_payload(state: dict) -> dict:
+    return {**state, "vault_url": key_health.VAULT_SECRETS_URL, "restart_url": key_health.RESTART_URL,
+            "addresses": [{"label": label, "url": url} for label, url in ADDRESSES]}
+
+
+@router.get("/api/admin/system/keys")
+def system_keys(request: Request):
+    """Last hourly key check (does each outside key still work?) plus where to fix things."""
+    _check_pin(request)
+    return _keys_payload(key_health.last_results())
+
+
+_last_manual_check = [0.0]
+
+
+@router.post("/api/admin/system/keys/check")
+def system_keys_check(request: Request):
+    """Test every key now (free calls only; at most once a minute)."""
+    _check_pin(request)
+    if time.time() - _last_manual_check[0] < 60:
+        raise HTTPException(status_code=429, detail="Keys were just checked. Try again in a minute.")
+    _last_manual_check[0] = time.time()
+    return _keys_payload(key_health.check_and_alert())
 
 
 @router.post("/api/admin/system/health/backup")

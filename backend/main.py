@@ -580,6 +580,10 @@ async def startup():
     threading.Thread(target=gps_store.run_forever, daemon=True, name='gps-sampler').start()
     threading.Thread(target=facts_job.run_forever, daemon=True, name='facts-job').start()
 
+    # Hourly key check: tests each outside key, emails admins when one breaks (Admin → System Health → Keys)
+    import key_health
+    key_health.start()
+
     # Optimizer blob sync — disabled until DuckDB is re-enabled
     # import optimizer_blob_sync
     # optimizer_blob_sync.start()

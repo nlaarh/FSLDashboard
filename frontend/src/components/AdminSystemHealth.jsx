@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { AlertCircle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { adminSystemHealth, adminSystemHealthPing } from '../api'
 import SystemHealthDetails from './system-health/SystemHealthDetails'
+import SystemHealthKeys from './system-health/SystemHealthKeys'
 import SystemHealthTopology from './system-health/SystemHealthTopology'
 import { StatusBadge, normalizeStatus } from './system-health/systemHealthUi'
+
+const VIEWS = [
+  { key: 'keys', label: 'Keys' },
+  { key: 'diagram', label: 'Diagram' },
+  { key: 'details', label: 'Backups & settings' },
+]
 
 const INITIAL_LOGS = [
   'Initializing tactical system health dashboard...',
@@ -18,6 +26,9 @@ export default function AdminSystemHealth({ pin }) {
   const [logs, setLogs] = useState(INITIAL_LOGS)
   const [pinging, setPinging] = useState({})
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [params, setParams] = useSearchParams()
+  const view = VIEWS.some((v) => v.key === params.get('view')) ? params.get('view') : 'keys'
+  const setView = (key) => setParams((p) => { p.set('view', key); return p }, { replace: true })
 
   const appendLog = useCallback((message) => {
     const stamp = new Date().toLocaleTimeString()
@@ -100,7 +111,7 @@ export default function AdminSystemHealth({ pin }) {
               FSLPulse Tactical System Health
             </h2>
             <p className="mt-1 text-[12px] text-slate-500">
-              No automatic paid-provider pings. Salesforce, Google Maps, OpenAI, GitHub, AgentMail, and Azure show configured status until a safe manual check is requested.
+              Keys are tested every hour with free calls only. Salesforce is judged from the app's own last login, never pinged.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -125,16 +136,34 @@ export default function AdminSystemHealth({ pin }) {
         </div>
       </div>
 
-      <SystemHealthTopology
-        health={health}
-        logs={logs}
-        loading={loading}
-        pinging={pinging}
-        onRefresh={() => load()}
-        onPing={(serviceKey) => pingNode(serviceKey)}
-      />
+      <div className="flex gap-1 border-b border-slate-700/40">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            onClick={() => setView(v.key)}
+            className={`-mb-px border-b-2 px-4 py-2 text-[12px] font-semibold transition ${view === v.key ? 'border-indigo-400 text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
 
-      <SystemHealthDetails health={health} pin={pin} onRefresh={load} setSuccess={setSuccess} setError={setError} />
+      {view === 'keys' && <SystemHealthKeys pin={pin} />}
+
+      {view === 'diagram' && (
+        <SystemHealthTopology
+          health={health}
+          logs={logs}
+          loading={loading}
+          pinging={pinging}
+          onRefresh={() => load()}
+          onPing={(serviceKey) => pingNode(serviceKey)}
+        />
+      )}
+
+      {view === 'details' && (
+        <SystemHealthDetails health={health} pin={pin} onRefresh={load} setSuccess={setSuccess} setError={setError} />
+      )}
 
       {success && <Toast tone="success" message={success} />}
       {error && <Toast tone="error" message={error} />}
