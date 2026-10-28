@@ -47,7 +47,7 @@ def _get_ip(request: Request) -> str:
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", secrets.token_hex(32))
 _DEV_AUTO_LOGIN = os.environ.get("DEV_AUTO_LOGIN", "false").lower() == "true"
 
-_PUBLIC_PATHS = {"/login", "/forgot-password", "/reset-password", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/verify-reset-pin", "/api/auth/reset-password", "/api/health", "/api/features", "/favicon.ico", "/embed/canvas"}
+_PUBLIC_PATHS = {"/login", "/forgot-password", "/reset-password", "/api/auth/login", "/api/auth/sso/login", "/api/auth/sso/callback", "/api/auth/forgot-password", "/api/auth/verify-reset-pin", "/api/auth/reset-password", "/api/health", "/api/features", "/favicon.ico", "/embed/canvas"}
 
 # Paths finance-department users may call (everything else → 403)
 _FINANCE_ALLOWED = ('/api/auth/', '/api/accounting/', '/api/health', '/api/features')
