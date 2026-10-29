@@ -17,6 +17,41 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.26 — 2026-10-29
+
+| | |
+|---|---|
+| Tag | `release/v1.26` |
+| Commit | `5ddf499` (merge of PR #37, branch `feature/watchlist-restricted-road`) |
+| Bundle | `index-BVy2Atwh.js` |
+| Deploy | GitHub Actions run `40903683844`, 2026-10-29 ~noon ET, success (owner: "deploy and be ready to roll back"). Live checks: /api/health 200, /api/watchlist 200 with 7 flags, none on an en-route call. No I-90 call was open at deploy time. |
+| Roll back to | `release/v1.25` = `c2f9de6` |
+
+**What changed**
+- New Watchlist flag **Potential Restricted Road**: the address names I-90 (I-90, I90, Interstate 90…), or says "Thruway" and the call's map point is within a mile of the I-90 Thruway. Not flagged: I-190, State Route 90 (NY-90), Thruway Plaza/Park Drive. The I-90 line is a built-in 69 KB file (`backend/i90_thruway_line.py`, OpenStreetMap), about 228 KB of memory, no cache, no extra Salesforce reads. 60-day replay: 98 calls, all on I-90.
+- **Service Territory Needs Action** clears once the call is En Route, On Location or In Progress.
+- **No Service Resource** clears once the call is En Route or a driver is on it.
+
+Files: `backend/routers/watchlist_alerts.py`, `backend/routers/watchlist.py`, `backend/i90_thruway_line.py`, `frontend/src/components/SAWatchlist.jsx`, tests.
+
+---
+
+## v1.25 — 2026-10-28
+
+| | |
+|---|---|
+| Tag | `release/v1.25` |
+| Commit | `c2f9de6` (merge of PR #36, branch `feature/microsoft-sso`) |
+| Bundle | `index-BpE8ljSr.js` |
+| Deploy | GitHub Actions run `40800708342`, 2026-10-28 ~9:35 PM ET, success (owner asked to deploy). |
+| Roll back to | `release/v1.24` = `63ec8a4` |
+
+**What changed**
+- **Sign in with Microsoft** (AAA tenant) as a second login option; matches an existing active user by work email, never creates users. The button only shows when the app settings `SSO_TenantId`, `SSO_UserName`, `SSO_API` are set. **Currently OFF:** the settings were added (Key Vault `SSO-TENANT-ID`, `SSO-CLIENT-ID`, `SSO-CLIENT-SECRET`) and then removed from the app at the owner's request, because AAA IT has not yet granted admin consent for the FleetPulse app and Chrome showed a warning. The vault secrets are kept; re-adding the three settings turns it back on.
+- **System Health → Keys** tab: hourly check of outside keys, Key Vault links, admin email when a key breaks.
+
+---
+
 ## v1.24 — 2026-10-24
 
 | | |
