@@ -12,7 +12,7 @@ Evaluates active SAs against 7 categories:
    (WO-level: see find_no_sa_wos / build_no_sa_wo_alerts)
 9. No Service Resource — Scheduled Start was cleared (SAHistory) and is still blank; not when Towbook accepted it
 10. Service Territory Needs Action — territory blank or starts with a letter (should start with a number), SA > 2 min old
-11. Potential Restricted Road — breakdown street is on I-90 (NYS Thruway), which we can't service
+11. Potential Restricted Road — breakdown is on the I-90 NYS Thruway (see is_restricted_road), which we can't service
 Flags 9 and 10 clear once the call is En Route; 9 also clears once a driver (AssignedResource) is on the call.
 """
 
@@ -23,6 +23,7 @@ from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, timezone
 
 import cache as _cache
+from i90_thruway_line import I90_THRUWAY_LINES
 from sf_batch import batch_soql_parallel
 from sf_client import sf_query_all
 from utils import parse_dt as _parse_dt
@@ -60,12 +61,17 @@ SCHED_CLEARED_FLAG = 'No Service Resource'
 TERRITORY_FLAG = 'Service Territory Needs Action'
 RESTRICTED_ROAD_FLAG = 'Potential Restricted Road'
 
-# Owner rule (2026-10-29): I-90 is the NYS Thruway, we can't service it. Spellings seen in Street:
-# 'I-90 E', 'INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E', 'NEW YORK 90', 'NY-90', 'STATE ROUTE 90 N', 'RT-90'.
-# '90' must not be followed by a digit and the road word must start a word, so I-190, I-490, NEW YORK 390,
-# INTERSTATE 900 and '900 THRUWAY PLAZA DRIVE' never match; 'COUNTY ROUTE 90' is a local road, not I-90.
-_RESTRICTED_ROAD_RE = re.compile(
-    r'(?<!COUNTY )\b(?:INTERSTATE(?:\s+HIGHWAY)?|I|NY|NEW\s+YORK|ROUTE|RT|NYS\s+THRUWAY)[\s-]*90(?!\d)', re.IGNORECASE)
+# Owner rule (2026-10-29): I-90 is the NYS Thruway, we can't service it. Checked on 60 days of calls:
+# - Street says I-90 ('I-90 E', 'I90', 'INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E') -> always I-90, even when the map
+#   point is a town centre miles away. '90' must not be followed by a digit, so I-190/I-490/INTERSTATE 900 never match.
+# - Street says THRUWAY with no 90 ('NEW YORK STATE THRUWAY', 'GOVERNOR THOMAS E. DEWEY THRUWAY') -> I-90 only when the
+#   map point is near the I-90 line; otherwise it is the I-190 Niagara Thruway (Grand Island, Tonawanda).
+#   'THRUWAY PLAZA/PARK DRIVE' and 'THRUWAY MALL' are ordinary streets.
+# - Never: NY-90 / NEW YORK 90 / ROUTE 90 (State Route 90, Cayuga County), and never the map point alone (houses next to
+#   the highway, interchanges).
+_I90_RE = re.compile(r'\b(?:INTERSTATE(?:\s+HIGHWAY)?|I)[\s-]*90(?!\d)', re.IGNORECASE)
+_THRUWAY_RE = re.compile(r'\bTHRUWAY\b(?!\s+(?:PLAZA|PARK|MALL)\b)', re.IGNORECASE)
+_THRUWAY_NEAR_I90_M = 1600   # about a mile
 
 # From En Route on, a call no longer needs these two flags (owner rule 2026-10-29).
 _ENROUTE_OR_LATER = {'En Route', 'On Location', 'In Progress'}
@@ -148,8 +154,28 @@ def _territory_needs_action(sa: dict, wo_territory: str | None) -> bool:
     return any(not (n or '').strip() or (n or '').strip()[0].isalpha() for n in names)
 
 
-def is_restricted_road(street: str | None) -> bool:
-    return bool(street and _RESTRICTED_ROAD_RE.search(street))
+def _metres_to_i90(lat: float, lon: float) -> float:
+    """Shortest distance from a point to the I-90 Thruway line (flat-earth maths, fine at this scale)."""
+    cx, cy = cos(radians(lat)) * 111320, 110540
+    best = float('inf')
+    for line in I90_THRUWAY_LINES:
+        for (alat, alon), (blat, blon) in zip(line, line[1:]):
+            ax, ay, bx, by = (alon - lon) * cx, (alat - lat) * cy, (blon - lon) * cx, (blat - lat) * cy
+            dx, dy = bx - ax, by - ay
+            seg = dx * dx + dy * dy
+            t = 0 if seg == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / seg))
+            best = min(best, sqrt((ax + t * dx) ** 2 + (ay + t * dy) ** 2))
+    return best
+
+
+def is_restricted_road(street: str | None, lat: float | None = None, lon: float | None = None) -> bool:
+    """Breakdown on the I-90 Thruway: the street names I-90, or names the Thruway and the map point is near I-90."""
+    if not street:
+        return False
+    if _I90_RE.search(street):
+        return True
+    return (bool(_THRUWAY_RE.search(street)) and lat is not None and lon is not None
+            and _metres_to_i90(lat, lon) <= _THRUWAY_NEAR_I90_M)
 
 
 def _older_than(sa: dict, now_utc: datetime, secs: int) -> bool:
@@ -220,7 +246,7 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
         flags_hit = []
 
         # ── Flag: Potential Restricted Road (breakdown street on I-90; drop-off address is the destination) ──
-        if not is_drop_off and is_restricted_road(sa.get('Street')):
+        if not is_drop_off and is_restricted_road(sa.get('Street'), sa.get('Latitude'), sa.get('Longitude')):
             flags_hit.append(RESTRICTED_ROAD_FLAG)
 
         # ── Flag 1: Call At Risk of Missing PTA (within 20 min OR already late) ──

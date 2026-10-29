@@ -848,7 +848,7 @@ export default function SAWatchlist({ contractorMode = false }) {
                   </div>
                   <div>
                     <span className="text-red-300 font-bold">Potential Restricted Road</span>
-                    <p className="pl-2 mt-0.5">The breakdown street is on I-90 (Interstate 90, I90, NY-90, Route 90, New York 90, NYS Thruway 90…). I-90 is the NYS Thruway, which we can't service.</p>
+                    <p className="pl-2 mt-0.5">The breakdown is on the I-90 NYS Thruway, which we can't service: the address says I-90 (I90, Interstate 90…), or it says Thruway and the call's map point is within a mile of I-90. Not flagged: I-190, State Route 90 (NY-90), Thruway Plaza/Park Drive.</p>
                   </div>
                   <div>
                     <span className="text-purple-400 font-bold">Call Not Closed</span>

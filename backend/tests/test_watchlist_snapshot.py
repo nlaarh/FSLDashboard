@@ -387,19 +387,30 @@ def test_no_service_resource_clears_once_a_driver_is_on_the_call():
     assert flags_of(snapshot(rows, sched_cleared={'08pS1', '08pS2'})) == {'08pS2': 'No Service Resource'}
 
 
-@pytest.mark.parametrize('street', [
-    'I-90 E', 'I90', 'I 90', 'Interstate 90', '3111 INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E', 'NY-90', '174 NY-90',
-    'New York 90', '6563 NEW YORK 90', 'Route 90', '1897 STATE ROUTE 90 N', '13294 RT-90', 'NYS Thruway 90',
-    'New York 90 & Champlin Road'])
-def test_restricted_road_matches_i90_spellings(street):
-    assert wa.is_restricted_road(street)
+ON_I90 = (43.01915, -78.18159)      # a point on the Thruway line near Batavia
+GRAND_ISLAND = (43.0170, -78.9627)  # on I-190, the Niagara Thruway
+CAYUGA = (42.9203, -76.7268)        # State Route 90
 
 
 @pytest.mark.parametrize('street', [
-    'I-190', 'I-390', 'INTERSTATE 490', 'NEW YORK 390', 'I-990', 'RT-390', 'INTERSTATE 900', '900 THRUWAY PLAZA DRIVE',
-    '90 WEST MAIN STREET', '3590 SOUTHWESTERN BLVD', 'NY STATE THRUWAY', '14060 COUNTY ROUTE 90', '', None])
-def test_restricted_road_ignores_other_roads(street):
-    assert not wa.is_restricted_road(street)
+    'I-90 E', 'I90', 'I 90', 'Interstate 90', '3111 INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E', 'I-90 | far map point'])
+def test_restricted_road_when_street_names_i90_wherever_the_map_point_is(street):
+    assert wa.is_restricted_road(street, *CAYUGA) and wa.is_restricted_road(street)
+
+
+@pytest.mark.parametrize('street', ['NEW YORK STATE THRUWAY', 'GOVERNOR THOMAS E. DEWEY THRUWAY', 'NY State Thruway, mile 292'])
+def test_thruway_street_counts_only_near_i90(street):
+    assert wa.is_restricted_road(street, *ON_I90)
+    assert not wa.is_restricted_road(street, *GRAND_ISLAND)    # I-190
+    assert not wa.is_restricted_road(street)                   # no map point: can't tell
+
+
+@pytest.mark.parametrize('street', [
+    'I-190', 'I-390', 'INTERSTATE 490', 'I-990', 'INTERSTATE 900', 'NY-90', '6563 NEW YORK 90', 'ROUTE 90',
+    '1897 STATE ROUTE 90 N', 'RT-90', '14060 COUNTY ROUTE 90', '900 THRUWAY PLAZA DRIVE', '75 THRUWAY PARK DR',
+    '700 THRUWAY MALL', '2323 Clinton St', '', None])
+def test_restricted_road_ignores_other_roads_even_on_the_i90_line(street):
+    assert not wa.is_restricted_road(street, *ON_I90)
 
 
 def test_restricted_road_flags_active_calls_even_en_route_but_not_drop_offs():
