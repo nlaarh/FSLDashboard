@@ -347,6 +347,13 @@ function TopologyNode({ serviceKey, service, pinging, onPing }) {
           )}
         </div>
 
+        {/* A key for this service failed its hourly check — details on the Keys tab */}
+        {service.key_broken && (
+          <div className="mb-1.5 rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-1 text-[8px] font-bold text-rose-300" title={service.summary}>
+            KEY NOT WORKING — see Keys tab
+          </div>
+        )}
+
         {/* Most recent log */}
         {recentLog && (
           <div className="mb-1.5 truncate rounded bg-zinc-900 px-1.5 py-1 font-mono text-[7.5px] text-zinc-400" title={recentLog}>

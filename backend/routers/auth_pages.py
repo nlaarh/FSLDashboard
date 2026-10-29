@@ -172,6 +172,17 @@ body{
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── Microsoft sign-in ── */
+.or,.ms-btn{animation:rise .75s .42s cubic-bezier(.22,1,.36,1) both}
+.or{display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:#64748b;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase}
+.or::before,.or::after{content:'';flex:1;height:1px;background:rgba(148,163,184,.18)}
+.ms-btn{
+  display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:13px;
+  background:#fff;color:#1e293b;border:none;border-radius:11px;font-size:.92rem;font-weight:600;
+  text-decoration:none;transition:background .2s,transform .15s;
+}
+.ms-btn:hover{background:#f1f5f9;transform:translateY(-2px)}
+
 /* ── Forgot link ── */
 .fp{
   display:block;text-align:center;margin-top:18px;
@@ -252,7 +263,7 @@ body{
 
       <button type="submit" class="btn" id="btn">Sign in</button>
     </form>
-
+<!--SSO-->
     <a href="/forgot-password" class="fp">Forgot password?</a>
 
   </div>
@@ -270,6 +281,13 @@ function togglePw(){
   btn.innerHTML=hidden?eyeOff:eyeOpen;
   btn.setAttribute('aria-label',hidden?'Hide password':'Show password');
 }
+(function(){
+  var m={no_account:'Your Microsoft account is not set up in FleetPulse. Ask an admin to add your work email.',
+    expired:'Microsoft sign-in timed out. Please try again.',cancelled:'Microsoft sign-in was cancelled.',
+    microsoft:'Microsoft sign-in failed. Please try again.',not_configured:'Microsoft sign-in is not available.'};
+  var k=new URLSearchParams(location.search).get('sso_error');
+  if(k)document.getElementById('err').textContent=m[k]||m.microsoft;
+})();
 async function doLogin(e){
   e.preventDefault();
   var err=document.getElementById('err');
@@ -532,9 +550,18 @@ catch(err){msg.textContent='Network error. Please try again.';msg.className='msg
 </body></html>"""
 
 
+_SSO_BUTTON = """    <div class="or">or</div>
+    <a href="/api/auth/sso/login" class="ms-btn">
+      <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Sign in with Microsoft
+    </a>
+"""
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page():
-    return _LOGIN_HTML
+    from routers.auth_sso import sso_enabled
+    return _LOGIN_HTML.replace("<!--SSO-->", _SSO_BUTTON if sso_enabled() else "")
 
 
 @router.get("/forgot-password", response_class=HTMLResponse)

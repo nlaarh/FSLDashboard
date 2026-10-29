@@ -198,6 +198,7 @@ def _breaker_failure():
 _stats_lock = threading.Lock()
 _stats = {'total_calls': 0, 'errors': 0, 'rate_waits': 0, 'breaker_trips': 0}
 _recent_errors: deque = deque(maxlen=20)  # last 20 errors with timestamps
+_last_login: dict = {}  # result of the most recent Salesforce login, read by key_health (no extra SF calls)
 _recent_slow_queries: deque = deque(maxlen=20)  # last 20 slow SF calls
 
 
@@ -262,7 +263,9 @@ def _authenticate() -> tuple[str, str]:
     resp = _session.post(os.getenv('SF_TOKEN_URL', ''), data=payload, timeout=30)
     auth = resp.json()
     if 'access_token' not in auth:
+        _last_login.update(ok=False, at=_time.time(), error=str(auth.get('error_description') or auth.get('error') or auth)[:200])
         raise RuntimeError(f"SF auth failed: {auth}")
+    _last_login.update(ok=True, at=_time.time(), error='')
     return auth['access_token'], auth['instance_url']
 
 

@@ -190,7 +190,7 @@ async def activity_log_middleware(request: Request, call_next):
 # ── Register all routers ─────────────────────────────────────────────────────
 
 from routers import (
-    auth, auth_pages, admin, admin_access, garages, garages_performance, garages_revenue, command_center, ops,
+    auth, auth_pages, auth_sso, admin, admin_access, garages, garages_performance, garages_revenue, command_center, ops,
     map as map_router,
     dispatch_drill, dispatch_drill_detail, dispatch_trends, dispatch_trends_monthly,
     dispatch_satisfaction, satisfaction_garage, satisfaction_day, satisfaction_scorecard,
@@ -206,6 +206,7 @@ from routers import (
 
 app.include_router(auth.router)
 app.include_router(auth_pages.router)
+app.include_router(auth_sso.router)
 app.include_router(admin.router)
 app.include_router(admin_access.router)
 app.include_router(garages.router)
@@ -578,6 +579,10 @@ async def startup():
     import gps_store, facts_job
     threading.Thread(target=gps_store.run_forever, daemon=True, name='gps-sampler').start()
     threading.Thread(target=facts_job.run_forever, daemon=True, name='facts-job').start()
+
+    # Hourly key check: tests each outside key, emails admins when one breaks (Admin → System Health → Keys)
+    import key_health
+    key_health.start()
 
     # Optimizer blob sync — disabled until DuckDB is re-enabled
     # import optimizer_blob_sync
