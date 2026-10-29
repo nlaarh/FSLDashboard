@@ -251,7 +251,7 @@ def assemble(snap: dict, territories: list[str] | None = None) -> dict:
     operational_alerts = build_operational_alerts(
         sas + unrouted, alert_sa_map, hist_by_sa, now_utc, snap['dup_candidates'], rap_by_woli,
         sched_cleared=snap.get('sched_cleared'), unrouted_ids={s['Id'] for s in unrouted},
-        wo_territory_by_woli=wo_territory_by_woli)
+        wo_territory_by_woli=wo_territory_by_woli, ar_by_sa=ar_by_sa)
 
     # ── Enrich alerts with WO data + phases for timeline hover ──
     for alert in operational_alerts:
