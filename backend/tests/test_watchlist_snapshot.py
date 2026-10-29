@@ -372,3 +372,45 @@ def test_fetch_snapshot_adds_at_most_two_small_reads(monkeypatch):
     snap = snapmod.fetch_snapshot(NOW)
     assert snap['sched_cleared'] == {'08pS1'} and snap['unrouted_sas'] == []
     assert len(calls) == 4          # base + no-SA work orders (as before) + no-territory + Scheduled Start history
+
+
+# ── Owner rules 2026-10-29: clear once En Route / driver added; Potential Restricted Road ──
+
+@pytest.mark.parametrize('status', ['En Route', 'On Location', 'In Progress'])
+def test_no_service_resource_and_territory_clear_once_en_route(status):
+    rows = [row(1, sched=None, status=status, cat='InProgress'), row(2, status=status, cat='InProgress', terr_name='WM016')]
+    assert flags_of(snapshot(rows, sched_cleared={'08pS1'})) == {}
+
+
+def test_no_service_resource_clears_once_a_driver_is_on_the_call():
+    rows = [row(1, sched=None, ars=[{'Id': 'ar1', 'ServiceResource': {'Name': 'Drv'}}]), row(2, sched=None)]
+    assert flags_of(snapshot(rows, sched_cleared={'08pS1', '08pS2'})) == {'08pS2': 'No Service Resource'}
+
+
+@pytest.mark.parametrize('street', [
+    'I-90 E', 'I90', 'I 90', 'Interstate 90', '3111 INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E', 'NY-90', '174 NY-90',
+    'New York 90', '6563 NEW YORK 90', 'Route 90', '1897 STATE ROUTE 90 N', '13294 RT-90', 'NYS Thruway 90',
+    'New York 90 & Champlin Road'])
+def test_restricted_road_matches_i90_spellings(street):
+    assert wa.is_restricted_road(street)
+
+
+@pytest.mark.parametrize('street', [
+    'I-190', 'I-390', 'INTERSTATE 490', 'NEW YORK 390', 'I-990', 'RT-390', 'INTERSTATE 900', '900 THRUWAY PLAZA DRIVE',
+    '90 WEST MAIN STREET', '3590 SOUTHWESTERN BLVD', 'NY STATE THRUWAY', '14060 COUNTY ROUTE 90', '', None])
+def test_restricted_road_ignores_other_roads(street):
+    assert not wa.is_restricted_road(street)
+
+
+def test_restricted_road_flags_active_calls_even_en_route_but_not_drop_offs():
+    rows = [row(1, street='I-90 E'), row(2, street='I-90 E', status='En Route', cat='InProgress'),
+            row(3, street='I-90 E', work_type='Tow Drop-Off'), row(4, street='I-490'),
+            row(5, street='I-90 W', status='Completed', cat='Completed')]
+    assert flags_of(snapshot(rows)) == {'08pS1': 'Potential Restricted Road', '08pS2': 'Potential Restricted Road'}
+
+
+def test_restricted_road_wins_over_other_flags_and_sorts_first():
+    rows = [row(1, status='Received', cat='None'), row(2, status='Received', cat='None', street='Interstate 90')]
+    out = wl.assemble(snapshot(rows, kmi_map={}), None)['operational_alerts']
+    assert [(a['sa_id'], a['flag']) for a in out] == [('08pS2', 'Potential Restricted Road'),
+                                                      ('08pS1', 'Call Not Assigned - Received')]

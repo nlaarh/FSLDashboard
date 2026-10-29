@@ -12,9 +12,12 @@ Evaluates active SAs against 7 categories:
    (WO-level: see find_no_sa_wos / build_no_sa_wo_alerts)
 9. No Service Resource — Scheduled Start was cleared (SAHistory) and is still blank; not when Towbook accepted it
 10. Service Territory Needs Action — territory blank or starts with a letter (should start with a number), SA > 2 min old
+11. Potential Restricted Road — breakdown street is on I-90 (NYS Thruway), which we can't service
+Flags 9 and 10 clear once the call is En Route; 9 also clears once a driver (AssignedResource) is on the call.
 """
 
 import logging
+import re
 from collections import defaultdict
 from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, timezone
@@ -55,6 +58,17 @@ _NO_SA_GRACE_SEC = 120
 
 SCHED_CLEARED_FLAG = 'No Service Resource'
 TERRITORY_FLAG = 'Service Territory Needs Action'
+RESTRICTED_ROAD_FLAG = 'Potential Restricted Road'
+
+# Owner rule (2026-10-29): I-90 is the NYS Thruway, we can't service it. Spellings seen in Street:
+# 'I-90 E', 'INTERSTATE 90', 'INTERSTATE HIGHWAY 90 E', 'NEW YORK 90', 'NY-90', 'STATE ROUTE 90 N', 'RT-90'.
+# '90' must not be followed by a digit and the road word must start a word, so I-190, I-490, NEW YORK 390,
+# INTERSTATE 900 and '900 THRUWAY PLAZA DRIVE' never match; 'COUNTY ROUTE 90' is a local road, not I-90.
+_RESTRICTED_ROAD_RE = re.compile(
+    r'(?<!COUNTY )\b(?:INTERSTATE(?:\s+HIGHWAY)?|I|NY|NEW\s+YORK|ROUTE|RT|NYS\s+THRUWAY)[\s-]*90(?!\d)', re.IGNORECASE)
+
+# From En Route on, a call no longer needs these two flags (owner rule 2026-10-29).
+_ENROUTE_OR_LATER = {'En Route', 'On Location', 'In Progress'}
 
 # Owner rules (2026-10-13): the territory flag waits until the appointment is 2 minutes old (it is routed in that time);
 # "No Service Resource" skips a call Towbook accepted — the 'Integrations Towbook' account set Status to Accepted.
@@ -63,6 +77,7 @@ _TOWBOOK_USER = 'Integrations Towbook'
 
 # Sort order shared by build_operational_alerts and the WO-level flag.
 _FLAG_PRIORITY = {
+    RESTRICTED_ROAD_FLAG: -1,
     'Call At Risk of Missing PTA': 0,
     'High Priority Call Late': 1,
     'Call Not Assigned': 2,
@@ -133,6 +148,10 @@ def _territory_needs_action(sa: dict, wo_territory: str | None) -> bool:
     return any(not (n or '').strip() or (n or '').strip()[0].isalpha() for n in names)
 
 
+def is_restricted_road(street: str | None) -> bool:
+    return bool(street and _RESTRICTED_ROAD_RE.search(street))
+
+
 def _older_than(sa: dict, now_utc: datetime, secs: int) -> bool:
     created = _parse_dt(sa.get('CreatedDate'))
     if not created:
@@ -171,20 +190,22 @@ def _time_in_status_from_hist(hist_list: list, current_status: str, now_utc: dat
 def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc: datetime,
                              dup_candidates: list | None = None, rap_by_woli: dict | None = None,
                              sched_cleared: set | None = None, unrouted_ids: set | None = None,
-                             wo_territory_by_woli: dict | None = None) -> list:
+                             wo_territory_by_woli: dict | None = None, ar_by_sa: dict | None = None) -> list:
     """Evaluate all active SAs against the operational flag categories.
 
     dup_candidates: the appointments the Potential Duplicate flag looks at (see watchlist_snapshot.duplicate_candidates);
     rap_by_woli: WOLI Id -> (is RAP, customer name) for the duplicate check;
     sched_cleared: SA ids whose Scheduled Start was cleared (watchlist_snapshot.sched_cleared_ids);
     unrouted_ids: SAs with no territory at all — only the territory flag is evaluated for them;
-    wo_territory_by_woli: WOLI Id -> territory name of its work order ('' when blank), for the territory flag.
+    wo_territory_by_woli: WOLI Id -> territory name of its work order ('' when blank), for the territory flag;
+    ar_by_sa: SA Id -> its AssignedResource rows (a driver on the call clears "No Service Resource").
     Returns a list of alert dicts for the UI table.
     """
     alerts = []
     sched_cleared = sched_cleared or set()
     unrouted_ids = unrouted_ids or set()
     wo_territory_by_woli = wo_territory_by_woli or {}
+    ar_by_sa = ar_by_sa or {}
 
     for sa in sas:
         sa_id = sa.get('Id', '')
@@ -197,6 +218,10 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
 
         is_drop_off = _is_tow_drop_off(sa)
         flags_hit = []
+
+        # ── Flag: Potential Restricted Road (breakdown street on I-90; drop-off address is the destination) ──
+        if not is_drop_off and is_restricted_road(sa.get('Street')):
+            flags_hit.append(RESTRICTED_ROAD_FLAG)
 
         # ── Flag 1: Call At Risk of Missing PTA (within 20 min OR already late) ──
         if not is_drop_off and status not in ('En Route', 'On Location'):
@@ -230,12 +255,13 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
             flags_hit.append('Call Not Assigned - Received')
 
         # ── Flag: No Service Resource (Scheduled Start cleared and still blank; age check done with the history read) ──
-        if (not is_drop_off and sa_id in sched_cleared and not sa.get('SchedStartTime')
+        if (not is_drop_off and status not in _ENROUTE_OR_LATER and not ar_by_sa.get(sa_id)
+                and sa_id in sched_cleared and not sa.get('SchedStartTime')
                 and not _towbook_accepted(sa, hist_by_sa.get(sa_id, []))):
             flags_hit.append(SCHED_CLEARED_FLAG)
 
         # ── Flag: Service Territory Needs Action (only once the appointment is over 2 minutes old) ──
-        if (not is_drop_off and _older_than(sa, now_utc, _TERRITORY_GRACE_SEC)
+        if (not is_drop_off and status not in _ENROUTE_OR_LATER and _older_than(sa, now_utc, _TERRITORY_GRACE_SEC)
                 and _territory_needs_action(sa, wo_territory_by_woli.get(sa.get('ParentRecordId')))):
             flags_hit.append(TERRITORY_FLAG)
 
@@ -261,9 +287,9 @@ def build_operational_alerts(sas: list, sa_map: dict, hist_by_sa: dict, now_utc:
                     if age_min > 30:
                         flags_hit.append('High Priority Call Late')
 
-        # Appointments without a territory were read only for the territory flag
+        # Appointments without a territory were read only for the territory and restricted-road flags
         if sa_id in unrouted_ids:
-            flags_hit = [f for f in flags_hit if f == TERRITORY_FLAG]
+            flags_hit = [f for f in flags_hit if f in (TERRITORY_FLAG, RESTRICTED_ROAD_FLAG)]
 
         if not flags_hit:
             continue

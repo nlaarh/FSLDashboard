@@ -55,6 +55,7 @@ function minutesAgo(utcStr) {
 
 // ── Flag badge colors ───────────────────────────────────────────────────────
 const FLAG_COLORS = {
+  'Potential Restricted Road': 'bg-red-600/25 text-red-300 border-red-600/50',
   'Call At Risk of Missing PTA': 'bg-red-500/20 text-red-400 border-red-500/40',
   'High Priority Call Late': 'bg-orange-500/20 text-orange-400 border-orange-500/40',
   'Call Not Assigned': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
@@ -839,11 +840,15 @@ export default function SAWatchlist({ contractorMode = false }) {
                   </div>
                   <div>
                     <span className="text-lime-400 font-bold">No Service Resource</span>
-                    <p className="pl-2 mt-0.5">The appointment's Scheduled Start had a value and was removed — it is blank now and the call is more than 5 minutes old. The flag clears as soon as Scheduled Start has a value again.</p>
+                    <p className="pl-2 mt-0.5">The appointment's Scheduled Start had a value and was removed — it is blank now and the call is more than 5 minutes old. The flag clears as soon as Scheduled Start has a value again, a driver is added to the call, or the call is En Route.</p>
                   </div>
                   <div>
                     <span className="text-teal-400 font-bold">Service Territory Needs Action</span>
-                    <p className="pl-2 mt-0.5">The territory on an active call (appointment or work order) is blank or starts with a letter — it should start with a number.</p>
+                    <p className="pl-2 mt-0.5">The territory on an active call (appointment or work order) is blank or starts with a letter — it should start with a number. The flag clears once the call is En Route.</p>
+                  </div>
+                  <div>
+                    <span className="text-red-300 font-bold">Potential Restricted Road</span>
+                    <p className="pl-2 mt-0.5">The breakdown street is on I-90 (Interstate 90, I90, NY-90, Route 90, New York 90, NYS Thruway 90…). I-90 is the NYS Thruway, which we can't service.</p>
                   </div>
                   <div>
                     <span className="text-purple-400 font-bold">Call Not Closed</span>
