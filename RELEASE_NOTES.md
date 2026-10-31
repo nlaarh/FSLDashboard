@@ -17,6 +17,26 @@ HTML (`/assets/index-<hash>.js`) — compare it against the site to confirm whic
 
 ---
 
+## v1.27 — 2026-10-30
+
+| | |
+|---|---|
+| Tag | `release/v1.27` |
+| Commit | `3eb72db` (merge of PR #38, branch `feature/driver-replay`) |
+| Bundle | `index-B4_y-iFg.js` |
+| Deploy | GitHub Actions run `41161243615`, 2026-10-30 ~10:45 PM ET, success (owner: "deploy"). Live checks: served bundle = local build; test user opened Replay → 421 Rochester → 2026-10-29 → Drivers → Steve Chastain: full-screen replay plays, truck picture loads, no page errors; API answered in 0.45 s with 4 named stops (call, Delta Sonic 1 h 58 min, garage, near Taco Bell). |
+| Roll back to | `release/v1.26` = `5ddf499` |
+
+**What changed**
+- **Replay → Garage tab → Drivers:** the left list switches between Work orders and the garage's on-platform drivers for the picked day (same garage and day picker), sortable by name, calls or shift start. One driver at a time.
+- **Driver day replay:** full screen with a Back button; follow camera with look-ahead at a steady zoom (Whole day button for the full route); thin player over the bottom of the map; whole day ≈ 3 min at 1×, each stop 2–5 s; ◀ ▶ step stop by stop; slider to go back.
+- **Every stop named and timed:** the driver's own call (2 min+), parked off shift, garage, home base, or a New York place (OpenStreetMap list in `backend/geo/ny_places.json`, 13,451 places; "Near …" when the truck stood a little away), else Unlisted stop. Past stops shrink to dots.
+- **AAA trucks:** realistic top-down pictures (flatbed, wrecker, service truck, picked from the truck the driver had; made with OpenAI's image model) turned to the driving direction with plain CSS: no 3D graphics, runs on older Windows PCs in Edge.
+- **Safety / cost:** new `GET /api/report-card/{tid}/{date}/driver-replay` reads only the saved garage-day snapshot: no Salesforce, no database writes; driver GPS is never sent to any outside service. Same gates as Replay. `deploy.yml` now ships `geo/`.
+- **Files:** `backend/driver_replay.py`, `backend/geo/ny_places.json`, `backend/routers/report_card.py`, `frontend/src/components/driverreplay/*`, `frontend/src/assets/trucks/*`, shared replay player/engine (compact player, pace option, speed keys), `GarageReplay.jsx`.
+
+---
+
 ## v1.26 — 2026-10-29
 
 | | |
