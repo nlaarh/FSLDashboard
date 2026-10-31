@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Loader2, Compass, MessageSquareOff, FolderOpen } from 'lucide-react'
 import CaseTrailPanel from './CaseTrailPanel'
 import { loadReplay, loadCallFlags, loadStoryReplay } from './prefetch'
@@ -15,9 +16,13 @@ import { channelOf } from './channels'
 import ReplayPanel from '../woreplay/ReplayPanel'
 import { shortDriverName } from '../../utils/driverName'
 import { verdictColour } from './reportCardStyles'
+import DriverList from '../driverreplay/DriverList'
+import DriverReplayPane, { useDriverPicks } from '../driverreplay/DriverReplay'
+import { driverRows } from '../driverreplay/driverModel'
 
 /** Garage Replay tab: the saved garage-day played back on a map, with the Gantt playhead on the same clock.
- *  The work-order list shows as soon as the day data is here; the map side fills in when the replay arrives. */
+ *  The work-order list shows as soon as the day data is here; the map side fills in when the replay arrives.
+ *  The list switches between Work orders and the garage's on-platform Drivers (?list=drivers): picked drivers (?drv=) replay their day. */
 export default function GarageReplay({ data, garage, date, selectedSa, onSelectSa, callStory }) {
   const [state, setState] = useState({ phase: 'loading' })
   useEffect(() => {
@@ -43,15 +48,31 @@ export default function GarageReplay({ data, garage, date, selectedSa, onSelectS
   // day replay is in: when the day arrives the call keeps playing (it is never unmounted and restarted).
   const pickedNumber = callStory ? calls.find(x => x.id === selectedSa)?.number : null
   const panelRef = useRef(null)
-  useEffect(() => { if (pickedNumber) panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [pickedNumber])
+  const [params, setParams] = useSearchParams()
+  const drivers = params.get('list') === 'drivers'
+  const setList = d => setParams(p => { const n = new URLSearchParams(p); if (d) n.set('list', 'drivers'); else { n.delete('list'); n.delete('drv') } return n }, { replace: true })
+  const picks = useDriverPicks()
+  const rows = useMemo(() => (state.phase === 'ready' ? driverRows(state.replay, data) : []), [state, data])
+  useEffect(() => { if (pickedNumber && !drivers) panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [pickedNumber]) // eslint-disable-line react-hooks/exhaustive-deps
+  const seg = on => `flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${on ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`
   return (
     <div className="flex gap-3 items-start">
-      <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />
+      <div className="w-72 shrink-0 space-y-2 sticky top-20">
+        <div className="glass rounded-xl p-1 flex gap-1" role="tablist" aria-label="List">
+          <button type="button" role="tab" aria-selected={!drivers} onClick={() => setList(false)} className={seg(!drivers)}>Work orders · {calls.length}</button>
+          <button type="button" role="tab" aria-selected={drivers} onClick={() => setList(true)} className={seg(drivers)}>Drivers{state.phase === 'ready' ? ` · ${rows.length}` : ''}</button>
+        </div>
+        {drivers
+          ? <DriverList rows={rows} loading={state.phase === 'loading'} selected={picks.picked[0]} onSelect={picks.pick} />
+          : <CallList calls={calls} names={names} flags={flags} selected={data.sas.some(x => x.id === selectedSa) ? selectedSa : null} onSelect={onSelectSa} prefetchStories={callStory} />}
+      </div>
       <div className="flex-1 min-w-0 space-y-3">
-        {pickedNumber && <div ref={panelRef}><ReplayPanel key={pickedNumber} q={pickedNumber} /></div>}
+        {!drivers && pickedNumber && <div ref={panelRef}><ReplayPanel key={pickedNumber} q={pickedNumber} /></div>}
         {state.phase === 'loading' && <div className="glass rounded-xl p-8 flex justify-center"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>}
         {state.phase === 'error' && <div className="glass rounded-xl p-8 text-center text-sm text-rose-400">{state.error}</div>}
-        {state.phase === 'ready' && <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />}
+        {state.phase === 'ready' && (drivers
+          ? <DriverReplayPane garage={garage} date={date} replay={state.replay} picked={picks.picked.slice(0, 1)} />
+          : <ReplayBody key={`${garage}:${date}`} replay={state.replay} data={data} selectedSa={selectedSa} onSelectSa={onSelectSa} callStory={callStory} />)}
       </div>
     </div>
   )
@@ -205,7 +226,7 @@ export function CallList({ calls, names, flags, selected, onSelect, prefetchStor
     </select>
   )
   return (
-    <div className="glass rounded-xl w-72 shrink-0 overflow-hidden sticky top-20">
+    <div className="glass rounded-xl w-72 shrink-0 overflow-hidden">
       <div className="px-3 py-2 text-xs font-semibold text-slate-300 border-b border-slate-700/60 flex items-center justify-between">
         <span>Work orders · {on ? `${shown.length} of ${calls.length}` : calls.length}</span>
         {on && <button onClick={() => setF(NONE)} className="text-[11px] font-normal text-brand-400 hover:text-brand-300">Clear</button>}

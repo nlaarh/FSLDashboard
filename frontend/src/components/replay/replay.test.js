@@ -125,6 +125,9 @@ test('driver phase and toast lines come from the steps', () => {
 test('truck type: a tow gets a flatbed or wheel-lift, battery / lockout / fuel / tire get the light service van', () => {
   assert.equal(truckKindFor({ service: 'Tow Pick-Up' }), 'flatbed')
   assert.equal(truckKindFor({ service: 'Tow Pick-Up', skills: ['Tow', 'Wheel Lift Truck'] }), 'wheel_lift')
+  assert.equal(truckKindFor({ truck: '421 99W1 - 421 - ACTION TOWING', skills: ['Tow'] }), 'wheel_lift')      // W truck = wheel-lift
+  assert.equal(truckKindFor({ truck: '421 14F1 - 421 - ACTION TOWING', skills: ['Tow', 'Flat Bed'] }), 'flatbed')
+  assert.equal(truckKindFor({ truck: '421 33B1 - 421 - ACTION TOWING', skills: ['Battery Service'] }), 'light')
   assert.equal(truckKindFor({ service: 'Tow Pick-Up', truck: '25- PATRIOT FB', skills: ['Wheel Lift Truck', 'Flat Bed'] }), 'flatbed')
   for (const w of ['Battery', 'Lockout', 'Tire', 'Fuel / Miscellaneous']) assert.equal(truckKindFor({ service: w, truck: '25- PATRIOT FB' }), 'light')
   // the day map has no service: the truck name, then its capabilities

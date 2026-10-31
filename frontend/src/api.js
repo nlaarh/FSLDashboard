@@ -170,6 +170,8 @@ export const fetchReportCardStatus = (territoryId, date) =>
   api.get(`/report-card/${territoryId}/${date}/status`, rcStates).then(rcResult)
 export const fetchReportCardReplay = (territoryId, date) =>
   api.get(`/report-card/${territoryId}/${date}/replay`, { ...rcStates, timeout: 60000 }).then(rcResult)
+export const fetchDriverReplay = (territoryId, date, ids) =>
+  api.get(`/report-card/${territoryId}/${date}/driver-replay?${new URLSearchParams({ drivers: ids.join(',') })}`, { ...rcStates, timeout: 60000 }).then(rcResult)
 export const fetchReportCardCallFlags = (territoryId, date) =>
   api.get(`/report-card/${territoryId}/${date}/call-flags`, { ...rcStates, timeout: 60000 }).then(rcResult)
 export const fetchCaseTrail = woId =>

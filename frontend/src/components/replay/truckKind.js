@@ -1,6 +1,6 @@
 // Which truck drawing to use. Pure, so it is tested without a map.
 
-const WHEEL_LIFT = /wheel.?lift|hook|\bwl\b|self.?loader/
+const WHEEL_LIFT = /wheel.?lift|hook|\bwl\b|self.?loader|\b\d{1,3}w\d?\b/   // "421 99W1"
 const FLATBED = /flat.?bed|rollback|roll.?back|carrier|\bfb\b|\b\d{1,3}f\d?\b/   // "25- PATRIOT FB", "421 14F1", "076DO 27F"
 const LIGHT = /\bls\b|\b\d{1,3}b\d?\b|service van|light/                       // "70- RAM LS", "100 09B1" (battery trucks)
 const LIGHT_JOB = /battery|jump|lockout|lock.?out|tire|fuel|miscellaneous|gas|diesel/

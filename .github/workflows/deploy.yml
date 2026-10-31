@@ -53,6 +53,7 @@ jobs:
           routers/ \
           repositories/ \
           salesforce_queries/ \
+          geo/ \
           startup.sh requirements.txt \
           static/
         echo "Package size: $(du -h ../deploy.zip | cut -f1)"

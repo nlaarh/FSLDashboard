@@ -307,3 +307,45 @@
 /* Garage Live: the pin or truck the drawer just sent the map to */
 .glive-pulse .rp-ring { animation: rp-pulse 1.1s ease-out 3; opacity: 1; border-width: 3px; }
 .glive-focus { filter: drop-shadow(0 0 3px #2563eb) drop-shadow(0 0 12px #2563eb); }
+
+/* Driver Replay (components/driverreplay): stop flags pop up when the truck arrives, pulse and count while it is parked, shrink after */
+@keyframes dr-pop { 0% { transform: translateY(14px) scale(0); opacity: 0; } 60% { transform: translateY(-4px) scale(1.18); opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes dr-halo { 0% { transform: scale(.85); opacity: .9; } 100% { transform: scale(2.1); opacity: 0; } }
+.dr-flag { position: relative; width: 44px; height: 96px; --k: #94a3b8; --c: #fbbf24; cursor: pointer; filter: drop-shadow(0 6px 4px rgba(0,0,0,.45)); }
+.dr-flag .dr-pole { position: absolute; left: 20.5px; top: 34px; bottom: 0; width: 3px; border-radius: 2px; background: linear-gradient(#f8fafc, #94a3b8); transition: opacity .3s; }
+.dr-flag .dr-pole::after { content: ''; position: absolute; left: -3px; bottom: -2px; width: 9px; height: 4px; border-radius: 50%; background: rgba(15,23,42,.45); }
+.dr-flag .dr-badge { position: absolute; left: 2px; top: 0; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 32% 26%, rgba(255,255,255,.85) 0 9%, rgba(255,255,255,.12) 30%, transparent 46%), radial-gradient(circle at 50% 60%, var(--k) 0 58%, color-mix(in srgb, var(--k) 55%, #020617) 100%);
+  border: 3px solid var(--c); box-shadow: inset 0 -4px 7px rgba(2,6,23,.45), inset 0 2px 3px rgba(255,255,255,.35), 0 0 0 1.5px #0f172a;
+  animation: dr-pop .55s cubic-bezier(.34,1.56,.64,1) both; transition: transform .45s cubic-bezier(.5,0,.3,1.3), opacity .35s ease; }
+.dr-flag .dr-badge svg { filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
+.dr-flag .dr-halo { position: absolute; left: 2px; top: 0; width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--k); opacity: 0; pointer-events: none; }
+.dr-flag.live .dr-halo { animation: dr-halo 1.6s ease-out infinite; }
+.dr-flag .dr-ftag { position: absolute; left: 46px; top: 4px; white-space: nowrap; pointer-events: none; background: rgba(15,23,42,.92); color: #f8fafc;
+  border: 1px solid rgba(100,116,139,.45); border-left: 3px solid var(--k); border-radius: 7px; padding: 2px 8px 3px; font: 700 12px/15px system-ui;
+  backdrop-filter: blur(4px); animation: rp-slide .3s ease-out both; }
+.dr-flag .dr-time { display: block; font: 800 12.5px/15px ui-monospace, SFMono-Regular, Menlo, monospace; color: #fcd34d; font-variant-numeric: tabular-nums; }
+/* left behind: the badge drops down the pole to the spot and shrinks to a small dot; label only on hover */
+.dr-flag.done { filter: drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
+.dr-flag.done .dr-pole { opacity: 0; }
+.dr-flag.done .dr-badge { transform: translateY(68px) scale(.5); border-width: 4px; }
+.dr-flag.done .dr-ftag { display: none; }
+.dr-flag.done:hover .dr-ftag { display: block; top: 66px; left: 34px; }
+.dr-flag.done:hover .dr-ftag .dr-time { color: #e2e8f0; }
+/* AAA truck picture (driverreplay/DriverReplayMap.jsx): turned with the heading (.dr-rot), soft shadow, driver-colour ring,
+   amber light-bar glow that flashes while driving. Plain CSS: smooth on any PC and browser. */
+@keyframes dr-bar { 0%, 49% { opacity: .95; } 50%, 100% { opacity: .15; } }
+.dr-img { position: relative; width: 96px; height: 96px; --c: #fbbf24; pointer-events: none; }
+.dr-img .dr-ring { position: absolute; left: 50%; top: 50%; width: 78px; height: 78px; margin: -39px 0 0 -39px; border-radius: 50%;
+  border: 3px solid var(--c); background: radial-gradient(closest-side, rgba(2,6,23,.18), rgba(2,6,23,0)); opacity: .9; }
+.dr-img .dr-rot { position: absolute; left: 50%; top: 50%; width: 30px; height: 76px; margin: -38px 0 0 -15px; will-change: transform; }
+.dr-img .dr-rot img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(3px 4px 3px rgba(2,6,23,.45)); user-select: none; }
+.dr-img .dr-bar { position: absolute; left: 50%; width: 22px; height: 6px; margin: -3px 0 0 -11px; border-radius: 4px; opacity: 0;
+  background: radial-gradient(closest-side, rgba(253,224,71,1), rgba(245,158,11,.6) 60%, rgba(245,158,11,0)); box-shadow: 0 0 10px 4px rgba(245,158,11,.55); }
+.dr-img.live .dr-bar { animation: dr-bar .7s steps(1) infinite; }
+.dr-img .rp-tag { top: 92px; border-color: var(--c); }
+.dr-img.parked .dr-ring { box-shadow: 0 0 12px 2px var(--c); }
+@media (prefers-reduced-motion: reduce) { .dr-img.live .dr-bar { animation: none; opacity: .6; } }
+@media (prefers-reduced-motion: reduce) {
+  .dr-flag .dr-badge, .dr-flag .dr-ftag, .dr-flag.live .dr-halo { animation: none; }
+}

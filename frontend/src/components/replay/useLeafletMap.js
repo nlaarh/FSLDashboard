@@ -18,7 +18,7 @@ export default function useLeafletMap(center, { light = true } = {}) {
       .setView(center, 11)
     ref.current.classList.add('rp-map', light ? 'rp-light' : 'rp-dark')
     // A clean street map (Esri World Street Map, no key): plain colours and clear street names, like Apple Maps. Owner, 2026-10-08.
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' }).addTo(m)
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri', keepBuffer: 6 }).addTo(m)   // keepBuffer: a moving camera (Driver replay) finds the tiles around it already loaded, no grey flashes
     L.control.zoom({ position: 'topleft' }).addTo(m)
     setMap(m)
     // the map re-measures itself whenever its box changes size (Expand, window resize), or the tiles stay in the old frame
