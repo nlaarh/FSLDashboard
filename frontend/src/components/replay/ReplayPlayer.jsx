@@ -20,9 +20,10 @@ export function SkipChip({ engine, className = '' }) {
 /**
  * Transport bar and scrubber over the replay engine: Prev / Play / Next, speeds 1x-300x, drag to scrub, hour ticks, a density strip,
  * and clickable event marks (colour or icon). The playhead and clock are written straight to the DOM every frame (no React render).
- * marks: [{ t, label, colour, Icon, level }] — clicking one jumps there.
+ * marks: [{ t, label, colour, Icon, level }] — clicking one jumps there. speedTitle(s) = hover text of a speed button.
+ * compact: one thin row (buttons, clock, speeds and the slider side by side), to lay over the bottom of a full-screen map.
  */
-export default function ReplayPlayer({ engine, start, end, density, marks = [], onPrev, onNext, speeds = SPEEDS, big = false, className = '', children }) {
+export default function ReplayPlayer({ engine, start, end, density, marks = [], onPrev, onNext, speeds = SPEEDS, speedTitle, big = false, compact = false, className = '', children }) {
   const barRef = useRef(null), headRef = useRef(null), fillRef = useRef(null), clockRef = useRef(null)
   const { playing, speed } = useEngineState(engine, 4)
   const span = Math.max(end - start, 1)
@@ -48,7 +49,7 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
   const [barW, setBarW] = useState(800)
   useEffect(() => {
     if (!barRef.current || typeof ResizeObserver === 'undefined') return undefined
-    const ro = new ResizeObserver(() => setBarW(barRef.current.clientWidth || 800))
+    const ro = new ResizeObserver(() => barRef.current && setBarW(barRef.current.clientWidth || 800))   // the bar may be gone when a resize lands after it unmounts
     ro.observe(barRef.current)
     return () => ro.disconnect()
   }, [])
@@ -67,6 +68,45 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
     seekFrom(e)
   }
 
+  if (compact) {
+    const cb = 'p-1.5 rounded-md bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white'
+    return (
+      <div className={`rp-glass rounded-xl px-2 py-1.5 flex items-center gap-2 ${className}`}>
+        <button type="button" className={cb} onClick={onPrev || engine.prev} title="Previous stop (←)"><SkipBack className="w-4 h-4" /></button>
+        <button type="button" onClick={engine.toggle} title={playing ? 'Pause (Space)' : 'Play (Space)'}
+          className={`p-1.5 rounded-md ${playing ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-brand-600 hover:bg-brand-500 text-white'}`}>
+          {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+        </button>
+        <button type="button" className={cb} onClick={onNext || engine.next} title="Next stop (→)"><SkipForward className="w-4 h-4" /></button>
+        <span ref={clockRef} className="font-mono text-sm font-semibold text-white tabular-nums min-w-[92px] text-center" />
+        <div className="flex items-center bg-slate-900/70 rounded-md p-0.5" role="group" aria-label="Playback speed">
+          {speeds.map(s => (
+            <button key={s} type="button" onClick={() => engine.setSpeed(s)} title={speedTitle ? speedTitle(s) : `${s}x`}
+              className={`px-1.5 py-0.5 text-[11px] rounded font-mono font-semibold ${speed === s ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`}>{s}×</button>
+          ))}
+        </div>
+        <div ref={barRef} onPointerDown={onDown} onPointerMove={e => e.buttons === 1 && seekFrom(e)}
+          className="relative flex-1 h-7 cursor-pointer select-none touch-none" role="slider" aria-label="Replay time" aria-valuemin={start} aria-valuemax={end}>
+          <div className="absolute inset-x-0 top-3 h-1.5 rounded-full bg-slate-700/80" />
+          <div ref={fillRef} className="absolute left-0 top-3 h-1.5 rounded-full bg-brand-500" />
+          {marks.map((m, i) => (
+            <button key={i} type="button" title={m.label} aria-label={m.label} onPointerDown={e => e.stopPropagation()}
+              onClick={() => { engine.pause(); engine.seek(m.t) }}
+              className="absolute top-1.5 w-3.5 h-3.5 -translate-x-1/2 rounded-full flex items-center justify-center hover:scale-150 transition-transform ring-1 ring-slate-900"
+              style={{ left: pct(m.t), background: m.colour || '#e2e8f0' }}>
+              {m.Icon && <m.Icon size={8} color="#fff" strokeWidth={3} />}
+            </button>
+          ))}
+          <span ref={headRef} className="absolute top-1.5 w-3.5 h-3.5 -translate-x-1/2 rounded-full bg-white shadow ring-2 ring-brand-500 pointer-events-none" />
+          {ticks.map(k => (
+            <span key={k.t} className="absolute -translate-x-1/2 text-[9px] leading-none text-slate-400 pointer-events-none" style={{ left: pct(k.t), top: 21 }}>{k.label}</span>
+          ))}
+        </div>
+        {children}
+      </div>
+    )
+  }
+
   const btn = `${big ? 'p-2.5' : 'p-1.5'} rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors`
   const ic = big ? 'w-5 h-5' : 'w-4 h-4'
   return (
@@ -83,7 +123,7 @@ export default function ReplayPlayer({ engine, start, end, density, marks = [], 
         <span ref={clockRef} className={`font-mono ${big ? 'text-xl' : 'text-sm'} font-semibold text-white bg-slate-900/70 border border-slate-700 rounded px-2 py-0.5 tabular-nums min-w-[92px] text-center`} />
         <div className="flex items-center bg-slate-900/70 rounded-lg p-0.5 border border-slate-700" role="group" aria-label="Playback speed">
           {speeds.map(s => (
-            <button key={s} type="button" onClick={() => engine.setSpeed(s)} title={`${s}x: ${s} second${s > 1 ? 's' : ''} of real time per second (keys 1-4)`}
+            <button key={s} type="button" onClick={() => engine.setSpeed(s)} title={speedTitle ? speedTitle(s) : `${s}x: ${s} second${s > 1 ? 's' : ''} of real time per second (keys 1-4)`}
               className={`${big ? 'px-3 py-1 text-sm' : 'px-2 py-0.5 text-[11px]'} rounded font-mono font-semibold transition-colors ${
                 speed === s ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`}>
               {s}×

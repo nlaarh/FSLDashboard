@@ -233,6 +233,40 @@ def get_replay(territory_id: str, service_date: str, request: Request):
     return view
 
 
+DRIVER_REPLAY_MAX = 6
+
+
+@router.get('/api/report-card/{territory_id}/{service_date}/driver-replay')
+def get_driver_replay(territory_id: str, service_date: str, request: Request, drivers: str = ''):
+    """Driver Replay tab: stops (named) and drives for up to 6 drivers. Snapshot only: no Salesforce, and nothing sent outside."""
+    from driver_replay import driver_day
+    from report_card_replay import replay_view
+    _gate(request, territory_id, service_date)
+    require_feature('scheduler.replay', request)
+    ids = [x for x in dict.fromkeys(drivers.split(',')) if _ID.match(x)][:DRIVER_REPLAY_MAX]
+    if not ids:
+        raise HTTPException(status_code=422, detail='Pick at least one driver')
+    snap = store.load_snapshot(territory_id, service_date)
+    if snap is None:
+        return _not_ready(territory_id, service_date)
+    vkey = f"report_card_replay:{territory_id}:{service_date}:{snap['built_at']}"
+    view = cache.get(vkey)
+    if view is None:
+        view = replay_view(snap)
+        cache.put(vkey, view, ttl=600)
+    out = []
+    for did in ids:
+        key = f"driver_replay:{territory_id}:{service_date}:{snap['built_at']}:{did}"
+        day = cache.get(key)
+        if day is None:
+            day = driver_day(snap, view, did)
+            if day is not None:
+                cache.put(key, day, ttl=6 * 3600)
+        if day is not None:
+            out.append(day)
+    return {'territory': view['territory'], 'day_start': view['day_start'], 'day_end': view['day_end'], 'drivers': out}
+
+
 @router.get('/api/report-card/{territory_id}/{service_date}/call-flags')
 def get_call_flags(territory_id: str, service_date: str, request: Request):
     """Icons and filters for the Replay work-order list. Three read-only SELECTs, cached against the snapshot."""

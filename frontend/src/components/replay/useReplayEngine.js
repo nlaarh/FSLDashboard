@@ -55,10 +55,12 @@ function createEngine(cfg, initial, speed) {
  * useReplayEngine({ start, end, events, initial, speed, busy, stops, keys })
  *   events  sorted epoch seconds that Prev / Next jump between; busy(t) is true while something is moving (no quiet skipping then);
  *   stops   sorted times where playing pauses by itself ("Pause at problems"); keys = Space, arrows, 1-4 (default on).
+ *   pace    optional (t, speed) -> { rate, boosted, gap }: the replay's own pace instead of the quiet-stretch rule.
+ *   speeds  what keys 1-4 pick (default SPEEDS); pass the same list to ReplayPlayer.
  */
-export default function useReplayEngine({ start, end, events = [], initial, speed = DEFAULT_SPEED, busy, stops = [], keys = true }) {
-  const cfg = useRef({ start, end, events, busy, stops })
-  cfg.current = { start, end, events, busy, stops }
+export default function useReplayEngine({ start, end, events = [], initial, speed = DEFAULT_SPEED, busy, stops = [], keys = true, pace, speeds = SPEEDS }) {
+  const cfg = useRef({ start, end, events, busy, stops, pace })
+  cfg.current = { start, end, events, busy, stops, pace }
   const engine = useMemo(() => createEngine(cfg, Math.min(end, Math.max(start, initial ?? start)), speed), []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => engine.destroy(), [engine])
   useEffect(() => { if (engine.ref.current.t < start || engine.ref.current.t > end) engine.seek(initial ?? start) }, [start, end]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -70,11 +72,11 @@ export default function useReplayEngine({ start, end, events = [], initial, spee
       if (e.code === 'Space') { e.preventDefault(); engine.toggle() }
       else if (e.key === 'ArrowRight') { e.preventDefault(); if (e.shiftKey) engine.seek(t + 300); else engine.next() }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); if (e.shiftKey) engine.seek(t - 300); else engine.prev() }
-      else if (/^[1-4]$/.test(e.key)) engine.setSpeed(SPEEDS[Number(e.key) - 1])
+      else if (/^[1-4]$/.test(e.key) && speeds[Number(e.key) - 1] != null) engine.setSpeed(speeds[Number(e.key) - 1])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [engine, keys])
+  }, [engine, keys, speeds])
   return engine
 }
 

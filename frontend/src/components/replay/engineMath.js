@@ -42,10 +42,11 @@ export function effectiveRate(t, speed, events, busy, end) {
 
 /**
  * One animation step of dtWall seconds. Never jumps past a stop (a "pause at problems" time) or the end.
+ * pace(t, speed) -> { rate, boosted, gap } replaces the quiet-stretch rule when a replay sets its own pace (Driver replay).
  * Returns { t, boosted, gap, stopped, ended }.
  */
-export function advance(t, dtWall, { speed, events = [], busy, end, stops = [] }) {
-  const { rate, boosted, gap } = effectiveRate(t, speed, events, busy, end)
+export function advance(t, dtWall, { speed, events = [], busy, end, stops = [], pace }) {
+  const { rate, boosted, gap } = pace ? pace(t, speed) : effectiveRate(t, speed, events, busy, end)
   let next = t + dtWall * rate
   let stopped = false
   const s = nextEvent(stops, t)

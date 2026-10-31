@@ -60,8 +60,9 @@ export default function SchedulerReportCard({ view = 'report-card' }) {
     if (qq && tb === 'wo') p.set('q', qq)
     const r = next.rules ?? rules
     if (r) p.set('rules', r)
+    if (params.get('list') === 'drivers' && tb === 'replay' && !next.sa) p.set('list', 'drivers')
     setParams(p, { replace: !!next.sa || !next.date })
-  }, [setParams, rules, tab, q])
+  }, [setParams, rules, tab, q, params])
 
   const stopPoll = () => { clearInterval(pollRef.current); pollRef.current = null }
 
